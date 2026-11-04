@@ -15,7 +15,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { ARCHIVE_DIR, decideStale, restoreArchivedSkill, skillLastUsedAt } from './curator.js';
+import { ARCHIVE_DIR, decideStale, restoreArchivedSkill, skillLastUsedAt, skillUsageDir } from './curator.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -52,6 +52,21 @@ describe('skillLastUsedAt', () => {
     expect(skillLastUsedAt(skill)!).toBeLessThan(Date.now() - 99 * DAY);
     // stamped yesterday → young again
     fs.writeFileSync(path.join(skill, '.last-invoked'), new Date(Date.now() - DAY).toISOString());
+    expect(skillLastUsedAt(skill)!).toBeGreaterThan(Date.now() - 2 * DAY);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reads the stamp the runner leaves beside the read-only skills dir', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'curator-'));
+    const skill = path.join(dir, '.claude-shared', 'skills', 's');
+    fs.mkdirSync(skill, { recursive: true });
+    fs.writeFileSync(path.join(skill, 'SKILL.md'), '---\ndescription: x\n---\n');
+    const old = Date.now() - 100 * DAY;
+    fs.utimesSync(path.join(skill, 'SKILL.md'), old / 1000, old / 1000);
+    const usage = skillUsageDir(skill);
+    expect(usage).toBe(path.join(dir, '.claude-shared', 'skill-usage', 's'));
+    fs.mkdirSync(usage, { recursive: true });
+    fs.writeFileSync(path.join(usage, '.last-invoked'), new Date(Date.now() - DAY).toISOString());
     expect(skillLastUsedAt(skill)!).toBeGreaterThan(Date.now() - 2 * DAY);
     fs.rmSync(dir, { recursive: true, force: true });
   });

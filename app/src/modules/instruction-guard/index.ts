@@ -6,12 +6,20 @@
  * (`/home/node/.claude`, `/home/node/.codex`) and the session folder
  * (`/workspace`) are mounted read-write, and some files in them load into
  * EVERY later session or query: the group persona, CLAUDE.md / AGENTS.md
- * files, `.claude/rules`, subagents, output styles, and settings.json (whose
- * hooks run commands). A single prompt-injected turn that writes there
- * changes the agent for good, silently. Memory stays freely writable — gating
- * it would end memory — but these files are standing policy, so a change to
- * one waits for an owner or admin. The list is GUARDED_FILES in ./store.ts; a
- * directory (rules, agents, output styles) is guarded as one unit.
+ * files (including CLAUDE.md files in subfolders of the project), `.claude`
+ * rules, subagents, output styles, skills and slash commands, `.mcp.json`,
+ * and settings.json (whose hooks run commands). A single prompt-injected turn
+ * that writes there changes the agent for good, silently. Memory stays freely
+ * writable — gating it would end memory — but these files are standing
+ * policy, so a change to one waits for an owner or admin. The list is
+ * GUARDED_FILES in ./store.ts; a directory (rules, agents, output styles,
+ * skills, commands) is guarded as one unit, and so are the subfolder
+ * CLAUDE.md files.
+ *
+ * Two surfaces are read-only in the container instead: the composed project
+ * document (`/workspace/agent/CLAUDE.md`, rewritten by the host every spawn)
+ * and the user-scope skills directory (`~/.claude/skills`), which only the
+ * host writes — an agent proposes a skill through its draft tool.
  *
  * How: the host keeps the last approved content of each file in a store that
  * no container mounts (`data/instruction-baselines/<agent-group-id>/`).

@@ -43,8 +43,13 @@ export interface GuardedFile {
   /** Directories below the base; a non-directory there is cleared as foreign. */
   segments: readonly string[];
   name: string;
-  /** 'tree': every regular file below the directory `name`, guarded as one unit. */
-  kind: 'file' | 'tree';
+  /**
+   * 'tree': every regular file below the directory `name`, guarded as one unit.
+   * 'nested': every NESTED_NAMES file in a subdirectory of the base (Claude
+   * loads one when it reads a file beside it), guarded as one unit; nothing
+   * else there is touched.
+   */
+  kind: 'file' | 'tree' | 'nested';
   /**
    * The directory is the agent's to create (nothing on the host makes it), so
    * its absence is itself the approved state: "no file". Without this a
@@ -92,7 +97,16 @@ function claudeDirEntries(scope: 'project' | 'user'): GuardedFile[] {
     entry('rules', 'tree', 'rules'),
     entry('agents', 'tree', 'subagents'),
     entry('output-styles', 'tree', 'output styles'),
+    entry('commands', 'tree', 'slash commands'),
   ];
+  // The user-scope skills directory is not here: the host writes it (skill
+  // links, template stamps, approved skill drafts, the curator), so it is
+  // mounted read-only into the container instead (userSkillsReadOnlyMount).
+  if (scope === 'project') rows.push(entry('skills', 'tree', 'skills'));
+  // Claude Code writes settings.local.json only when a person answers a
+  // permission prompt with "always allow". Agents run with bypassPermissions
+  // and no prompt handler, so in a NanoClaw container nothing but the agent
+  // writes it — a change there is the agent's and is guarded like the rest.
   if (scope === 'project') rows.push(entry('settings.local.json', 'file', 'local settings and hooks'));
   return rows;
 }
@@ -135,6 +149,24 @@ const GUARDED_FILES: readonly GuardedFile[] = [
     containerPath: '/workspace/agent/.claude/CLAUDE.md',
   },
   ...claudeDirEntries('project'),
+  {
+    id: 'claude-project-mcp',
+    label: '`.mcp.json` (Claude project MCP servers)',
+    base: 'group',
+    segments: [],
+    name: '.mcp.json',
+    kind: 'file',
+    containerPath: '/workspace/agent/.mcp.json',
+  },
+  {
+    id: 'claude-project-nested',
+    label: '`CLAUDE.md` files in subfolders (Claude project instructions)',
+    base: 'group',
+    segments: [],
+    name: '',
+    kind: 'nested',
+    containerPath: '/workspace/agent',
+  },
   {
     id: 'codex-project-override',
     label: '`AGENTS.override.md` (Codex project instructions)',
@@ -277,7 +309,7 @@ function safeRelPath(rel: string): boolean {
 
 /** How the card shows `content`: a tree as one `### path` section per file. */
 export function displayContent(file: GuardedFile, content: string | null): string | null {
-  if (file.kind !== 'tree' || content === null) return content;
+  if (file.kind === 'file' || content === null) return content;
   const files = decodeTree(content) ?? {};
   return Object.entries(files)
     .map(([rel, text]) => `### ${rel}\n${text}`)
@@ -474,6 +506,85 @@ export function writeRuntimeBaseline(agentGroupId: string): void {
   writeJson(path.join(runtimeBaselineDir(agentGroupId), 'baseline.json'), { version: 1, entries }, 0o644);
 }
 
+/** Where Claude reads user-scope skills, inside the provider's home directory. */
+const CLAUDE_HOME = '/home/node/.claude';
+
+/**
+ * A read-only mount of the user-scope skills directory over the read-write
+ * Claude home, or null when the spawn has no such home (or the folder is not
+ * one). Claude loads
+ * every skill there into every session, and the host is its only legitimate
+ * writer (skill links, template stamps, approved skill drafts, the curator);
+ * an agent proposes a skill through its draft tool instead. Read-only rather
+ * than guarded, so none of those host writers needs to record a baseline.
+ */
+export function userSkillsReadOnlyMount<M extends { hostPath: string; containerPath: string; readonly?: boolean }>(
+  mounts: readonly M[],
+): M | null {
+  const home = mounts.find((m) => m.containerPath === CLAUDE_HOME && !m.readonly);
+  if (!home) return null;
+  const hostPath = path.join(home.hostPath, 'skills');
+  let st: fs.Stats | null = null;
+  try {
+    st = fs.lstatSync(hostPath);
+  } catch {
+    /* not there yet */
+  }
+  if (st && !st.isDirectory()) {
+    // Not mountable (a link's target is not on this host's path). The spawn
+    // check clears one before this runs (clearLinkedUserSkills).
+    log.warn('User skills folder is not a folder; not mounted read-only', { hostPath, was: describe(st) });
+    return null;
+  }
+  if (!st) fs.mkdirSync(hostPath);
+  return { ...home, hostPath, containerPath: `${CLAUDE_HOME}/skills`, readonly: true };
+}
+
+/** How the guard names the user skills folder when it has to clear it. */
+const USER_SKILLS_DIR: GuardedFile = {
+  id: 'claude-user-skills',
+  label: '`~/.claude/skills/` (Claude user skills)',
+  base: 'state',
+  segments: ['.claude-shared'],
+  name: 'skills',
+  kind: 'tree',
+  containerPath: `${CLAUDE_HOME}/skills`,
+};
+
+/**
+ * A link (or any non-folder) in place of the user skills folder would point
+ * Claude's skills at somewhere the agent can write, and could not be mounted
+ * read-only. Removed, never followed, and reported as refused; the host
+ * re-links the shipped skills when it mounts the folder.
+ */
+function clearLinkedUserSkills(group: GroupRef): InstructionChange | null {
+  const home = AnchoredDir.open(path.join(DATA_DIR, 'v2-sessions', group.id), []);
+  if (!home) return null;
+  try {
+    const top = lstatOrNull(home, '.claude-shared');
+    if (!top?.isDirectory()) return null; // not this provider's home, or cleared as a .claude-shared row
+    const dir = home.openDir('.claude-shared');
+    if (!dir) return null;
+    try {
+      const st = lstatOrNull(dir, 'skills');
+      if (!st || st.isDirectory()) return null;
+      dir.unlink('skills');
+      return {
+        file: USER_SKILLS_DIR,
+        outcome: 'refused',
+        sha256: '',
+        before: null,
+        after: null,
+        detail: `it was ${describe(st)}`,
+      };
+    } finally {
+      dir.close();
+    }
+  } finally {
+    home.close();
+  }
+}
+
 // ── Reading and replacing the live file ──
 
 type Observed = { kind: 'content'; content: string | null } | { kind: 'foreign'; detail: string };
@@ -619,7 +730,125 @@ function observeTree(dir: AnchoredDir, name: string): Observed {
   return { kind: 'content', content: encodeTree(files) };
 }
 
+/**
+ * Instruction files Claude Code loads from a subdirectory of its project
+ * (when it reads a file there). Keep in step with the agent-runner's
+ * instruction-guard.ts.
+ */
+const NESTED_NAMES = new Set(['CLAUDE.md', 'CLAUDE.local.md']);
+/** Not searched: dependency and VCS trees, and `.claude` (guarded entry by entry). */
+const NESTED_SKIP = new Set(['node_modules', '.git']);
+const NESTED_MAX_DEPTH = 16;
+
+/** Walk the nested instruction files below `dir`: each one's parent directory and name. */
+function walkNested(
+  dir: AnchoredDir,
+  visit: (parent: AnchoredDir, rel: string, name: string, st: fs.Stats) => string | null,
+): string | null {
+  const walk = (d: AnchoredDir, rel: string, depth: number): string | null => {
+    for (const entry of d.entries().sort()) {
+      if (NESTED_SKIP.has(entry) || (depth === 0 && entry === '.claude')) continue;
+      const st = lstatOrNull(d, entry);
+      if (!st) continue;
+      const relPath = rel ? `${rel}/${entry}` : entry;
+      // A folder that happens to carry the name is searched like any other.
+      if (depth > 0 && NESTED_NAMES.has(entry) && !st.isDirectory()) {
+        const refused = visit(d, relPath, entry, st);
+        if (refused) return refused;
+        continue;
+      }
+      if (!st.isDirectory() || depth + 1 >= NESTED_MAX_DEPTH) continue;
+      const sub = d.openDir(entry);
+      if (!sub) continue;
+      try {
+        const refused = walk(sub, relPath, depth + 1);
+        if (refused) return refused;
+      } finally {
+        sub.close();
+      }
+    }
+    return null;
+  };
+  return walk(dir, '', 0);
+}
+
+function observeNested(dir: AnchoredDir): Observed {
+  const files: Record<string, string> = {};
+  let bytes = 0;
+  try {
+    const refused = walkNested(dir, (parent, rel, name, st) => {
+      if (!st.isFile()) return `\`${rel}\` was ${describe(st)}`;
+      const buf = parent.readFile(name);
+      bytes += buf.length;
+      if (bytes > MAX_HELD_BYTES) return `they were too large to hold (over ${MAX_HELD_BYTES} bytes)`;
+      files[rel] = buf.toString('utf-8');
+      return null;
+    });
+    if (refused) return { kind: 'foreign', detail: refused };
+  } catch {
+    return { kind: 'foreign', detail: 'a folder changed shape while being read' };
+  }
+  return { kind: 'content', content: encodeTree(files) };
+}
+
+/**
+ * Put the nested instruction files back to `files`: one not in it (or not a
+ * regular file) is removed, each in it is written. Nothing else in the folder
+ * is touched.
+ */
+function putNested(dir: AnchoredDir, files: Record<string, string>): void {
+  const stale: Array<{ rel: string; name: string }> = [];
+  walkNested(dir, (_parent, rel, name, st) => {
+    if (!st.isFile() || !(rel in files)) stale.push({ rel, name });
+    return null;
+  });
+  // The parent of `rel` (which always has one: nested files are never at the
+  // top). Null when a folder on the way is missing, or is not a real folder —
+  // that file is then not reachable through the project and is left alone.
+  const openUnder = (rel: string, create: boolean): AnchoredDir | null => {
+    let d: AnchoredDir | null = null;
+    try {
+      for (const part of rel.split('/').slice(0, -1)) {
+        const next: AnchoredDir | null = (d ?? dir).openDir(part, create);
+        d?.close();
+        d = next;
+        if (!d) return null;
+      }
+    } catch {
+      d?.close();
+      return null;
+    }
+    return d;
+  };
+  for (const { rel, name } of stale) {
+    const parent = openUnder(rel, false);
+    if (!parent) continue;
+    try {
+      const st = lstatOrNull(parent, name);
+      if (st?.isDirectory()) removeEntry(parent, name);
+      else if (st) parent.unlink(name);
+    } finally {
+      parent.close();
+    }
+  }
+  for (const [rel, text] of Object.entries(files)) {
+    const name = rel.split('/').pop()!;
+    const parent = openUnder(rel, true);
+    if (!parent) continue;
+    try {
+      const st = lstatOrNull(parent, name);
+      if (st?.isDirectory()) removeEntry(parent, name);
+      else if (st && !st.isFile()) parent.unlink(name);
+      parent.replaceFile(name, text);
+      handBack(parent, name);
+    } finally {
+      parent.close();
+    }
+  }
+}
+
 function observe(file: GuardedFile, dir: AnchoredDir): Observed {
+  if (file.kind === 'nested') return observeNested(dir);
   return file.kind === 'tree' ? observeTree(dir, file.name) : observeFile(dir, file.name);
 }
 
@@ -662,14 +891,18 @@ function writeTree(dir: AnchoredDir, name: string, files: Record<string, string>
 export function putContent(group: GroupRef, file: GuardedFile, content: string | null, sessionId?: string): void {
   const root = rootOf(group, file, sessionId);
   if (!root) return;
-  const tree = file.kind === 'tree' ? decodeTree(content) : null;
-  if (file.kind === 'tree' && !tree) throw new Error(`malformed content for ${file.name}`);
+  const tree = file.kind === 'file' ? null : decodeTree(content);
+  if (file.kind !== 'file' && !tree) throw new Error(`malformed content for ${file.id}`);
   const { dir } = openParent(root, file.segments, content !== null);
   if (!dir) {
     if (content === null) return;
     throw new Error(`directory for ${file.name} is missing`);
   }
   try {
+    if (file.kind === 'nested') {
+      putNested(dir, tree!);
+      return;
+    }
     const st = lstatOrNull(dir, file.name);
     if (file.kind === 'tree') {
       if (st) removeEntry(dir, file.name);
@@ -857,6 +1090,11 @@ function checkOne(
 export function checkInstructionFiles(group: GroupRef, sessionId?: string): InstructionChange[] {
   const changes: InstructionChange[] = [];
   const clearedSegments = new Map<string, string>();
+  const linkedSkills = clearLinkedUserSkills(group);
+  if (linkedSkills) {
+    report(group, linkedSkills);
+    changes.push(linkedSkills);
+  }
   for (const file of GUARDED_FILES) {
     const change = checkOne(group, file, sessionId, clearedSegments);
     if (!change) continue;
@@ -938,7 +1176,7 @@ function proposalChange(group: GroupRef, proposal: Proposal): InstructionChange 
   if (proposal.content !== null && typeof proposal.content !== 'string') return null;
   let content = normalize(proposal.content as string | null);
   if (content !== null && Buffer.byteLength(content) > MAX_HELD_BYTES) return null;
-  if (file.kind === 'tree') {
+  if (file.kind !== 'file') {
     const files = decodeTree(content);
     if (!files || Object.keys(files).length > MAX_TREE_FILES) return null;
     content = encodeTree(files);

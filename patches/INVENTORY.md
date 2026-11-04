@@ -190,6 +190,8 @@ src/container-runner.ts
     the right approvers and tell the agent its edit is held. buildMounts also
     mounts the guard's approved snapshot read-only at /app/.instruction-baseline
     for the runner's per-turn check.
+    It also mounts the user-scope skills directory read-only over the
+    read-write Claude home (userSkillsReadOnlyMount): only the host writes skills.
 src/db/agent-groups.ts
     lifecycle status setter with validation
 src/db/db-v2.test.ts

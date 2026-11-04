@@ -3,8 +3,9 @@
  * modules/instruction-guard (see its index.ts).
  *
  * The host checks the agent's standing instruction files (persona, CLAUDE.md
- * files, `.claude/rules`, subagents, output styles, settings.json, AGENTS
- * overrides) at every spawn. One container lives through many turns, though,
+ * files including those in subfolders, `.claude` rules, subagents, output
+ * styles, skills and commands, settings.json, `.mcp.json`, AGENTS overrides)
+ * at every spawn. One container lives through many turns, though,
  * and each turn starts a query that loads those files afresh — so an edit made
  * in one turn would steer the next without approval. Before every query this
  * module compares each guarded file with the approved snapshot the host
@@ -46,7 +47,8 @@ interface Entry {
   path: string;
   /** The mount it lives in; an entry whose mount is absent is skipped. */
   root: string;
-  kind: 'file' | 'tree';
+  /** 'nested': the instruction files in subfolders of `path` (see NESTED_NAMES). */
+  kind: 'file' | 'tree' | 'nested';
   content: string | null;
   proposable: boolean;
   settings?: 'claude';
@@ -181,8 +183,51 @@ function observeTree(p: string): Observed {
   return { kind: 'content', content: encodeTree(files) };
 }
 
+// Instruction files Claude Code loads from a subfolder of its project. Keep in
+// step with NESTED_NAMES / NESTED_SKIP in the host's instruction-guard store.ts.
+const NESTED_NAMES = new Set(['CLAUDE.md', 'CLAUDE.local.md']);
+const NESTED_SKIP = new Set(['node_modules', '.git']);
+const NESTED_MAX_DEPTH = 16;
+
+/** Relative paths of the nested instruction entries below `root` (any type but a folder). */
+function nestedEntries(root: string): string[] {
+  const found: string[] = [];
+  const walk = (dir: string, rel: string, depth: number): void => {
+    let names: string[];
+    try {
+      names = fs.readdirSync(dir).sort();
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (NESTED_SKIP.has(name) || (depth === 0 && name === '.claude')) continue;
+      const full = path.join(dir, name);
+      const st = lstatOrNull(full);
+      if (!st) continue;
+      const relPath = rel ? `${rel}/${name}` : name;
+      if (depth > 0 && NESTED_NAMES.has(name) && !st.isDirectory()) found.push(relPath);
+      else if (st.isDirectory() && depth + 1 < NESTED_MAX_DEPTH) walk(full, relPath, depth + 1);
+    }
+  };
+  walk(root, '', 0);
+  return found;
+}
+
+function observeNested(root: string): Observed {
+  const files: Record<string, string> = {};
+  let bytes = 0;
+  for (const rel of nestedEntries(root)) {
+    const st = lstatOrNull(path.join(root, rel));
+    if (!st?.isFile()) return { kind: 'foreign', detail: `${rel} is not a regular file` };
+    bytes += st.size;
+    if (bytes > MAX_BYTES) return { kind: 'foreign', detail: 'too large' };
+    files[rel] = fs.readFileSync(path.join(root, rel), 'utf-8');
+  }
+  return { kind: 'content', content: encodeTree(files) };
+}
+
 function same(entry: Entry, seen: string | null): boolean {
-  if (entry.kind === 'tree') return encodeTree(decodeTree(seen)) === encodeTree(decodeTree(entry.content));
+  if (entry.kind !== 'file') return encodeTree(decodeTree(seen)) === encodeTree(decodeTree(entry.content));
   if (entry.settings === 'claude') return comparableSettings(seen) === comparableSettings(entry.content);
   return seen === entry.content;
 }
@@ -195,6 +240,19 @@ function writeAtomic(file: string, data: string): void {
 }
 
 function restore(entry: Entry): void {
+  if (entry.kind === 'nested') {
+    // Only the instruction files: the folder is the agent's whole project.
+    const approved = decodeTree(entry.content);
+    for (const rel of nestedEntries(entry.path)) {
+      if (!(rel in approved)) fs.rmSync(path.join(entry.path, rel), { force: true });
+    }
+    for (const [rel, text] of Object.entries(approved)) {
+      const target = path.join(entry.path, rel);
+      if (!lstatOrNull(target)?.isFile()) fs.rmSync(target, { recursive: true, force: true });
+      writeAtomic(target, text);
+    }
+    return;
+  }
   // rmSync removes a link itself, never its target.
   fs.rmSync(entry.path, { recursive: true, force: true });
   if (entry.content === null) return;
@@ -240,13 +298,15 @@ export function enforceInstructionBaseline(paths: GuardPaths = DEFAULT_PATHS): s
   for (const entry of entries) {
     try {
       if (!lstatOrNull(entry.root)?.isDirectory()) continue;
-      const planted = foreignAncestor(entry);
+      const planted = entry.kind === 'nested' ? null : foreignAncestor(entry);
       if (planted) fs.rmSync(planted, { force: true });
       const seen = planted
         ? ({ kind: 'foreign', detail: 'a directory above it was not a directory' } as Observed)
-        : entry.kind === 'tree'
-          ? observeTree(entry.path)
-          : observeFile(entry.path);
+        : entry.kind === 'nested'
+          ? observeNested(entry.path)
+          : entry.kind === 'tree'
+            ? observeTree(entry.path)
+            : observeFile(entry.path);
       if (seen.kind === 'content' && same(entry, seen.content)) continue;
       if (seen.kind === 'content' && entry.proposable) {
         writeAtomic(
