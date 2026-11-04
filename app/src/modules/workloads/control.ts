@@ -189,6 +189,23 @@ export async function noteUnapprovedBuild(agentGroupId: string, now = Date.now()
   await noteBuild(agentGroupId, now, now - HOUR);
 }
 
+/**
+ * Would `redeploy` take this as it is? Same shape as approved (images by
+ * digest, Dockerfiles, build args, capabilities), no more memory/CPU than
+ * approved, and builds left this hour. Then `up` needs no card.
+ */
+export async function withinApproval(
+  agentGroupId: string,
+  c: Pick<Checked, 'stack' | 'existing' | 'shape'>,
+  now = Date.now(),
+): Promise<boolean> {
+  const w = c.existing;
+  if (!w || c.shape.hash !== decodeApproved(w.approvedShape)?.hash) return false;
+  if (c.stack.total.memoryMb > w.approvedMemoryMb || c.stack.total.cpus > w.approvedCpus) return false;
+  if (!hasBuild(c.stack)) return true;
+  return (await buildsSince(agentGroupId, now - HOUR)) < UNAPPROVED_BUILDS_PER_HOUR;
+}
+
 /** The image each service runs: a pulled one by its approved digest, a built one under NanoClaw's name. */
 export function serviceImages(w: Workload): Record<string, string> {
   const approved = decodeApproved(w.approvedShape);

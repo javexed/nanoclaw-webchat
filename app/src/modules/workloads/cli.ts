@@ -3,9 +3,9 @@
  * container the agent group always comes from the caller. `up` (a first
  * deploy, a new shape, or more resources), `delete` (removes data),
  * `restore` (replaces data) and `extend` (keeps it running longer) wait for
- * an owner's card; `redeploy` within the
- * approved size and shape, and everything that only looks or restarts, runs
- * at once.
+ * an owner's card; `redeploy` within the approved size and shape (and an
+ * `up` without --publish that changes nothing approved), and everything that
+ * only looks or restarts, runs at once.
  *
  * The approval verbs declare a precheck (cli/registry.ts): the stack is
  * checked before any card is made, the card says in words what will run, and
@@ -43,6 +43,7 @@ import {
   startWorkload,
   stopWorkload,
   upWorkload,
+  withinApproval,
 } from './control.js';
 import { diskUsed, gb } from './disk.js';
 import {
@@ -254,7 +255,7 @@ registerResource({
     up: {
       access: 'approval',
       description:
-        'Deploy a stack for the first time, or with new images, Dockerfiles or more memory/CPU than approved (needs an owner approval). Run `ncl workloads check` first. With --publish, the same card also publishes it for people (see `expose`): prefer this for an app people will open.',
+        'Deploy a stack for the first time, or with new images, Dockerfiles or more memory/CPU than approved (needs an owner approval). An unchanged stack without --publish redeploys at once. Run `ncl workloads check` first. With --publish, the same card also publishes it for people (see `expose`): prefer this for an app people will open.',
       args: [
         GROUP,
         NAME,
@@ -314,6 +315,15 @@ registerResource({
         // The route first: with it off there is nothing to card, and the agent hears how to deploy only.
         const route = pub ? await pickRoute(pub.route).catch((err: unknown) => Promise.reject(deployOnly(err))) : null;
         const c = await checkWorkload(g, name, str(args.file, 'file'));
+        // Nothing here needs an owner: redeploy now instead of carding it.
+        // A throw is the only way a precheck answers without a card. --publish
+        // always needs its card, so it never takes this path.
+        if (!pub && (await withinApproval(g, c))) {
+          const w = view(await redeployWorkload(g, name, str(args.file, 'file')));
+          throw new Error(
+            `Redeployed (nothing needed approval; use \`ncl workloads redeploy\` next time): ${JSON.stringify(w)}`,
+          );
+        }
         const size = (mb: number, cpus: number): string => `${gbText(mb)} memory, ${cpus} CPU`;
         const now = size(c.stack.total.memoryMb, c.stack.total.cpus);
         const was = c.existing ? size(c.existing.approvedMemoryMb, c.existing.approvedCpus) : null;
