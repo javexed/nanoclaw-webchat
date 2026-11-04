@@ -5,10 +5,12 @@
  */
 import { execFileSync } from 'child_process';
 import fs from 'fs';
+import http from 'http';
 import https from 'https';
 import net, { type AddressInfo } from 'net';
 import os from 'os';
 import path from 'path';
+import type { Duplex } from 'stream';
 import type { TLSSocket } from 'tls';
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -19,7 +21,7 @@ import { caPaths, ensureCa, issueMachineCert, publicKeyPin } from './ca.js';
 import { __resetLinksForTest, callWorker, dropLink, isLinked } from './links.js';
 import { machineHandler, upgradeLink } from './listener.js';
 import { addMember, createJoinToken, getMember, revokeMember } from './members.js';
-import { Mux } from './mux.js';
+import { Mux, STREAM_WINDOW } from './mux.js';
 import { connect, health, refuseDocker, workloadAddress } from './worker-main.js';
 
 const until = async (ok: () => boolean | Promise<boolean>, ms = 5000): Promise<void> => {
@@ -78,6 +80,34 @@ describe('the link wire format', () => {
     central.close();
   });
 
+  it('holds a fast writer to the window while the reader is paused, then delivers everything', async () => {
+    const [a, b] = await socketPair();
+    const central = new Mux(a, 'central');
+    const worker = new Mux(b, 'worker');
+    let inbound: Duplex | null = null;
+    worker.onStream((_m, s) => {
+      inbound = s;
+      s.pause();
+    });
+    const out = central.open({ kind: 'bulk' });
+    const total = 6 * STREAM_WINDOW;
+    let written = 0;
+    const piece = Buffer.alloc(256 * 1024, 1);
+    const writes: Promise<void>[] = [];
+    for (let i = 0; i < total / piece.length; i++)
+      writes.push(new Promise((r) => out.write(piece, () => ((written += piece.length), r()))));
+    await new Promise((r) => setTimeout(r, 300));
+    // Paused reader: no more than the window (plus one piece being queued) is let through.
+    expect(written).toBeLessThanOrEqual(STREAM_WINDOW + piece.length);
+    let got = 0;
+    inbound!.on('data', (c: Buffer) => (got += c.length));
+    inbound!.resume();
+    await Promise.all(writes);
+    await until(() => got === total);
+    expect(written).toBe(total);
+    central.close();
+  });
+
   it('fails pending requests and streams when the link closes', async () => {
     const [a, b] = await socketPair();
     const central = new Mux(a, 'central');
@@ -100,6 +130,47 @@ describe('the link wire format', () => {
     await expect(new Promise((_r, j) => s.once('error', j))).rejects.toThrow(/not accepted/);
     central.close();
   });
+});
+
+describe('a workload reached over the link', () => {
+  it('carries an HTTP request and its answer, as the /apps/ proxy sends it', async () => {
+    const app = http.createServer((req, res) => res.end(`app saw ${req.method} ${req.url} host=${req.headers.host}`));
+    await new Promise<void>((r) => app.listen(0, '127.0.0.1', r));
+    const appPort = (app.address() as AddressInfo).port;
+    const [a, b] = await socketPair();
+    const central = new Mux(a, 'central');
+    const worker = new Mux(b, 'worker');
+    // Stand-in for the worker's tcp job (worker-main serve): here it reaches a local app.
+    worker.onStream((meta, s) => {
+      expect(meta).toEqual({ kind: 'tcp', host: '198.18.1.10', port: 80 });
+      const up = net.connect(appPort, '127.0.0.1');
+      s.pipe(up);
+      up.pipe(s);
+    });
+    const body = await new Promise<string>((resolve, reject) => {
+      const req = http.request(
+        {
+          host: '198.18.1.10',
+          port: 80,
+          path: '/hello?x=1',
+          headers: { host: 'demo.apps.internal' },
+          timeout: 5000,
+          createConnection: () => central.open({ kind: 'tcp', host: '198.18.1.10', port: 80 }) as never,
+        },
+        (res) => {
+          let t = '';
+          res.on('data', (c) => (t += c));
+          res.on('end', () => resolve(t));
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+    expect(body).toBe('app saw GET /hello?x=1 host=demo.apps.internal');
+    central.close();
+    app.close();
+  });
+
 });
 
 describe("the worker's fixed jobs", () => {

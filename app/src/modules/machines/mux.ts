@@ -17,6 +17,8 @@ const OPEN = 2;
 const DATA = 3;
 const END = 4;
 const RST = 5;
+/** Flow control: the receiver grants the sender this many more bytes of a stream. */
+const WINDOW = 6;
 
 const HEADER = 9;
 /** Bigger payloads are split into frames of this size. */
@@ -24,6 +26,12 @@ const CHUNK = 64 * 1024;
 /** A single JSON message may not exceed this (requests carry small files at most). */
 export const MAX_MESSAGE = 4 * 1024 * 1024;
 const MAX_FRAME = MAX_MESSAGE;
+/**
+ * Each stream may have this many bytes in flight (sent, not yet read by the
+ * receiving side's consumer); the sender waits for a grant past it. Bounds the
+ * memory a fast stream with a slow reader can take, on both ends.
+ */
+export const STREAM_WINDOW = 1024 * 1024;
 const PING_MS = 30_000;
 const DEAD_MS = 95_000;
 
@@ -55,6 +63,15 @@ export class Mux extends EventEmitter {
     { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }
   >();
   private readonly streams = new Map<number, Duplex>();
+  private readonly flow = new Map<
+    number,
+    {
+      credit: number;
+      queue: Array<{ buf: Buffer; cb: (err?: Error | null) => void }>;
+      ungranted: number;
+      inflight: number;
+    }
+  >();
   private readonly handlers = new Map<string, Handler>();
   private streamHandler: StreamHandler | null = null;
   private lastSeen = Date.now();
@@ -136,18 +153,35 @@ export class Mux extends EventEmitter {
     this.pending.clear();
     for (const s of this.streams.values()) s.destroy(err);
     this.streams.clear();
+    this.flow.clear();
     if (!this.socket.destroyed) this.socket.destroy();
     this.emit('close', err);
   }
 
   private stream(id: number): Duplex {
     let ended = false;
+    const f = {
+      credit: STREAM_WINDOW,
+      queue: [] as Array<{ buf: Buffer; cb: (err?: Error | null) => void }>,
+      ungranted: 0,
+      inflight: 0,
+    };
+    this.flow.set(id, f);
     const s = new Duplex({
-      read: () => undefined,
+      // The consumer wants more: grant the sender what it has read since the last grant.
+      read: () => {
+        if (f.ungranted > 0 && !this.closed && this.streams.has(id)) {
+          const g = Buffer.alloc(4);
+          g.writeUInt32BE(f.ungranted, 0);
+          f.inflight -= f.ungranted;
+          f.ungranted = 0;
+          this.socket.write(frame(WINDOW, id, g));
+        }
+      },
       write: (chunk: Buffer, _enc, cb) => {
         if (this.closed) return cb(new Error('link closed'));
-        for (let i = 0; i < chunk.length; i += CHUNK) this.socket.write(frame(DATA, id, chunk.subarray(i, i + CHUNK)));
-        cb();
+        f.queue.push({ buf: chunk, cb });
+        this.pump(id);
       },
       final: (cb) => {
         if (!this.closed) this.socket.write(frame(END, id));
@@ -159,6 +193,9 @@ export class Mux extends EventEmitter {
             frame(RST, id, Buffer.from(JSON.stringify({ error: err ? String(err.message) : 'closed' }))),
           );
         this.streams.delete(id);
+        for (const q of f.queue) q.cb(err ?? new Error('closed'));
+        f.queue.length = 0;
+        this.flow.delete(id);
         cb(err);
       },
     });
@@ -166,8 +203,36 @@ export class Mux extends EventEmitter {
       ended = true;
       if (s.writableFinished) this.streams.delete(id);
     });
+    // A link stream's failure (the link closing, a reset) must never crash the process:
+    // consumers add their own listeners; this one only keeps the error from being unhandled.
+    s.on('error', () => undefined);
+    // What Node's HTTP client calls on its connection: a stream over the link has nothing to set.
+    Object.assign(s, {
+      setTimeout: () => s,
+      setNoDelay: () => s,
+      setKeepAlive: () => s,
+      ref: () => s,
+      unref: () => s,
+    });
     this.streams.set(id, s);
     return s;
+  }
+
+  /** Send what the stream's credit allows; a write completes once all of it is sent. */
+  private pump(id: number): void {
+    const f = this.flow.get(id);
+    if (!f) return;
+    while (f.queue.length && f.credit > 0 && !this.closed) {
+      const q = f.queue[0];
+      const n = Math.min(q.buf.length, f.credit, CHUNK);
+      this.socket.write(frame(DATA, id, q.buf.subarray(0, n)));
+      f.credit -= n;
+      q.buf = q.buf.subarray(n);
+      if (!q.buf.length) {
+        f.queue.shift();
+        q.cb();
+      }
+    }
   }
 
   private onData(chunk: Buffer): void {
@@ -194,16 +259,31 @@ export class Mux extends EventEmitter {
     if (type === OPEN) {
       const meta = JSON.parse(payload.toString('utf8')) as Record<string, unknown>;
       const s = this.stream(id);
-      // A stream the other side opened must never crash this process with an unhandled error.
-      s.on('error', () => undefined);
       if (!this.streamHandler) return void s.destroy(new Error('streams not accepted'));
       this.streamHandler(meta, s);
       return;
     }
+    if (type === WINDOW) {
+      const f = this.flow.get(id);
+      if (f && payload.length === 4) {
+        f.credit += payload.readUInt32BE(0);
+        this.pump(id);
+      }
+      return;
+    }
     const s = this.streams.get(id);
     if (!s) return;
-    if (type === DATA) s.push(Buffer.from(payload));
-    else if (type === END) s.push(null);
+    if (type === DATA) {
+      const f = this.flow.get(id);
+      if (f) {
+        f.inflight += payload.length;
+        f.ungranted += payload.length;
+        // A sender past its window does not keep to the protocol.
+        if (f.inflight > STREAM_WINDOW) return void s.destroy(new Error('stream over its window'));
+      }
+      s.push(Buffer.from(payload));
+      return;
+    } else if (type === END) s.push(null);
     else if (type === RST) {
       this.streams.delete(id);
       let why = 'reset';
