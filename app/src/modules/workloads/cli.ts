@@ -317,15 +317,12 @@ registerResource({
         // The route first: with it off there is nothing to card, and the agent hears how to deploy only.
         const route = pub ? await pickRoute(pub.route).catch((err: unknown) => Promise.reject(deployOnly(err))) : null;
         const c = await checkWorkload(g, name, str(args.file, 'file'));
-        // Nothing here needs an owner: redeploy now instead of carding it.
-        // A throw is the only way a precheck answers without a card. --publish
+        // Nothing here needs an owner: redeploy now and answer with the result,
+        // with no card. redeploy runs its own checks again (shape, size, builds),
+        // so this does nothing \`ncl workloads redeploy\` would not. --publish
         // always needs its card, so it never takes this path.
-        if (!pub && (await withinApproval(g, c))) {
-          const w = view(await redeployWorkload(g, name, str(args.file, 'file')));
-          throw new Error(
-            `Redeployed (nothing needed approval; use \`ncl workloads redeploy\` next time): ${JSON.stringify(w)}`,
-          );
-        }
+        if (!pub && (await withinApproval(g, c)))
+          return { done: { ...view(await redeployWorkload(g, name, str(args.file, 'file'))), redeployed: true } };
         const size = (mb: number, cpus: number): string => `${gbText(mb)} memory, ${cpus} CPU`;
         const now = size(c.stack.total.memoryMb, c.stack.total.cpus);
         const was = c.existing ? size(c.existing.approvedMemoryMb, c.existing.approvedCpus) : null;

@@ -1,8 +1,8 @@
 diff --git a/src/cli/dispatch.test.ts b/src/cli/dispatch.test.ts
-index ee05ec06..ab111d42 100644
+index ee05ec06..16f46abc 100644
 --- a/src/cli/dispatch.test.ts
 +++ b/src/cli/dispatch.test.ts
-@@ -188,6 +188,24 @@ register({
+@@ -188,6 +188,25 @@ register({
    },
  });
  
@@ -14,6 +14,7 @@ index ee05ec06..ab111d42 100644
 +  parseArgs: (raw) => raw,
 +  precheck: async (args) => {
 +    if ((args as Record<string, unknown>).ok !== true) throw new Error('would fail');
++    if ((args as Record<string, unknown>).already === true) return { done: { redeployed: 'web' } };
 +    return {
 +      title: 'Deploy web',
 +      summary: '{agent} wants to deploy web.',
@@ -27,7 +28,7 @@ index ee05ec06..ab111d42 100644
  // Commands that return data shaped like real resources (for post-handler filtering tests)
  register({
    name: 'groups-list-data',
-@@ -606,6 +624,42 @@ describe('CLI scope enforcement', () => {
+@@ -606,6 +625,55 @@ describe('CLI scope enforcement', () => {
      expect(mockGetContainerConfig).not.toHaveBeenCalled();
    });
  
@@ -39,6 +40,19 @@ index ee05ec06..ab111d42 100644
 +    const bad = await dispatch({ id: '1', command: 'prechecked-command', args: {} }, agentCtx());
 +    expect(bad.ok).toBe(false);
 +    if (!bad.ok) expect(bad.error).toMatchObject({ code: 'handler-error', message: 'would fail' });
++    expect(approvalState.requestApproval).not.toHaveBeenCalled();
++  });
++
++  it('a precheck that already did the work answers with its result, as a success, with no card', async () => {
++    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
++    mockGetSession.mockReturnValue({ id: 's1', agent_group_id: 'g1', messaging_group_id: 'mg1' });
++    mockGetAgentGroup.mockReturnValue({ id: 'g1', name: 'Group One' });
++
++    const resp = await dispatch(
++      { id: '3', command: 'prechecked-command', args: { ok: true, already: true } },
++      agentCtx(),
++    );
++    expect(resp).toEqual({ id: '3', ok: true, data: { redeployed: 'web' } });
 +    expect(approvalState.requestApproval).not.toHaveBeenCalled();
 +  });
 +
