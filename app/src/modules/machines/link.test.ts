@@ -204,7 +204,23 @@ describe("the worker's fixed jobs", () => {
     const ok = [
       ['compose', '-p', 'nc-2e60-abc-demo', '-f', 'stack.yml', '-f', 'override.yml', 'up', '-d', '--pull', 'never'],
       ['compose', '-p', 'nc-x-y', '-f', 'stack.yml', '-f', 'override.yml', 'exec', '-T', 'web', 'ls'],
-      ['network', 'create', '--internal', '--subnet', '198.18.1.0/24', 'nc-wl-2e60-1'],
+      [
+        'network',
+        'create',
+        '--internal',
+        '--subnet',
+        '198.18.1.0/24',
+        '--gateway',
+        '198.18.1.1',
+        '--ip-range',
+        '198.18.1.128/25',
+        '-o',
+        'com.docker.network.bridge.name=ncwa1b2c31',
+        '--label',
+        'nanoclaw-workloads=2e60',
+        'nc-wl-2e60-1',
+      ],
+      ['network', 'rm', 'nc-wl-2e60-1'],
       ['network', 'inspect', 'bridge'],
       ['network', 'ls', '--format', '{{.Name}}'],
       ['image', 'inspect', 'nginx'],
@@ -222,6 +238,8 @@ describe("the worker's fixed jobs", () => {
       ['compose', '-p', 'nc-x', '-f', 'stack.yml', 'build'],
       ['compose', '-p', 'nc-x', '--project-directory', '/', 'up'],
       ['network', 'create', 'host-net'],
+      ['network', 'create', '--internal', '--subnet', '198.18.1.0/24', 'nc-wl-2e60-1'],
+      ['network', 'create', '-d', 'macvlan', '-o', 'parent=eth0', 'nc-wl-2e60-1'],
       ['image', 'rm', 'nginx'],
       ['cp', 'a', 'b'],
       [1, 2],
@@ -315,7 +333,7 @@ describe("the worker's fixed jobs", () => {
     expect(h.memTotalMb).toBe(16000);
     expect(h.memUsedMb).toBe(10000);
     expect(h.memNanoclawMb).toBe(0);
-    expect(h.agentVersion).toBe('5');
+    expect(h.agentVersion).toBe('6');
     __setIsolationForTest('ok', Date.now() - 90_000);
     const h2 = health((p) => {
       if (p in files) return files[p];

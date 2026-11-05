@@ -17,7 +17,7 @@ import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
 
-import { stringify } from 'yaml';
+import { parse, stringify } from 'yaml';
 
 import { DATA_DIR, INSTALL_SLUG } from '../../config.js';
 import { CONTAINER_RUNTIME_BIN } from '../../container-runtime.js';
@@ -407,6 +407,12 @@ export function writeFiles(
 
 const clip = (s: string): string => (s.length > MAX_OUTPUT ? `…${s.slice(-MAX_OUTPUT)}` : s);
 
+/**
+ * A Compose file as JSON, for a worker: Compose reads JSON as YAML, and the
+ * worker checks the files again with built-ins only (worker-main.ts).
+ */
+export const asJson = (file: string): string => JSON.stringify(parse(fs.readFileSync(file, 'utf8')), null, 2);
+
 /** `docker compose` for one workload. Output is clipped; errors carry the tail of stderr. */
 export async function compose(w: Workload, args: string[], timeoutMs = 600_000): Promise<string> {
   const dir = workDir(w.id);
@@ -419,8 +425,8 @@ export async function compose(w: Workload, args: string[], timeoutMs = 600_000):
             timeoutMs,
             dir: w.id,
             files: {
-              'stack.yml': fs.readFileSync(path.join(dir, 'stack.yml'), 'utf8'),
-              'override.yml': fs.readFileSync(path.join(dir, 'override.yml'), 'utf8'),
+              'stack.yml': asJson(path.join(dir, 'stack.yml')),
+              'override.yml': asJson(path.join(dir, 'override.yml')),
             },
           });
     return clip(`${stdout}${stderr}`.trim());

@@ -88,9 +88,10 @@ describe('docker on a worker', () => {
     ]);
     expect(local).toEqual([]);
     expect(c.payload.dir).toBe('w-1');
+    // Sent as JSON, which Compose reads as YAML and the worker checks with built-ins.
     expect(c.payload.files).toEqual({
-      'stack.yml': 'services: {}\n',
-      'override.yml': 'x: 1\n',
+      'stack.yml': JSON.stringify({ services: {} }, null, 2),
+      'override.yml': JSON.stringify({ x: 1 }, null, 2),
     });
   });
 

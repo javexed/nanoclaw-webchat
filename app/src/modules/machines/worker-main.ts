@@ -44,7 +44,7 @@ import tls from 'tls';
 
 import { Mux, type Message } from './mux.js';
 
-export const WORKER_VERSION = '5';
+export const WORKER_VERSION = '6';
 const CONF_DIR = process.env.NC_MACHINE_DIR || '/etc/nanoclaw-machine';
 const WORK = process.env.NC_WORKER_DIR || '/var/lib/nanoclaw-worker';
 const MAX_OUT = 20_000;
@@ -101,7 +101,8 @@ export function refuseDocker(args: unknown): string | null {
   if (cmd === 'network') {
     if (sub === 'ls') return null;
     if (sub === 'inspect') return null;
-    if ((sub === 'create' || sub === 'rm') && NAME.test(a.at(-1) ?? '')) return null;
+    if (sub === 'rm' && a.length === 3 && NAME.test(a[2])) return null;
+    if (sub === 'create') return refuseNetworkCreate(a);
     return `network ${sub ?? ''} not allowed`;
   }
   if (cmd === 'image') {
@@ -111,6 +112,209 @@ export function refuseDocker(args: unknown): string | null {
   }
   if (cmd === 'system' && sub === 'df') return null;
   return `docker ${cmd ?? ''} not allowed`;
+}
+
+/**
+ * `network create` only in the one shape a workload network has (docker.ts
+ * createInternalNetwork): internal, a /24 of 198.18.0.0/15 with its .1 as
+ * gateway and its upper half for containers, a bridge named ncw…, NanoClaw's
+ * label. Anything else (a macvlan on the LAN, a network that is not internal)
+ * is refused.
+ */
+export function refuseNetworkCreate(a: string[]): string | null {
+  const bad = 'network create: only an internal workload network';
+  if (a.length !== 14) return bad;
+  const [, , internal, fSubnet, subnet, fGw, gateway, fRange, range, fOpt, opt, fLabel, label, name] = a;
+  if (internal !== '--internal' || fSubnet !== '--subnet' || fGw !== '--gateway' || fRange !== '--ip-range') return bad;
+  if (fOpt !== '-o' || fLabel !== '--label' || !NAME.test(name)) return bad;
+  const m = /^(198\.1[89]\.(\d{1,3}))\.0\/24$/.exec(subnet);
+  if (!m || Number(m[2]) > 255) return bad;
+  if (gateway !== `${m[1]}.1` || range !== `${m[1]}.128/25`) return bad;
+  if (!/^com\.docker\.network\.bridge\.name=ncw[a-z0-9]{1,12}$/.test(opt)) return bad;
+  if (!/^nanoclaw-workloads=[A-Za-z0-9_.-]{1,80}$/.test(label)) return bad;
+  return null;
+}
+
+// ── the Compose files central sends ───────────────────────────────────────────
+//
+// Central checks every stack (workloads/policy.ts) and writes NanoClaw's
+// override (workloads/override.ts) before anything is sent here. This machine
+// checks the files again rather than trust that: a central that is not itself
+// any more must not be able to run a privileged container, mount this
+// machine's files, or join its host namespaces. Central sends the files as
+// JSON (which Compose reads as YAML), so they parse with built-ins.
+
+/** Service keys a stack may use here: central's allowlist (policy.ts), without build. */
+const SERVICE_KEYS = new Set([
+  'image',
+  'command',
+  'entrypoint',
+  'environment',
+  'working_dir',
+  'user',
+  'healthcheck',
+  'depends_on',
+  'expose',
+  'labels',
+  'volumes',
+  'tmpfs',
+  'mem_limit',
+  'cpus',
+  'deploy',
+  'stop_grace_period',
+  'stop_signal',
+  'init',
+  'read_only',
+  'shm_size',
+  'hostname',
+  'platform',
+  'restart',
+  'cap_add',
+]);
+/** Capabilities a service may add back (policy.ts CAP_ADD_ALLOWED). */
+const CAPS = new Set(['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'FSETID', 'SETUID', 'SETGID', 'NET_BIND_SERVICE', 'KILL']);
+/** Label prefixes only NanoClaw and Compose set. */
+const RESERVED_LABEL = /^(nanoclaw[.-]|com\.docker\.)/;
+/** The images a stack runs here: the ones central sent (docker.ts pulledImageName / builtImageName). */
+const STACK_IMAGE = /^nc-[a-z0-9_.-]{1,160}:(pulled|built)$/;
+
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+function labelKeys(v: unknown): string[] | null {
+  if (Array.isArray(v)) return v.every((x) => typeof x === 'string') ? v.map((x) => String(x).split('=')[0]) : null;
+  if (isObj(v)) return Object.keys(v);
+  return v === undefined ? [] : null;
+}
+
+/** A volume mount is a named volume of the stack or a tmpfs, never a path on this machine. */
+function volumeMountOk(v: unknown, named: Set<string>): boolean {
+  if (typeof v === 'string') {
+    const [src = '', dst = '', ...rest] = v.split(':');
+    if (!dst || rest.length > 1 || (rest.length === 1 && !['ro', 'rw'].includes(rest[0]))) return false;
+    return /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(src) && named.has(src);
+  }
+  if (!isObj(v)) return false;
+  if (v.type === 'tmpfs') return v.source === undefined;
+  return v.type === 'volume' && typeof v.source === 'string' && named.has(v.source) && v.bind === undefined;
+}
+
+function hasKeyDeep(v: unknown, key: string): boolean {
+  if (Array.isArray(v)) return v.some((x) => hasKeyDeep(x, key));
+  if (!isObj(v)) return false;
+  return Object.entries(v).some(([k, x]) => k === key || hasKeyDeep(x, key));
+}
+
+function refuseStack(stack: unknown, project: string): string | null {
+  if (!isObj(stack)) return 'stack.yml must be an object';
+  for (const k of Object.keys(stack)) if (k !== 'services' && k !== 'volumes') return `stack.yml: ${k} not allowed`;
+  const volumes = stack.volumes ?? {};
+  if (!isObj(volumes)) return 'stack.yml: volumes must be an object';
+  for (const [name, v] of Object.entries(volumes)) {
+    if (v === null) continue;
+    if (!isObj(v)) return `volume ${name}: bad definition`;
+    for (const k of Object.keys(v)) if (k !== 'driver') return `volume ${name}: ${k} not allowed`;
+    if (v.driver !== undefined && v.driver !== 'local') return `volume ${name}: only the local driver`;
+  }
+  const named = new Set(Object.keys(volumes));
+  if (!isObj(stack.services) || !Object.keys(stack.services).length) return 'stack.yml: no services';
+  for (const [name, svc] of Object.entries(stack.services)) {
+    if (!isObj(svc)) return `${name}: bad service`;
+    for (const k of Object.keys(svc))
+      if (!SERVICE_KEYS.has(k) && !k.startsWith('x-')) return `${name}: ${k} not allowed`;
+    if (typeof svc.image !== 'string' || !STACK_IMAGE.test(svc.image) || !svc.image.startsWith(`${project}-`))
+      return `${name}: only an image NanoClaw sent for this stack`;
+    if (svc.cap_add !== undefined) {
+      if (!Array.isArray(svc.cap_add)) return `${name}: cap_add must be a list`;
+      for (const c of svc.cap_add)
+        if (typeof c !== 'string' || !CAPS.has(c.toUpperCase().replace(/^CAP_/, '')))
+          return `${name}: capability ${String(c)} not allowed`;
+    }
+    if (svc.volumes !== undefined) {
+      if (!Array.isArray(svc.volumes)) return `${name}: volumes must be a list`;
+      for (const v of svc.volumes) if (!volumeMountOk(v, named)) return `${name}: only named volumes of the stack`;
+    }
+    const labels = labelKeys(svc.labels);
+    if (!labels) return `${name}: bad labels`;
+    if (labels.some((l) => RESERVED_LABEL.test(l))) return `${name}: reserved label`;
+    if (svc.deploy !== undefined && (!isObj(svc.deploy) || hasKeyDeep(svc.deploy, 'devices')))
+      return `${name}: devices not allowed`;
+  }
+  return null;
+}
+
+function refuseOverride(o: unknown, stack: Record<string, unknown>, project: string): string | null {
+  const bad = (why: string) => `override.yml: ${why}`;
+  if (!isObj(o)) return bad('must be an object');
+  if (!sameJson(Object.keys(o).sort(), ['name', 'networks', 'services'])) return bad('unexpected keys');
+  if (o.name !== project) return bad('another project');
+  const net = isObj(o.networks) ? o.networks.nanoclaw : undefined;
+  if (!isObj(o.networks) || Object.keys(o.networks).length !== 1 || !isObj(net)) return bad('one network');
+  if (!sameJson(Object.keys(net).sort(), ['external', 'name']) || net.external !== true || !NAME.test(String(net.name)))
+    return bad('the stack network must be an existing workload network');
+  const services = isObj(o.services) ? o.services : null;
+  const names = Object.keys(isObj(stack.services) ? stack.services : {}).sort();
+  if (!services || !sameJson(Object.keys(services).sort(), names)) return bad('services differ from the stack');
+  const keys = ['cap_drop', 'cgroup_parent', 'deploy', 'labels', 'logging', 'networks', 'security_opt'];
+  for (const [name, s] of Object.entries(services)) {
+    if (!isObj(s) || !sameJson(Object.keys(s).sort(), keys)) return bad(`${name}: unexpected keys`);
+    if (!sameJson(s.cap_drop, ['ALL'])) return bad(`${name}: every capability must be dropped`);
+    if (!sameJson(s.security_opt, ['no-new-privileges:true'])) return bad(`${name}: no-new-privileges`);
+    if (typeof s.cgroup_parent !== 'string' || !SLICE.test(s.cgroup_parent)) return bad(`${name}: the workloads slice`);
+    const addr = isObj(s.networks) && isObj(s.networks.nanoclaw) ? s.networks.nanoclaw.ipv4_address : undefined;
+    if (!isObj(s.networks) || Object.keys(s.networks).length !== 1 || !isObj(s.networks.nanoclaw))
+      return bad(`${name}: the stack network only`);
+    if (Object.keys(s.networks.nanoclaw).join() !== 'ipv4_address' || !serviceAddress(addr))
+      return bad(`${name}: a service address`);
+    if (!sameJson(s.logging, { driver: 'json-file', options: { 'max-size': '10m', 'max-file': '3' } }))
+      return bad(`${name}: logging`);
+    const labels = labelKeys(s.labels);
+    if (!labels || !isObj(s.labels) || labels.some((l) => !l.startsWith('nanoclaw.')))
+      return bad(`${name}: NanoClaw's labels only`);
+    const pids =
+      isObj(s.deploy) && isObj(s.deploy.resources) && isObj(s.deploy.resources.limits)
+        ? s.deploy.resources.limits.pids
+        : undefined;
+    if (
+      !sameJson(Object.keys(s.deploy as object), ['resources']) ||
+      !Number.isInteger(pids) ||
+      Number(pids) < 1 ||
+      Number(pids) > 65536
+    )
+      return bad(`${name}: a pids limit`);
+  }
+  return null;
+}
+
+/**
+ * Why the Compose files central sent for `project` are refused here, or null.
+ * Both must be there: a stack (central's checked services, images it sent)
+ * and NanoClaw's override (every capability dropped, no new privileges, the
+ * workloads slice, a service address on the stack's internal network).
+ */
+export function refuseComposeFiles(files: Record<string, unknown>, project: string): string | null {
+  if (!NAME.test(project)) return 'a NanoClaw project is required';
+  const parsed: Record<string, unknown> = {};
+  for (const f of COMPOSE_FILES) {
+    const text = files[f];
+    if (typeof text !== 'string') return `${f} is missing`;
+    try {
+      parsed[f] = JSON.parse(text);
+    } catch {
+      return `${f} must be JSON`;
+    }
+  }
+  const stack = parsed['stack.yml'];
+  return (
+    refuseStack(stack, project) ?? refuseOverride(parsed['override.yml'], stack as Record<string, unknown>, project)
+  );
+}
+
+/** A service address: .10–.127 of a workload network (never the gateway .1, which is this machine). */
+function serviceAddress(host: unknown): boolean {
+  if (!workloadAddress(host)) return false;
+  const last = Number(String(host).split('.')[3]);
+  return last >= FIRST_SERVICE && last <= LAST_SERVICE;
 }
 
 /** Is this an address of a workload network (198.18.0.0/15)? */
@@ -134,6 +338,20 @@ export function tcpAllowed(host: unknown, port: unknown, held: ReadonlySet<strin
   if (!workloadAddress(host) || !Number.isInteger(p) || p < 1 || p > 65535) return false;
   const last = Number(String(host).split('.')[3]);
   return last >= FIRST_SERVICE && last <= LAST_SERVICE && held.has(String(host));
+}
+
+/** The -p project of a compose command ('' when there is none). */
+function composeProject(args: string[]): string {
+  if (args[0] !== 'compose') return '';
+  const i = args.indexOf('-p');
+  return i > 0 ? (args[i + 1] ?? '') : '';
+}
+
+/** Write a file whole or not at all, with its mode set before any content is in it. */
+function writeAtomic(file: string, text: string): void {
+  const tmp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  fs.writeFileSync(tmp, text, { mode: 0o600, flag: 'wx' });
+  fs.renameSync(tmp, file);
 }
 
 /** Compose verbs that start containers: refused here until the isolation check passes. */
@@ -369,9 +587,12 @@ async function dockerOp(msg: Message) {
     cwd = path.join(WORK, 'wl', msg.dir);
     fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });
     const files = (msg.files ?? {}) as Record<string, unknown>;
-    for (const [name, text] of Object.entries(files)) {
+    for (const [name, text] of Object.entries(files))
       if (!COMPOSE_FILES.has(name) || typeof text !== 'string') throw new Error('refused: bad file');
-      fs.writeFileSync(path.join(cwd, name), text, { mode: 0o600 });
+    if (Object.keys(files).length) {
+      const refused = refuseComposeFiles(files, composeProject(msg.args as string[]));
+      if (refused) throw new Error(`refused: ${refused}`);
+      for (const [name, text] of Object.entries(files)) writeAtomic(path.join(cwd, name), String(text));
     }
   }
   return run('docker', msg.args as string[], { cwd, timeoutMs: Number(msg.timeoutMs) || 600_000 });
@@ -405,20 +626,120 @@ async function hasImageOp(msg: Message) {
   return r.code === 0 ? r.stdout.trim() || null : null;
 }
 
-/** An image central sends (docker save): loaded as is; nothing else is run. */
+/** The names an image central sends may load under: a stack's image, or NanoClaw's helper. */
+export const LOADABLE = /^(nc-[a-z0-9_.-]{1,160}:(pulled|built)|nanoclaw-workload-helper:[a-z0-9]{1,16})$/;
+const MAX_META = 1024 * 1024;
+
+/**
+ * The image names a `docker save` archive would load under: manifest.json's
+ * RepoTags, the legacy repositories file, and index.json's name annotations.
+ * Reads only tar headers and those small files.
+ */
+export function archiveNames(file: string): { names: string[]; manifest: boolean } {
+  const fd = fs.openSync(file, 'r');
+  const names: string[] = [];
+  let manifest = false;
+  try {
+    const size = fs.fstatSync(fd).size;
+    const h = Buffer.alloc(512);
+    let pos = 0;
+    let longName: string | null = null;
+    while (pos + 512 <= size) {
+      fs.readSync(fd, h, 0, 512, pos);
+      if (h.every((b) => b === 0)) break;
+      const field = (o: number, n: number) =>
+        h
+          .subarray(o, o + n)
+          .toString('latin1')
+          .replace(/\0.*$/s, '');
+      const len = parseInt(field(124, 12).trim() || '0', 8);
+      if (!Number.isFinite(len) || len < 0) throw new Error('bad archive');
+      const type = String.fromCharCode(h[156] || 48);
+      const prefix = field(345, 155);
+      let name = longName ?? (prefix ? `${prefix}/${field(0, 100)}` : field(0, 100));
+      longName = null;
+      const body = (): string => {
+        if (len > MAX_META) throw new Error('bad archive');
+        const b = Buffer.alloc(len);
+        fs.readSync(fd, b, 0, len, pos + 512);
+        return b.toString('utf8');
+      };
+      if (type === 'L') longName = body().replace(/\0.*$/s, '');
+      else if (type === 'x') {
+        const m = /\d+ path=([^\n]*)\n/.exec(body());
+        if (m) longName = m[1];
+      } else {
+        name = name.replace(/^\.\//, '');
+        if (name === 'manifest.json') {
+          manifest = true;
+          const list = JSON.parse(body()) as Array<{ RepoTags?: unknown }>;
+          if (!Array.isArray(list)) throw new Error('bad manifest');
+          for (const e of list) for (const t of Array.isArray(e?.RepoTags) ? e.RepoTags : []) names.push(String(t));
+        } else if (name === 'repositories') {
+          const repos = JSON.parse(body()) as Record<string, Record<string, unknown>>;
+          for (const [repo, tags] of Object.entries(repos ?? {}))
+            for (const tag of Object.keys(tags ?? {})) names.push(`${repo}:${tag}`);
+        } else if (name === 'index.json') {
+          const idx = JSON.parse(body()) as { manifests?: Array<{ annotations?: Record<string, unknown> }> };
+          for (const m of idx?.manifests ?? []) {
+            const n = m?.annotations?.['io.containerd.image.name'];
+            if (n !== undefined) names.push(String(n).replace(/^docker\.io\/library\//, ''));
+          }
+        }
+      }
+      pos += 512 + Math.ceil(len / 512) * 512;
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return { names, manifest };
+}
+
+/** Why an archive must not be loaded as `image`, or null: it may only name that image. */
+export function refuseArchive(file: string, image: string): string | null {
+  let found: { names: string[]; manifest: boolean };
+  try {
+    found = archiveNames(file);
+  } catch (err) {
+    return `not an image archive (${(err as Error).message})`;
+  }
+  if (!found.manifest) return 'not an image archive (no manifest.json)';
+  const other = found.names.find((n) => n !== image);
+  if (other) return `the archive would also load ${other.slice(0, 200)}`;
+  if (!found.names.includes(image)) return `the archive does not hold ${image}`;
+  return null;
+}
+
+/**
+ * An image central sends (docker save), under a name NanoClaw owns. It is
+ * written to this machine's work folder first, and loaded only when every
+ * name in it is that one, so it can never re-tag an image something else on
+ * this machine uses. Nothing else is run.
+ */
 function onImageLoad(meta: Record<string, unknown>, stream: Duplex): void {
-  if (!IMAGE.test(String(meta.image ?? ''))) return void stream.destroy(new Error('refused: bad image'));
-  const p = spawn('docker', ['load', '--quiet'], {
-    env: { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin', HOME: process.env.HOME ?? '/root' },
+  const image = String(meta.image ?? '');
+  if (!LOADABLE.test(image)) return void stream.destroy(new Error('refused: not a NanoClaw image name'));
+  const file = path.join(WORK, `image-${crypto.randomBytes(8).toString('hex')}.tar`);
+  let out: fs.WriteStream;
+  try {
+    fs.mkdirSync(WORK, { recursive: true, mode: 0o700 });
+    out = fs.createWriteStream(file, { mode: 0o600, flags: 'wx' });
+  } catch (err) {
+    return void stream.destroy(err as Error);
+  }
+  const drop = () => fs.rmSync(file, { force: true });
+  stream.on('error', () => (out.destroy(), drop()));
+  out.on('error', (e) => (drop(), stream.destroy(e)));
+  stream.pipe(out);
+  out.on('finish', () => {
+    const why = refuseArchive(file, image);
+    if (why) return void (drop(), stream.destroy(new Error(`refused: ${why}`)));
+    void run('docker', ['load', '--quiet', '--input', file], { timeoutMs: 1_200_000 }).then((r) => {
+      drop();
+      if (r.code === 0) stream.end();
+      else stream.destroy(new Error(r.stderr.trim() || `exit ${r.code}`));
+    });
   });
-  let err = '';
-  p.stderr.on('data', (d: Buffer) => (err = (err + d.toString()).slice(-2000)));
-  p.on('error', (e) => stream.destroy(e));
-  p.stdin.on('error', () => undefined);
-  stream.pipe(p.stdin);
-  p.stdout.resume();
-  stream.on('error', () => p.kill('SIGKILL'));
-  p.on('close', (code) => (code === 0 ? stream.end() : stream.destroy(new Error(err.trim() || `exit ${code}`))));
 }
 
 // ── files and volumes as streams ──────────────────────────────────────────────
