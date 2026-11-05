@@ -28,6 +28,8 @@ export interface Thread {
   title?: string;
   kind?: string;
   unread?: boolean;
+  /** Owner, or the requester started it. */
+  can_delete?: boolean;
 }
 
 /** An agent as the console sees it: every property the agents list, detail pane,

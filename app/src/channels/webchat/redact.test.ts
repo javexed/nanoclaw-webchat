@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { redactSensitiveData } from './redact.js';
+import { redactMessageContent, redactSensitiveData } from './redact.js';
 
 describe('redactSensitiveData — sensitive patterns', () => {
   it.each([
@@ -64,6 +64,55 @@ describe('redactSensitiveData — false-positive guards', () => {
     expect(redactSensitiveData(text)).toBe(text);
   });
 
+  it('leaves variable references alone in key=value secrets', () => {
+    const cmd = [
+      'az deployment group create --name AppDeployment \\',
+      '  --parameters dbPassword="$DB_PASSWORD" hashSalt="$HASH_SALT" \\',
+      '               containerRegistryPassword="$ACR_PASSWORD" \\',
+      '               openidConnectClientSecret="${OIDC_SECRET}"',
+    ].join('\n');
+    expect(redactSensitiveData(cmd)).toBe(cmd);
+    for (const t of [
+      'API_KEY=$env:API_KEY',
+      'TOKEN=%GITHUB_TOKEN%',
+      'SECRET={{ client_secret }}',
+      'password: <your-password>',
+      'password=$DB_PASSWORD',
+      'DB_PASSWORD=$(az keyvault secret show --name db)',
+      "PG_ADMIN_PASSWORD='<psqladmin password>' bash scripts/provision-site-db.sh",
+      "--settings DB_PASSWORD='<the role password>'",
+    ])
+      expect(redactSensitiveData(t)).toBe(t);
+  });
+
+  it('reads "password is <word>" as prose, but masks a password-like value', () => {
+    for (const t of [
+      'the password is blank:',
+      'If admin is enabled and the password is real — then',
+      'the token is expired.',
+      '**Blocker: client secret is expired**',
+      '(the pin is gone), fillpdf',
+    ])
+      expect(redactSensitiveData(t)).toBe(t);
+    expect(redactSensitiveData('my password is Hunter2!')).not.toContain('Hunter2');
+    for (const [t, secret] of [
+      ['password is hunter2', 'hunter2'],
+      ['the password is sunshine', 'sunshine'],
+      ['my password is letmein.', 'letmein'],
+      ['the client secret is swordfish', 'swordfish'],
+      ["password is 'dragon'", 'dragon'],
+    ])
+      expect(redactSensitiveData(t)).not.toContain(secret);
+    expect(redactSensitiveData('password: sunshine')).not.toContain('sunshine');
+  });
+
+  it('still masks a literal value next to a variable', () => {
+    const out = redactSensitiveData('dbPassword="Hunter2Hunter2" hashSalt="$HASH_SALT" password=$ecretValue!');
+    expect(out).not.toContain('Hunter2Hunter2');
+    expect(out).toContain('hashSalt="$HASH_SALT"');
+    expect(out).not.toContain('$ecretValue!');
+  });
+
   it('preserves a full message when nothing matches', async () => {
     const text = 'Hello world — completely innocuous content with no secrets.';
     expect(redactSensitiveData(text)).toBe(text);
@@ -78,5 +127,28 @@ describe('redactSensitiveData — masking shape', () => {
     const out = redactSensitiveData(`my key is ${key} please`);
     // ANTHROPIC_KEY keeps prefix=14, suffix=4 — shape `[ANTHROPIC_KEY:<head>****<tail>]`
     expect(out).toMatch(/\[ANTHROPIC_KEY:sk-ant-api03-X\*+AAAA\]/);
+  });
+});
+
+describe('redactMessageContent', () => {
+  it('keeps a JSON card parseable when a value inside it is redacted', () => {
+    const card = JSON.stringify({
+      skillName: 'ansible-become-false-needs-both-keys',
+      description: 'Stop a play failing with "sudo: a password is required" at the group level',
+    });
+    const out = redactMessageContent(card);
+    const parsed = JSON.parse(out) as { skillName: string; description: string };
+    expect(parsed.skillName).toBe('ansible-become-false-needs-both-keys');
+    expect(parsed.description).toBe(
+      redactSensitiveData('Stop a play failing with "sudo: a password is required" at the group level'),
+    );
+  });
+
+  it('redacts secrets inside JSON values, and plain text as before', () => {
+    const key = 'sk-ant-api03-' + 'a'.repeat(40);
+    expect(redactMessageContent(JSON.stringify({ text: `key ${key}` }))).not.toContain(key);
+    expect(redactMessageContent(`key ${key}`)).toBe(redactSensitiveData(`key ${key}`));
+    // Not JSON after all: redacted as text.
+    expect(redactMessageContent(`{ not json ${key}`)).toBe(redactSensitiveData(`{ not json ${key}`));
   });
 });

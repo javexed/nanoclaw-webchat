@@ -158,6 +158,7 @@ describe('moduleWebchat migration', () => {
       'webchat-tailscale-owner',
       'webchat-template-sources',
       'webchat-thread-context-sync',
+      'webchat-thread-creator',
       'webchat-thread-engaged',
       'webchat-threads',
       'webchat-turn-traces',

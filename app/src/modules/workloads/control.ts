@@ -19,6 +19,7 @@ import {
   compose,
   copyBuildContext,
   ensureNetwork,
+  foreignIndexes,
   joinAgentContainers,
   networkName,
   pinRef,
@@ -213,7 +214,7 @@ async function deploy(w: Workload, agentGroupId: string): Promise<Workload> {
   requireWorkloads();
   const approved = decodeApproved(w.approvedShape);
   if (!approved) throw new Error(`${w.name} has no approval on record: run \`ncl workloads up\``);
-  const net = await claimNetwork(agentGroupId, networkName, MAX_NETWORKS);
+  const net = await claimNetwork(agentGroupId, networkName, MAX_NETWORKS, await foreignIndexes());
   const network = await ensureNetwork(net.idx);
   const taken = (await listWorkloads({ agentGroupId }))
     .filter((o) => o.id !== w.id)
