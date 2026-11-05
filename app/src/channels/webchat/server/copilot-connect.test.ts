@@ -35,9 +35,11 @@ vi.mock('../../../container-restart-idle.js', () => ({
 
 const {
   __resetCopilotLoginState,
+  __setCopilotDisconnectDeps,
   __setCopilotLoginSpawner,
   accountFile,
   cancelCopilotLogin,
+  copilotLoginBusy,
   copilotStatus,
   disconnectCopilot,
   getCopilotLoginProgress,
@@ -54,10 +56,14 @@ let fake: string;
 const FAKE = `
 const mode = process.argv[2];
 const out = (e) => process.stdout.write(JSON.stringify(e) + '\\n');
-process.on('SIGTERM', () => { out({ event: 'error', code: 'cancelled', message: 'Cancelled.' }); process.exit(1); });
+process.on('SIGTERM', () => {
+  // 'saving': the cancel lands while the credential is being stored.
+  if (mode === 'saving') setTimeout(() => { out({ event: 'error', code: 'saved-cancelled', message: 'Cancelled.' }); process.exit(1); }, 100);
+  else { out({ event: 'error', code: 'cancelled', message: 'Cancelled.' }); process.exit(1); }
+});
 out({ event: 'device', verificationUrl: 'https://github.com/login/device', userCode: 'ABCD-1234' });
 process.stdout.write('not json, and must never be shown\\n');
-if (mode === 'hang') { setInterval(() => {}, 1000); return; }
+if (mode === 'hang' || mode === 'saving') { setInterval(() => {}, 1000); return; }
 setTimeout(() => {
   out({ event: 'status', message: 'Checking the Copilot seat…' });
   if (mode === 'ok') { out({ event: 'connected', login: 'octo', plan: 'business', apiUrl: 'https://api.business.githubcopilot.com' }); process.exit(0); }
@@ -77,6 +83,7 @@ beforeEach(() => {
 
 afterEach(() => {
   __setCopilotLoginSpawner(null);
+  __setCopilotDisconnectDeps(null);
   __resetCopilotLoginState();
   fs.rmSync(root, { recursive: true, force: true });
 });
@@ -163,6 +170,50 @@ describe('startCopilotLogin', () => {
     expect(getCopilotLoginProgress()).toMatchObject({ running: false, outcome: 'failed', error: 'Cancelled.' });
     expect(cancelCopilotLogin()).toEqual({ cancelled: false });
   });
+
+  it('shows the code only to the admin who started the flow', async () => {
+    useFake('hang');
+    startCopilotLogin(root, { id: 'webchat:ann', name: 'Ann' });
+    await vi.waitFor(() => expect(getCopilotLoginProgress('webchat:ann').userCode).toBe('ABCD-1234'));
+    expect(getCopilotLoginProgress('webchat:ann')).toMatchObject({ mine: true, startedBy: 'Ann' });
+    expect(getCopilotLoginProgress('webchat:bob')).toMatchObject({
+      running: true,
+      mine: false,
+      startedBy: 'Ann',
+      userCode: null,
+      verificationUrl: null,
+    });
+    cancelCopilotLogin();
+  });
+
+  it('stays busy after a cancel until the script has exited', async () => {
+    useFake('hang');
+    startCopilotLogin(root);
+    await vi.waitFor(() => expect(getCopilotLoginProgress().userCode).toBe('ABCD-1234'));
+    expect(copilotLoginBusy()).toBe(true);
+    cancelCopilotLogin();
+    expect(copilotLoginBusy()).toBe(true);
+    await vi.waitFor(() => expect(copilotLoginBusy()).toBe(false), { timeout: 5000 });
+  });
+
+  it('rolls back a credential a cancelled sign-in stored anyway', async () => {
+    const deleteSecret = vi.fn(async () => {});
+    fs.mkdirSync(path.join(root, 'data', 'onecli'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, 'data', 'onecli', 'provider-credentials.json'),
+      JSON.stringify({ providers: { copilot: ['s1'] } }),
+    );
+    __setCopilotDisconnectDeps({
+      admin: { listAllSecrets: async () => [{ id: 's1', name: 'Copilot API' }], deleteSecret },
+      updateRecord: null,
+    });
+    useFake('saving');
+    startCopilotLogin(root);
+    await vi.waitFor(() => expect(getCopilotLoginProgress().userCode).toBe('ABCD-1234'));
+    cancelCopilotLogin();
+    await vi.waitFor(() => expect(deleteSecret).toHaveBeenCalledWith('s1'), { timeout: 5000 });
+    expect(getCopilotLoginProgress().error).toBe('Cancelled.');
+  });
 });
 
 describe('copilotStatus', () => {
@@ -243,10 +294,67 @@ describe('disconnectCopilot', () => {
     expect(fs.readFileSync(path.join(root, '.env'), 'utf8')).toBe('A=1\n');
   });
 
-  it('with nothing recorded, touches no secret', async () => {
-    const listed = vi.fn(async () => []);
-    await disconnectCopilot(root, { admin: { listAllSecrets: listed, deleteSecret: vi.fn() }, updateRecord: null });
-    expect(listed).not.toHaveBeenCalled();
+  it('with nothing recorded and no Copilot secrets, deletes nothing and succeeds', async () => {
+    const deleteSecret = vi.fn();
+    const res = await disconnectCopilot(root, {
+      admin: { listAllSecrets: async () => [{ id: 'o1', name: 'Other' }], deleteSecret },
+      updateRecord: null,
+    });
+    expect(res).toEqual({ deleted: 0 });
+    expect(deleteSecret).not.toHaveBeenCalled();
+  });
+
+  const writeConnected = () => {
+    fs.mkdirSync(path.dirname(accountFile(root)), { recursive: true });
+    fs.writeFileSync(accountFile(root), '{}');
+  };
+
+  it('never reports success while unrecorded Copilot secrets remain, or the gateway cannot be listed', async () => {
+    const deleteSecret = vi.fn();
+    writeConnected();
+    await expect(
+      disconnectCopilot(root, {
+        admin: { listAllSecrets: async () => [{ id: 'x1', name: 'Copilot API' }], deleteSecret },
+        updateRecord: null,
+      }),
+    ).rejects.toMatchObject({ code: 'unrecorded', message: expect.stringContaining('OneCLI') });
+    expect(deleteSecret).not.toHaveBeenCalled();
+    // This install stops using it; the error tells the admin what is left.
+    expect(fs.existsSync(accountFile(root))).toBe(false);
+    await expect(
+      disconnectCopilot(root, {
+        admin: {
+          listAllSecrets: async () => {
+            throw new Error('onecli: not found');
+          },
+          deleteSecret,
+        },
+        updateRecord: null,
+      }),
+    ).rejects.toMatchObject({ code: 'unrecorded' });
+  });
+
+  it('a failed delete is an error and leaves the connection for a retry', async () => {
+    fs.mkdirSync(path.join(root, 'data', 'onecli'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, 'data', 'onecli', 'provider-credentials.json'),
+      JSON.stringify({ providers: { copilot: ['s1'] } }),
+    );
+    writeConnected();
+    const updateRecord = vi.fn();
+    await expect(
+      disconnectCopilot(root, {
+        admin: {
+          listAllSecrets: async () => [{ id: 's1', name: 'Copilot API' }],
+          deleteSecret: async () => {
+            throw new Error('500 from http://gateway/secret?token=x');
+          },
+        },
+        updateRecord,
+      }),
+    ).rejects.toMatchObject({ code: 'gateway', message: expect.not.stringContaining('token') });
+    expect(updateRecord).not.toHaveBeenCalled();
+    expect(fs.existsSync(accountFile(root))).toBe(true);
   });
 });
 

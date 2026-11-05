@@ -39,7 +39,8 @@ provider, rebuilds the agent image and restarts NanoClaw (a few minutes). Then
 **Connect GitHub Copilot…** shows a code and a link: open the link on any
 device, enter the code, and sign in with your work account. The card switches
 to *Connected* with the plan and endpoint, and offers **Disconnect**. The same
-install button is in Admin → Access & credentials.
+install button is in Admin → Access & credentials. One sign-in runs at a time;
+only the admin who started it sees its code, others see who has it in progress.
 
 **From a terminal on the host (works over SSH):**
 
@@ -73,7 +74,14 @@ GitHub under the seat's billing, not in webchat.
 **Disconnect** deletes both stored secrets from the gateway, forgets their
 recorded ids and removes `data/copilot/account.json`. Agents set to GitHub
 Copilot stay set to it and fail with "reconnect Copilot in Settings" until the
-next connect.
+next connect. It is refused while a sign-in is running. If it cannot confirm
+the secrets are gone — none were recorded for this install but secrets named
+*Copilot GitHub* / *Copilot API* exist, the gateway cannot be listed, or a
+delete fails — it reports an error instead of success: remove those secrets in
+OneCLI.
+
+A cancel that lands while the sign-in is storing the credential is rolled back:
+webchat removes what was stored. From a terminal, run Disconnect afterwards.
 
 ## How the credential is handled
 
