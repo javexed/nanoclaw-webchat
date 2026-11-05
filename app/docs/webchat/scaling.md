@@ -55,7 +55,9 @@ that. It refuses, whatever central sends:
 - a stream to any address but a workload service's own.
 
 Health reports are clamped to what the machine said when it joined: a report
-can never make a worker look bigger than it was.
+can never make a worker look bigger than it was. A backup a worker streams to
+central is capped at 20 GB per volume and stops when central's disk has less
+than 5 GB free; a cut or aborted archive is removed.
 
 ## Host rules on a worker
 
