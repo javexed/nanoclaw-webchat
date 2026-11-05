@@ -64,4 +64,16 @@ describe('tool-result guard at flag level', () => {
       ],
     });
   });
+
+  it('denies a file write that would put a redaction marker over a secret', async () => {
+    await settings();
+    const pre = (lastOptions?.hooks as Record<string, Array<{ hooks: Array<(i: unknown) => Promise<unknown>> }>>)
+      .PreToolUse[0]!.hooks[0]!;
+    const out = (await pre({
+      tool_name: 'Edit',
+      tool_input: { file_path: '/w/.env', old_string: 'KEY=abc12345', new_string: 'KEY=[REDACTED:env_secret]' },
+    })) as { hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string } };
+    expect(out.hookSpecificOutput?.permissionDecision).toBe('deny');
+    expect(out.hookSpecificOutput?.permissionDecisionReason).toMatch(/not the value/);
+  });
 });

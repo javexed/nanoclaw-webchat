@@ -332,14 +332,17 @@ describe('one alert per incident', () => {
     expect(alerts).toHaveLength(3);
   });
 
-  it('a different failure signature is a new incident', async () => {
+  it('a different failure signature is a new incident, alerted once the alert gap has passed', async () => {
     await runOnce('r1', 'error');
     await runOnce('r2', 'declared', 'the report had no rows');
+    expect(alerts.map((a) => [a.kind, a.signature])).toEqual([['opened', 'model-error']]);
+    expect((await getIncident(SERIES))!.signature).toBe('agent-declared');
+    now += 60 * 60_000;
+    await runOnce('r3', 'error');
     expect(alerts.map((a) => [a.kind, a.signature])).toEqual([
       ['opened', 'model-error'],
-      ['opened', 'agent-declared'],
+      ['opened', 'model-error'],
     ]);
-    expect(alerts[1]!.reason).toBe('the report had no rows');
   });
 
   it('a script-gated run (never reached the model) neither opens nor closes an incident', async () => {

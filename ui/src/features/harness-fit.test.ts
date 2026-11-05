@@ -9,6 +9,14 @@ const qwen = { kind: 'ollama', model_id: 'qwen3:8b' };
 const sonnet = { kind: 'anthropic', model_id: 'claude-sonnet-5' };
 
 describe('harnessRuns', () => {
+  it('Claude also runs what no installed local harness takes, as the server decides', () => {
+    expect(harnessRuns('claude', qwen, cloud, { opencode: false, pi: false })).toBe(true);
+    expect(harnessRuns('claude', qwen, cloud, { opencode: false, pi: true })).toBe(false);
+    expect(harnessRuns('claude', cohere, cloud, { opencode: false, pi: true })).toBe(true);
+    expect(harnessRuns('claude', cohere, cloud, { opencode: true, pi: false })).toBe(false);
+    expect(harnessRuns('claude', { kind: 'bedrock', model_id: 'x' }, cloud)).toBe(true);
+  });
+
   it('Claude: Anthropic models and the routing model, not a cloud or local one', () => {
     expect(harnessRuns('claude', sonnet, cloud)).toBe(true);
     expect(harnessRuns('claude', auto, cloud)).toBe(true);

@@ -1527,7 +1527,11 @@ function unlockAudio() {
 	}
 	ttsQueue.resume();
 }
-/** The first tap or key anywhere unlocks audio, so auto-read can start on its own. */
+/**
+* The first tap or key anywhere unlocks audio, so auto-read can start on its
+* own. Re-armed whenever playback is blocked again (the queue reports
+* 'blocked'), or a sentence would wait on a tap nothing is listening for.
+*/
 function armAudioUnlock() {
 	if (unlockArmed || typeof document === "undefined") return;
 	unlockArmed = true;
@@ -1536,6 +1540,7 @@ function armAudioUnlock() {
 		if (audioUnlocked && ttsQueue.current.phase !== "blocked") {
 			document.removeEventListener("pointerdown", onGesture, true);
 			document.removeEventListener("keydown", onGesture, true);
+			unlockArmed = false;
 		}
 	};
 	document.addEventListener("pointerdown", onGesture, true);
@@ -1622,6 +1627,7 @@ var ttsErrorShown = false;
 var ttsQueue = new ReadAloudQueue(backend, (s) => {
 	ttsActiveKey.value = s.key;
 	ttsPhase.value = s.phase === "blocked" ? "loading" : s.phase;
+	if (s.phase === "blocked") armAudioUnlock();
 }, (err) => {
 	console.error("Read aloud failed", err);
 	if (!ttsErrorShown) {
@@ -2041,6 +2047,24 @@ function nextPreset(current, presets) {
 	const sorted = [...presets].sort((a, b) => a - b);
 	return sorted.find((p) => p > current) ?? sorted[0];
 }
+/**
+* One press on a handle. It becomes a drag once it travels the slop and stays
+* one, even if it ends back where it started: only a press that never moved is
+* a click.
+*/
+function startPress(x) {
+	let moved = false;
+	return {
+		/** Whether the press is a drag now. */
+		move(nx) {
+			if (!moved && Math.abs(nx - x) >= 4) moved = true;
+			return moved;
+		},
+		isClick(nx) {
+			return !moved && Math.abs(nx - x) < 4;
+		}
+	};
+}
 /** What a screen reader announces for a size. */
 function sizeText(px) {
 	return `${px} pixels`;
@@ -2096,15 +2120,15 @@ function wireResizer(opts) {
 		e.preventDefault();
 		dragFrom = {
 			x: e.clientX,
-			size
+			size,
+			press: startPress(e.clientX)
 		};
 		handle.setPointerCapture(e.pointerId);
 		handle.classList.add("dragging");
 	};
 	const onMove = (e) => {
 		if (!dragFrom) return;
-		const dx = e.clientX - dragFrom.x;
-		if (Math.abs(dx) >= 4) apply(sizeForDrag(dragFrom.size, dx, {
+		if (dragFrom.press.move(e.clientX)) apply(sizeForDrag(dragFrom.size, e.clientX - dragFrom.x, {
 			min,
 			max,
 			growsToward
@@ -2116,7 +2140,7 @@ function wireResizer(opts) {
 		dragFrom = null;
 		if (handle.hasPointerCapture(e.pointerId)) handle.releasePointerCapture(e.pointerId);
 		handle.classList.remove("dragging");
-		if (e.type === "pointerup" && Math.abs(e.clientX - from.x) < 4) apply(nextPreset(from.size, presets));
+		if (e.type === "pointerup" && from.press.isClick(e.clientX)) apply(nextPreset(from.size, presets));
 		save();
 	};
 	handle.addEventListener("keydown", onKey);
@@ -2169,8 +2193,12 @@ var PLAIN_TEXT = /* @__PURE__ */ new Set([
 * Which renderer the drawer uses, or null for "no preview" (the chip stays a
 * download). The extension decides first: agents' files often arrive typed
 * application/octet-stream, so the MIME type is only a fallback.
+*
+* HTML is the exception: it runs scripts in the frame, so it renders only when an
+* agent sent it (`fromAgent`), and only by extension, matching the server's frame
+* route, which serves .html/.htm alone. Anything else is shown as text or not at all.
 */
-function previewKind(filename, mime = "") {
+function previewKind(filename, mime = "", fromAgent = false) {
 	const ext = fileExt(filename);
 	const m = (mime || "").toLowerCase();
 	if (ext === "pdf" || m === "application/pdf") return "pdf";
@@ -2179,7 +2207,7 @@ function previewKind(filename, mime = "") {
 	if (ext === "md" || ext === "markdown" || m === "text/markdown") return "markdown";
 	if (ext === "csv" || ext === "tsv" || m === "text/csv") return "csv";
 	if (ext === "json" || m === "application/json") return "json";
-	if (ext === "html" || ext === "htm" || m === "text/html") return "html";
+	if (ext === "html" || ext === "htm") return fromAgent ? "html" : null;
 	if (codeLanguage(filename)) return "code";
 	if (PLAIN_TEXT.has(ext) || m.startsWith("text/")) return "text";
 	if (ext === "" && /^(readme|license|copying|notice|authors|changelog)$/i.test(filename)) return "text";
@@ -2652,10 +2680,12 @@ function formatSize(n) {
 /**
 * Where the drawer's frame loads an HTML attachment from: the same file, served
 * for a frame under a CSP of its own. A srcdoc or blob: frame would inherit the
-* app's CSP, whose script-src 'self' blocks the page's inline scripts.
+* app's CSP, whose script-src 'self' blocks the page's inline scripts. The
+* open's compose nonce rides in the fragment (never sent to the server); the
+* page reads it from location.hash.
 */
-function htmlFrameUrl(url) {
-	return `${url}${url.includes("?") ? "&" : "?"}view=frame`;
+function htmlFrameUrl(url, nonce = "") {
+	return `${url}${url.includes("?") ? "&" : "?"}view=frame${nonce ? `#${nonce}` : ""}`;
 }
 //#endregion
 //#region src/features/attachment-drawer-state.ts
@@ -2745,14 +2775,15 @@ var MessageBubble_default = /* @__PURE__ */ defineComponent({
 		const bubbleEl = ref(null);
 		const fileIcon = (m) => m.mime?.startsWith("image/") ? IMAGE : m.mime?.includes("pdf") ? FILE_TEXT : PAPERCLIP;
 		const fileSize = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
-		const previewable = (m) => !m.mime?.startsWith("image/") && previewKind(m.filename, m.mime) !== null;
+		const previewable = (m) => !m.mime?.startsWith("image/") && previewKind(m.filename, m.mime, !!props.row.isAgent) !== null;
 		function openPreview(e) {
 			const f = props.row.file;
 			openAttachmentDrawer({
 				url: f.url,
 				filename: f.filename,
 				mime: f.mime,
-				size: f.size
+				size: f.size,
+				fromAgent: !!props.row.isAgent
 			}, e.currentTarget);
 		}
 		const showTts = () => props.row.isAgent && !!props.row.ttsText && ttsOffered();
@@ -3395,7 +3426,7 @@ var LimitRetry_default = /* @__PURE__ */ defineComponent({
 					const target = messages.value.find((m) => m.id === pending.noticeId) ?? props.row;
 					target.limitRetryAt = pending.retryAt;
 					target.limitRetryBy = pending.by;
-				} else showToast("Could not schedule the retry: " + (err?.message || err), { kind: "error" });
+				} else showToast("Retry failed: " + (err?.message || err), { kind: "error" });
 			} finally {
 				busy.value = false;
 			}
@@ -3408,7 +3439,7 @@ var LimitRetry_default = /* @__PURE__ */ defineComponent({
 				props.row.limitRetryAt = null;
 				props.row.limitRetryBy = null;
 			} catch (err) {
-				showToast("Could not cancel the retry: " + (err?.message || err), { kind: "error" });
+				showToast("Cancel failed: " + (err?.message || err), { kind: "error" });
 			} finally {
 				busy.value = false;
 			}
@@ -4430,11 +4461,25 @@ var OWN_MODEL_HARNESSES = /* @__PURE__ */ new Set([
 	"grok",
 	"copilot"
 ]);
-/** Whether `provider` can run `model` (null: none assigned). `cloud`: the model ids the router serves. */
-function harnessRuns(provider, model, cloud) {
+/**
+* Whether `provider` can run `model` (null: none assigned). `cloud`: the model
+* ids the router serves. Mirrors the server's harnessFits (models.ts): Claude
+* runs Anthropic models and anything no installed local harness takes — an
+* Ollama model when neither OpenCode nor pi is installed, a cloud model when
+* OpenCode is not.
+*/
+function harnessRuns(provider, model, cloud, local = null) {
 	if (!model || OWN_MODEL_HARNESSES.has(provider)) return true;
+	const installed = local ?? {
+		opencode: true,
+		pi: true
+	};
 	const isCloud = model.kind === "openai-compatible" && cloud.has(model.model_id);
-	if (provider === "claude") return model.kind === "anthropic" || model.kind === "openai-compatible" && !isCloud;
+	if (provider === "claude") {
+		if (model.kind === "ollama") return !installed.opencode && !installed.pi;
+		if (isCloud) return !installed.opencode;
+		return true;
+	}
 	if (provider === "opencode") return model.kind === "ollama" || isCloud;
 	if (provider === "pi") return model.kind === "ollama";
 	return true;
@@ -5194,6 +5239,7 @@ var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 function buttonBusy(btn, busyLabel) {
 	const original = Array.from(btn.childNodes);
 	btn.disabled = true;
+	btn.setAttribute("aria-busy", "true");
 	btn.textContent = "";
 	const spin = document.createElement("span");
 	spin.className = "btn-spinner";
@@ -5202,6 +5248,7 @@ function buttonBusy(btn, busyLabel) {
 	btn.appendChild(document.createTextNode(busyLabel));
 	return () => {
 		btn.disabled = false;
+		btn.removeAttribute("aria-busy");
 		btn.replaceChildren(...original);
 	};
 }
@@ -6956,6 +7003,16 @@ function seedUnread(counts, id, serverCount) {
 	counts.set(id, Math.max(1, Number(serverCount) || 0));
 }
 /**
+* Bring `id` in line with a server payload (rooms list, thread list): its count
+* when the server says unread, otherwise no entry at all, so one read on
+* another device (or before a reconnect) clears here too. The open room or
+* thread never shows a count; opening it reads it.
+*/
+function syncUnread(counts, id, serverUnread, serverCount, isOpen) {
+	if (serverUnread && !isOpen) seedUnread(counts, id, serverCount);
+	else counts.delete(id);
+}
+/**
 * Index of the first message the user has not seen, or -1 for none: the first
 * one newer than their read marker that someone else sent. Their own messages
 * never count — they were read by being written. No marker (never opened)
@@ -7129,7 +7186,7 @@ async function loadThreadList(roomId) {
 		if (roomId !== state.currentRoom) return;
 		const list = Array.isArray(threads) ? threads : [];
 		state.threadCache.set(roomId, list);
-		for (const t of list) if (t.unread && t.thread_id !== state.currentThread) seedUnread(state.threadUnread, t.thread_id, t.unread_count);
+		for (const t of list) syncUnread(state.threadUnread, t.thread_id, t.unread, t.unread_count, t.thread_id === state.currentThread);
 		updateThreadSyncControls();
 	} catch (err) {
 		if (roomId !== state.currentRoom) return;
@@ -8113,6 +8170,7 @@ function joinRoom(roomId, roomName, jumpMessageId, initialThread) {
 	$("#chat").hidden = false;
 	endAllAgentTurns();
 	const prevRoom = state.currentRoom;
+	if (prevRoom !== roomId) stopTts();
 	state.currentRoom = roomId;
 	if (prevRoom && prevRoom !== roomId) state.expandedRooms.delete(prevRoom);
 	state.expandedRooms.add(roomId);
@@ -9298,6 +9356,21 @@ function getMentionSelectedIndex() {
 }
 function setMentionSelectedIndex(v) {
 	mentionSelectedIndex$1 = v;
+}
+//#endregion
+//#region src/core/latest.ts
+/**
+* Latest-wins for overlapping async actions on the same thing (a default
+* picked twice in a row): each start takes a ticket, and a superseded run
+* checks `current` before its write and stops, so a slow earlier choice
+* cannot land after a later one.
+*/
+function latestOnly() {
+	let latest = 0;
+	return {
+		start: () => ++latest,
+		current: (ticket) => ticket === latest
+	};
 }
 //#endregion
 //#region src/features/wizard-state.ts
@@ -15737,7 +15810,7 @@ var _hoisted_18$4 = { class: "ollama-model-name" };
 var _hoisted_19$4 = { class: "ollama-model-meta" };
 var _hoisted_20$4 = ["title"];
 var _hoisted_21$3 = { class: "ollama-pull-row" };
-var _hoisted_22$2 = ["onKeydown", "onInput"];
+var _hoisted_22$3 = ["onKeydown", "onInput"];
 var _hoisted_23$2 = ["onClick"];
 var _hoisted_24$2 = {
 	key: 0,
@@ -15933,7 +16006,7 @@ var OllamaHostCards_default = /* @__PURE__ */ defineComponent({
 							class: "ollama-pull-input",
 							onKeydown: ($event) => pullKey(c.host, $event),
 							onInput: ($event) => preview(c.host, $event)
-						}, null, 40, _hoisted_22$2), createElementVNode("button", {
+						}, null, 40, _hoisted_22$3), createElementVNode("button", {
 							class: "btn btn-secondary",
 							type: "button",
 							onClick: ($event) => pull(c.host, $event)
@@ -17687,8 +17760,11 @@ async function wizardProbeOllama() {
 		done();
 	}
 }
+/** Picks and clears of the workspace default: the latest wins (core/latest.ts). */
+var wizardDefaultTurn = latestOnly();
 async function wizardSelectOllamaModel(modelId, control) {
 	if (!wizardOllamaProbe || !modelId) return;
+	const turn = wizardDefaultTurn.start();
 	const endpoint = String(wizardOllamaProbe.endpoint || "").replace(/\/+$/, "");
 	const host = (() => {
 		try {
@@ -17724,6 +17800,7 @@ async function wizardSelectOllamaModel(modelId, control) {
 			}
 			id = created.id;
 		}
+		if (!wizardDefaultTurn.current(turn)) return;
 		const dr = await authFetch("/api/workspace-model", {
 			method: "PUT",
 			headers: { "Content-Type": "application/json" },
@@ -17742,6 +17819,7 @@ async function wizardSelectOllamaModel(modelId, control) {
 	}
 }
 async function wizardClearOllamaDefault() {
+	wizardDefaultTurn.start();
 	if (wizardCred?.defaultModelKind !== "ollama" || !wizardCred?.defaultModelId) return;
 	try {
 		await authFetch("/api/workspace-model", {
@@ -20131,7 +20209,7 @@ var _hoisted_21$2 = [
 	"disabled",
 	"onChange"
 ];
-var _hoisted_22$1 = ["value"];
+var _hoisted_22$2 = ["value"];
 var _hoisted_23$1 = [
 	"aria-expanded",
 	"onClick",
@@ -20347,7 +20425,7 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								return openBlock(), createElementBlock("option", {
 									key: sv,
 									value: sv
-								}, toDisplayString(sv), 9, _hoisted_22$1);
+								}, toDisplayString(sv), 9, _hoisted_22$2);
 							}), 128))], 40, _hoisted_21$2)) : createCommentVNode("", true),
 							!r.app && !r.canPublish ? (openBlock(), createElementBlock("button", {
 								key: 1,
@@ -20661,8 +20739,23 @@ function setAgentHarnessControl(provider) {
 }
 /** The harness the open agent is on (as the Harness control shows it). */
 var agentHarness = "claude";
+/** Which local harnesses this install has (credentials-config); null until loaded. */
+var localHarnesses = null;
+var localHarnessesLoading = false;
+function loadLocalHarnesses() {
+	if (localHarnesses || localHarnessesLoading) return;
+	localHarnessesLoading = true;
+	apiJson("/api/webchat/credentials-config").then((cfg) => {
+		localHarnesses = {
+			opencode: !!cfg?.opencodeAvailable,
+			pi: !!cfg?.piAvailable
+		};
+		refreshHarnessOptions();
+	}).catch(() => {}).finally(() => localHarnessesLoading = false);
+}
 /** The Harness control offers what can run the agent's model, and always the one it is on (harness-fit.ts). */
 function refreshHarnessOptions() {
+	loadLocalHarnesses();
 	const id = $("#agent-model")?.value || "";
 	const m = id ? allModels.value.find((x) => x.id === id) : null;
 	const model = m ? {
@@ -20671,7 +20764,7 @@ function refreshHarnessOptions() {
 	} : null;
 	document.querySelectorAll("#agent-harness-control .setting-option").forEach((b) => {
 		const h = b.dataset.provider || "";
-		b.hidden = h !== agentHarness && !harnessRuns(h, model, cloudModelNames);
+		b.hidden = h !== agentHarness && !harnessRuns(h, model, cloudModelNames, localHarnesses);
 	});
 }
 /** Codex and Grok take their own model (the model field) instead of a registry one; OpenCode and pi only the latter. */
@@ -24014,10 +24107,10 @@ function connect() {
 				state.lastRoomsList = msg.rooms;
 				roomsReceived.value = true;
 				msg.rooms.forEach((r) => {
-					if (r.unread && r.id !== state.currentRoom) seedUnread(state.unreadRooms, r.id, r.unread_count);
-					if (r.mention && r.id !== state.currentRoom) state.mentionedRooms.add(r.id);
-					else if (!r.mention) state.mentionedRooms.delete(r.id);
-					else state.unreadRooms.delete(r.id);
+					const open = r.id === state.currentRoom;
+					syncUnread(state.unreadRooms, r.id, r.unread, r.unread_count, open);
+					if (r.mention && !open) state.mentionedRooms.add(r.id);
+					else state.mentionedRooms.delete(r.id);
 				});
 				renderRooms(msg.rooms);
 				if (state.allAgents.length === 0) authFetch("/api/agents").then((r) => r.json()).then((b) => {
@@ -24927,7 +25020,7 @@ var _hoisted_18$2 = { class: "publishing-route" };
 var _hoisted_19$2 = { class: "setting-group install-row" };
 var _hoisted_20$2 = { class: "setting-toggle" };
 var _hoisted_21$1 = ["checked", "disabled"];
-var _hoisted_22 = {
+var _hoisted_22$1 = {
 	key: 0,
 	class: "cred-hint err"
 };
@@ -25184,7 +25277,7 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 						disabled: busy.value === "tailnet-switch" || void 0,
 						onChange: _cache[2] || (_cache[2] = ($event) => toggle("tailnet", $event))
 					}, null, 40, _hoisted_21$1)])]),
-					errors["tailnet.on"] || errors["tailnet.form"] ? (openBlock(), createElementBlock("p", _hoisted_22, toDisplayString(errors["tailnet.on"] || errors["tailnet.form"]), 1)) : createCommentVNode("", true),
+					errors["tailnet.on"] || errors["tailnet.form"] ? (openBlock(), createElementBlock("p", _hoisted_22$1, toDisplayString(errors["tailnet.on"] || errors["tailnet.form"]), 1)) : createCommentVNode("", true),
 					view.value.tailnet.on ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [
 						createElementVNode("p", {
 							class: normalizeClass(["publishing-status", { ok: view.value.tailnet.status.ok }]),
@@ -26249,6 +26342,23 @@ function wireCloudModels() {
 	});
 }
 //#endregion
+//#region src/features/ollama-names.ts
+/**
+* An Ollama model tag as the server spells it (ollama-manage.ts
+* normalizeOllamaModelName): trimmed, lowercase, no whitespace. The UI must
+* compare in the same spelling, or a pull of "Llama3.2" reports as "llama3.2"
+* and the wait for it never ends.
+*/
+function normalizeOllamaModelName(raw) {
+	return raw.trim().toLowerCase().replace(/\s+/g, "");
+}
+/** The same model, allowing Ollama's implicit `:latest`. */
+function sameOllamaModel(a, b) {
+	const x = normalizeOllamaModelName(a);
+	const y = normalizeOllamaModelName(b);
+	return x === y || x === `${y}:latest` || `${x}:latest` === y;
+}
+//#endregion
 //#region src/features/InstallProgress.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$3 = {
 	key: 0,
@@ -26542,8 +26652,8 @@ var AddModel_default = /* @__PURE__ */ defineComponent({
 			} catch {}
 		}
 		watch(host, () => void loadInstalled());
-		const has = (tag) => installed.value.has(tag) || installed.value.has(`${tag}:latest`);
-		const same = (a, b) => a === b || a === `${b}:latest`;
+		const has = (tag) => [...installed.value].some((name) => sameOllamaModel(name, tag));
+		const same = sameOllamaModel;
 		/** The pull through the shared poller, so its line is the host cards' own; resolves on its outcome. */
 		function waitForPull(url, tag) {
 			pollOllamaPulls();
@@ -26560,7 +26670,7 @@ var AddModel_default = /* @__PURE__ */ defineComponent({
 			});
 		}
 		async function addLocal(rawTag) {
-			const tag = rawTag.trim();
+			const tag = normalizeOllamaModelName(rawTag);
 			const url = serverUrl();
 			if (!tag || !url) return;
 			busy.value = true;
@@ -26745,7 +26855,7 @@ var AddModel_default = /* @__PURE__ */ defineComponent({
 						disabled: busy.value || !otherTag.value.trim(),
 						onClick: _cache[8] || (_cache[8] = ($event) => addLocal(otherTag.value))
 					}, [createVNode(BusyLabel_default, {
-						busy: doing.value === `local:${otherTag.value.trim()}`,
+						busy: doing.value === `local:${unref(normalizeOllamaModelName)(otherTag.value)}`,
 						label: has(otherTag.value.trim()) ? "Add" : "Install",
 						"busy-label": has(otherTag.value.trim()) ? "Adding…" : "Installing…"
 					}, null, 8, [
@@ -26863,6 +26973,12 @@ var JsonNode_default = /* @__PURE__ */ defineComponent({
 });
 /** Longest text a page may put in the composer; anything past it is cut. */
 var COMPOSE_MAX = 4e3;
+/** A fresh nonce for one open of a page: 128 random bits as hex. */
+function newComposeNonce() {
+	const b = /* @__PURE__ */ new Uint8Array(16);
+	crypto.getRandomValues(b);
+	return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}
 /**
 * Control characters out, except newline and tab; CRLF/CR become LF. Also the
 * bidirectional overrides and isolates, which can make text read differently
@@ -26873,17 +26989,18 @@ function cleanComposeText(text) {
 }
 /**
 * The text a message asks to pre-fill, or null when the message is not one to
-* act on: from anywhere but `frame` (the drawer's iframe window), or not
-* exactly `{ type: 'nanoclaw:compose', text: string }`.
+* act on: from anywhere but `frame` (the drawer's iframe window), without this
+* open's `nonce`, or not exactly `{ type: 'nanoclaw:compose', text: string,
+* nonce: string }`.
 */
-function composeTextFrom(event, frame) {
-	if (!frame || event.source !== frame) return null;
+function composeTextFrom(event, frame, nonce) {
+	if (!frame || event.source !== frame || !nonce) return null;
 	const data = event.data;
 	if (!data || typeof data !== "object" || Array.isArray(data)) return null;
 	const keys = Object.keys(data).sort();
-	if (keys.length !== 2 || keys[0] !== "text" || keys[1] !== "type") return null;
-	const { type, text } = data;
-	if (type !== "nanoclaw:compose" || typeof text !== "string") return null;
+	if (keys.length !== 3 || keys[0] !== "nonce" || keys[1] !== "text" || keys[2] !== "type") return null;
+	const { type, text, nonce: got } = data;
+	if (type !== "nanoclaw:compose" || typeof text !== "string" || got !== nonce) return null;
 	const clean = cleanComposeText(text).slice(0, COMPOSE_MAX);
 	return clean.trim() ? clean : null;
 }
@@ -26915,30 +27032,34 @@ var _hoisted_9 = {
 	key: 2,
 	class: "attachment-drawer-status"
 };
-var _hoisted_10 = ["src", "title"];
+var _hoisted_10 = {
+	key: 3,
+	class: "attachment-drawer-status"
+};
 var _hoisted_11 = ["src", "title"];
-var _hoisted_12 = {
+var _hoisted_12 = ["src", "title"];
+var _hoisted_13 = {
 	key: 0,
 	class: "attachment-drawer-status"
 };
-var _hoisted_13 = ["src"];
-var _hoisted_14 = {
+var _hoisted_14 = ["src"];
+var _hoisted_15 = {
 	key: 0,
 	class: "attachment-drawer-status"
 };
-var _hoisted_15 = ["src"];
-var _hoisted_16 = ["innerHTML"];
-var _hoisted_17 = {
+var _hoisted_16 = ["src"];
+var _hoisted_17 = ["innerHTML"];
+var _hoisted_18 = {
 	key: 1,
 	class: "attachment-drawer-json"
 };
-var _hoisted_18 = ["aria-label"];
-var _hoisted_19 = {
+var _hoisted_19 = ["aria-label"];
+var _hoisted_20 = {
 	key: 0,
 	class: "attachment-drawer-status"
 };
-var _hoisted_20 = ["aria-label"];
-var _hoisted_21 = ["innerHTML"];
+var _hoisted_21 = ["aria-label"];
+var _hoisted_22 = ["innerHTML"];
 //#endregion
 //#region src/features/AttachmentDrawer.vue
 var AttachmentDrawer_default = /* @__PURE__ */ defineComponent({
@@ -26952,9 +27073,10 @@ var AttachmentDrawer_default = /* @__PURE__ */ defineComponent({
 		* phone. Images keep the lightbox; everything else previewable opens here.
 		*
 		* Text is fetched and rendered by us (highlighted code, CSV table, JSON tree,
-		* sanitized Markdown). PDFs load from the file URL itself in a frame: the server
-		* serves every attachment with `CSP: sandbox`, so the framed document runs in an
-		* opaque origin with the browser's own viewer.
+		* sanitized Markdown). PDFs load from the file URL itself in a frame, in the
+		* browser's own viewer: the server sends PDFs without the `CSP: sandbox` every
+		* other attachment gets, because Chromium refuses its viewer in a sandboxed
+		* document (files.ts handleFileServe says why that is safe).
 		*/
 		function storage() {
 			try {
@@ -26967,7 +27089,7 @@ var AttachmentDrawer_default = /* @__PURE__ */ defineComponent({
 		const width = ref(0);
 		const maxWidth = computed(() => drawerMax(viewport.value));
 		const file = drawerFile;
-		const kind = computed(() => file.value ? previewKind(file.value.filename, file.value.mime) : null);
+		const kind = computed(() => file.value ? previewKind(file.value.filename, file.value.mime, !!file.value.fromAgent) : null);
 		const tooLarge = computed(() => !!file.value && ([
 			"markdown",
 			"csv",
@@ -27129,17 +27251,21 @@ var AttachmentDrawer_default = /* @__PURE__ */ defineComponent({
 			closeAttachmentDrawer();
 		}
 		const htmlFrame = ref(null);
+		const frameNonce = ref("");
+		const frameLeft = ref(false);
 		let htmlLoads = 0;
 		function onHtmlLoad() {
-			htmlLoads++;
+			if (++htmlLoads > 1) frameLeft.value = true;
 		}
 		watch(() => file.value?.url, () => {
 			htmlLoads = 0;
-		});
+			frameLeft.value = false;
+			frameNonce.value = newComposeNonce();
+		}, { immediate: true });
 		function onFrameMessage(e) {
 			const f = file.value;
-			if (!f || kind.value !== "html" || htmlLoads > 1) return;
-			const text = composeTextFrom(e, htmlFrame.value?.contentWindow);
+			if (!f || kind.value !== "html" || frameLeft.value) return;
+			const text = composeTextFrom(e, htmlFrame.value?.contentWindow, frameNonce.value);
 			if (text !== null) prefillComposer(text, f.filename);
 		}
 		let attached = false;
@@ -27229,22 +27355,22 @@ var AttachmentDrawer_default = /* @__PURE__ */ defineComponent({
 				createElementVNode("div", { class: normalizeClass(["attachment-drawer-body", `attachment-drawer-${kind.value}`]) }, [tooLarge.value ? (openBlock(), createElementBlock("p", _hoisted_7, "Too large to preview")) : loading.value ? (openBlock(), createElementBlock("p", _hoisted_8, [..._cache[6] || (_cache[6] = [createElementVNode("span", {
 					class: "btn-spinner",
 					"aria-hidden": "true"
-				}, null, -1), createTextVNode("Loading… ", -1)])])) : failed.value ? (openBlock(), createElementBlock("p", _hoisted_9, "Couldn't load this file")) : kind.value === "html" ? (openBlock(), createElementBlock("iframe", {
+				}, null, -1), createTextVNode("Loading… ", -1)])])) : failed.value ? (openBlock(), createElementBlock("p", _hoisted_9, "Can't load")) : kind.value === "html" && frameLeft.value ? (openBlock(), createElementBlock("p", _hoisted_10, "Left preview")) : kind.value === "html" ? (openBlock(), createElementBlock("iframe", {
 					ref_key: "htmlFrame",
 					ref: htmlFrame,
 					key: unref(file).url,
 					class: "attachment-drawer-frame attachment-drawer-page",
-					src: unref(htmlFrameUrl)(unref(file).url),
+					src: unref(htmlFrameUrl)(unref(file).url, frameNonce.value),
 					sandbox: "allow-scripts",
 					referrerpolicy: "no-referrer",
 					title: unref(file).filename,
 					onLoad: onHtmlLoad
-				}, null, 40, _hoisted_10)) : kind.value === "pdf" ? (openBlock(), createElementBlock("iframe", {
-					key: 4,
+				}, null, 40, _hoisted_11)) : kind.value === "pdf" ? (openBlock(), createElementBlock("iframe", {
+					key: 5,
 					class: "attachment-drawer-frame",
 					src: unref(file).url,
 					title: unref(file).filename
-				}, null, 8, _hoisted_11)) : kind.value === "video" ? (openBlock(), createElementBlock(Fragment, { key: 5 }, [mediaFailed.value ? (openBlock(), createElementBlock("p", _hoisted_12, "Can't play this file here")) : (openBlock(), createElementBlock("video", {
+				}, null, 8, _hoisted_12)) : kind.value === "video" ? (openBlock(), createElementBlock(Fragment, { key: 6 }, [mediaFailed.value ? (openBlock(), createElementBlock("p", _hoisted_13, "Can't play")) : (openBlock(), createElementBlock("video", {
 					key: 1,
 					class: "attachment-drawer-video",
 					src: unref(file).url,
@@ -27252,20 +27378,20 @@ var AttachmentDrawer_default = /* @__PURE__ */ defineComponent({
 					playsinline: "",
 					preload: "metadata",
 					onError: _cache[1] || (_cache[1] = ($event) => mediaFailed.value = true)
-				}, null, 40, _hoisted_13))], 64)) : kind.value === "audio" ? (openBlock(), createElementBlock(Fragment, { key: 6 }, [mediaFailed.value ? (openBlock(), createElementBlock("p", _hoisted_14, "Can't play this file here")) : (openBlock(), createElementBlock("audio", {
+				}, null, 40, _hoisted_14))], 64)) : kind.value === "audio" ? (openBlock(), createElementBlock(Fragment, { key: 7 }, [mediaFailed.value ? (openBlock(), createElementBlock("p", _hoisted_15, "Can't play")) : (openBlock(), createElementBlock("audio", {
 					key: 1,
 					class: "attachment-drawer-audio",
 					src: unref(file).url,
 					controls: "",
 					preload: "metadata",
 					onError: _cache[2] || (_cache[2] = ($event) => mediaFailed.value = true)
-				}, null, 40, _hoisted_15))], 64)) : text.value !== null ? (openBlock(), createElementBlock(Fragment, { key: 7 }, [kind.value === "markdown" ? (openBlock(), createElementBlock("div", {
+				}, null, 40, _hoisted_16))], 64)) : text.value !== null ? (openBlock(), createElementBlock(Fragment, { key: 8 }, [kind.value === "markdown" ? (openBlock(), createElementBlock("div", {
 					key: 0,
 					ref_key: "markdownEl",
 					ref: markdownEl,
 					class: "attachment-drawer-md",
 					innerHTML: markdownHtml.value
-				}, null, 8, _hoisted_16)) : kind.value === "json" && json.value.ok ? (openBlock(), createElementBlock("div", _hoisted_17, [createVNode(JsonNode_default, {
+				}, null, 8, _hoisted_17)) : kind.value === "json" && json.value.ok ? (openBlock(), createElementBlock("div", _hoisted_18, [createVNode(JsonNode_default, {
 					value: json.value.value,
 					depth: 0
 				}, null, 8, ["value"])])) : kind.value === "csv" && csv.value ? (openBlock(), createElementBlock("div", {
@@ -27282,12 +27408,12 @@ var AttachmentDrawer_default = /* @__PURE__ */ defineComponent({
 					return openBlock(), createElementBlock("tr", { key: ri }, [(openBlock(true), createElementBlock(Fragment, null, renderList(r, (c, ci) => {
 						return openBlock(), createElementBlock("td", { key: ci }, toDisplayString(c), 1);
 					}), 128))]);
-				}), 128))])]), csv.value.truncated ? (openBlock(), createElementBlock("p", _hoisted_19, "First " + toDisplayString(unref(CSV_ROW_LIMIT)) + " rows", 1)) : createCommentVNode("", true)], 8, _hoisted_18)) : (openBlock(), createElementBlock("pre", {
+				}), 128))])]), csv.value.truncated ? (openBlock(), createElementBlock("p", _hoisted_20, "First " + toDisplayString(unref(CSV_ROW_LIMIT)) + " rows", 1)) : createCommentVNode("", true)], 8, _hoisted_19)) : (openBlock(), createElementBlock("pre", {
 					key: 3,
 					class: "attachment-drawer-code",
 					tabindex: "0",
 					"aria-label": unref(file).filename
-				}, [createElementVNode("code", { innerHTML: codeHtml.value }, null, 8, _hoisted_21)], 8, _hoisted_20))], 64)) : createCommentVNode("", true)], 2)
+				}, [createElementVNode("code", { innerHTML: codeHtml.value }, null, 8, _hoisted_22)], 8, _hoisted_21))], 64)) : createCommentVNode("", true)], 2)
 			], 2)) : createCommentVNode("", true);
 		};
 	}

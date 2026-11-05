@@ -25,6 +25,23 @@ export function seedUnread(counts: Map<string, number>, id: string, serverCount:
   counts.set(id, Math.max(1, Number(serverCount) || 0));
 }
 
+/**
+ * Bring `id` in line with a server payload (rooms list, thread list): its count
+ * when the server says unread, otherwise no entry at all, so one read on
+ * another device (or before a reconnect) clears here too. The open room or
+ * thread never shows a count; opening it reads it.
+ */
+export function syncUnread(
+  counts: Map<string, number>,
+  id: string,
+  serverUnread: boolean | undefined,
+  serverCount: number | undefined,
+  isOpen: boolean,
+): void {
+  if (serverUnread && !isOpen) seedUnread(counts, id, serverCount);
+  else counts.delete(id);
+}
+
 interface HistoryMessage {
   type?: string;
   sender?: string;

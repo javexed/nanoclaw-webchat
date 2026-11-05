@@ -132,7 +132,7 @@ const FAIL_OP: CustomOperation = {
     {
       name: 'reason',
       type: 'string',
-      description: 'One line: what failed. Shown to the task owner and written to the run log.',
+      description: 'One line: what failed. Written to the run log and `ncl tasks get`.',
       required: true,
     },
   ],

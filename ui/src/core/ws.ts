@@ -32,7 +32,7 @@ import {
 import { showToast } from '../core/toast.js';
 import { apiJson, authFetch, getWsUrl, getWsProtocols } from '../core/api.js';
 import { state } from '../core/state.js';
-import { bumpUnread, firstUnreadIndex, seedUnread } from './unread.js';
+import { bumpUnread, firstUnreadIndex, syncUnread } from './unread.js';
 import { messages, readdRow, transcriptEmpty, turnFor, type MsgRow } from '../features/transcript-state.js';
 import { replyPreviewApplies } from '../features/reply-preview.js';
 import { autoReadReply } from '../features/voice.js';
@@ -174,11 +174,12 @@ export function connect() {
         // Seed persistent unread badges from the server's per-user read markers
         // so messages that arrived while away surface on reconnect — not just
         // live ones. Never dot the open room (the join that follows reads it).
+        // A room the server calls read loses its count and mention here too.
         msg.rooms.forEach((r: any) => {
-          if (r.unread && r.id !== state.currentRoom) seedUnread(state.unreadRooms, r.id, r.unread_count);
-          if (r.mention && r.id !== state.currentRoom) state.mentionedRooms.add(r.id);
-          else if (!r.mention) state.mentionedRooms.delete(r.id);
-          else state.unreadRooms.delete(r.id);
+          const open = r.id === state.currentRoom;
+          syncUnread(state.unreadRooms, r.id, r.unread, r.unread_count, open);
+          if (r.mention && !open) state.mentionedRooms.add(r.id);
+          else state.mentionedRooms.delete(r.id);
         });
         // Render rooms immediately from the WS payload — renderRooms doesn't use
         // allAgents, so don't block first paint on the /api/agents round-trip
