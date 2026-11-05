@@ -227,9 +227,9 @@ export async function addMember(
   const f: Facts = {
     hostname: cleanName(facts.hostname),
     os: typeof facts.os === 'string' ? facts.os.slice(0, 80) : undefined,
-    cpus: Math.max(0, Number(facts.cpus) || 0),
-    memTotalMb: Math.max(0, Math.round(Number(facts.memTotalMb) || 0)),
-    diskTotalGb: Math.max(0, Number(facts.diskTotalGb) || 0),
+    cpus: Math.min(MAX_CPUS, Math.max(0, Number(facts.cpus) || 0)),
+    memTotalMb: Math.min(MAX_MEM_MB, Math.max(0, Math.round(Number(facts.memTotalMb) || 0))),
+    diskTotalGb: Math.min(MAX_DISK_GB, Math.max(0, Number(facts.diskTotalGb) || 0)),
   };
   await getDb().run(
     `INSERT INTO machine_members (id, name, role, provider, state, facts_json, peaks_json, cert_fp, cert_expires, created_at, updated_at)
@@ -252,6 +252,42 @@ const num = (v: unknown): number => {
   return Number.isFinite(n) && n >= 0 ? n : 0;
 };
 
+/** Upper bounds for anything a machine says about itself: no real machine reports more. */
+export const MAX_CPUS = 1024;
+export const MAX_MEM_MB = 16 * 1024 * 1024;
+export const MAX_DISK_GB = 1024 * 1024;
+const MAX_LOAD = 100_000;
+
+/**
+ * A health report as placement may use it. A machine reports its own
+ * numbers, so a broken or lying one must not make itself look bigger than it
+ * is: its totals never exceed what it said when it joined (or the bounds
+ * above, when it said nothing), and every part stays within its whole.
+ */
+export function clampHealth(raw: Partial<Health>, facts: Facts): Health {
+  const cap = (v: number, max: number) => Math.min(v, max);
+  const cpusMax = facts.cpus > 0 ? Math.min(facts.cpus, MAX_CPUS) : MAX_CPUS;
+  const memMax = facts.memTotalMb > 0 ? Math.min(facts.memTotalMb, MAX_MEM_MB) : MAX_MEM_MB;
+  const diskMax = facts.diskTotalGb && facts.diskTotalGb > 0 ? Math.min(facts.diskTotalGb, MAX_DISK_GB) : MAX_DISK_GB;
+  const cpus = cap(num(raw.cpus) || facts.cpus, cpusMax);
+  const memTotalMb = cap(num(raw.memTotalMb) || facts.memTotalMb, memMax);
+  const memUsedMb = cap(num(raw.memUsedMb), memTotalMb);
+  const cpuUsed = cap(num(raw.cpuUsed), cpus);
+  const diskTotalGb = cap(num(raw.diskTotalGb), diskMax);
+  return {
+    cpus,
+    memTotalMb,
+    memUsedMb,
+    memNanoclawMb: cap(num(raw.memNanoclawMb), memUsedMb),
+    cpuUsed,
+    cpuNanoclaw: cap(num(raw.cpuNanoclaw), cpuUsed),
+    diskTotalGb,
+    diskFreeGb: cap(num(raw.diskFreeGb), diskTotalGb),
+    load1: raw.load1 === undefined ? undefined : cap(num(raw.load1), MAX_LOAD),
+    agentVersion: typeof raw.agentVersion === 'string' ? raw.agentVersion.slice(0, 40) : undefined,
+  };
+}
+
 /**
  * The isolation part of a report: the state, and when the check ran by
  * central's clock (now minus the age the worker gives, so the two clocks need
@@ -269,18 +305,7 @@ export function isolationOf(raw: Partial<Health>, now: number): { state: Isolati
 export async function recordHealth(id: string, raw: Partial<Health>, now = Date.now()): Promise<Member | null> {
   const m = await getMember(id);
   if (!m) return null;
-  const h: Health = {
-    cpus: num(raw.cpus) || m.facts.cpus,
-    memTotalMb: num(raw.memTotalMb) || m.facts.memTotalMb,
-    memUsedMb: num(raw.memUsedMb),
-    memNanoclawMb: num(raw.memNanoclawMb),
-    cpuUsed: num(raw.cpuUsed),
-    cpuNanoclaw: num(raw.cpuNanoclaw),
-    diskTotalGb: num(raw.diskTotalGb),
-    diskFreeGb: num(raw.diskFreeGb),
-    load1: raw.load1 === undefined ? undefined : num(raw.load1),
-    agentVersion: typeof raw.agentVersion === 'string' ? raw.agentVersion.slice(0, 40) : undefined,
-  };
+  const h = clampHealth(raw, m.facts);
   const iso = isolationOf(raw, now);
   if (iso)
     await getDb().run(`UPDATE machine_members SET isolation = ?, isolation_at = ? WHERE id = ?`, iso.state, iso.at, id);

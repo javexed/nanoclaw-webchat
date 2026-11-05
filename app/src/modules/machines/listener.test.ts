@@ -20,11 +20,14 @@ import { machineHandler, workerHashes } from './listener.js';
 import {
   addMember,
   availableOn,
+  clampHealth,
   createJoinToken,
   getMember,
   isolationRefusal,
   isolationStatus,
   ISOLATION_FRESH_MS,
+  MAX_CPUS,
+  MAX_MEM_MB,
   memberByCert,
   publicView,
   recordHealth,
@@ -276,6 +279,63 @@ describe('health records', () => {
     await recordHealth(m.id, { memUsedMb: 5000, memNanoclawMb: 4000, cpuUsed: 1, cpuNanoclaw: 1 });
     const after = (await getMember(m.id))!;
     expect(Object.values(after.peaks)[0]).toEqual({ memMb: 1000, cpus: 0 });
+  });
+
+  it('a report can never make a machine bigger than it was when it joined', async () => {
+    const { token } = await createJoinToken('worker', null);
+    await spendJoinToken(token);
+    const m = await addMember(
+      token,
+      'worker',
+      { hostname: 'small', cpus: 2, memTotalMb: 4000, diskTotalGb: 50 },
+      { fingerprint: 'fp-small', expiresAt: Date.now() + 1e7 },
+    );
+    const before = availableOn(m);
+    await recordHealth(m.id, {
+      cpus: 512,
+      memTotalMb: 4_000_000,
+      memUsedMb: 9_000_000,
+      memNanoclawMb: 9_000_000,
+      cpuUsed: 900,
+      cpuNanoclaw: 900,
+      diskTotalGb: 900_000,
+      diskFreeGb: 1e12,
+      load1: 1e20,
+    });
+    const after = (await getMember(m.id))!;
+    expect(after.health).toMatchObject({
+      cpus: 2,
+      memTotalMb: 4000,
+      memUsedMb: 4000,
+      memNanoclawMb: 4000,
+      cpuUsed: 2,
+      cpuNanoclaw: 2,
+      diskTotalGb: 50,
+      diskFreeGb: 50,
+      load1: 100_000,
+    });
+    expect(availableOn(after).memMb).toBeLessThanOrEqual(before.memMb);
+    expect(availableOn(after).cpus).toBeLessThanOrEqual(before.cpus);
+  });
+
+  it('parts never exceed their whole, and bad numbers count as nothing', () => {
+    const h = clampHealth(
+      { cpus: 4, memTotalMb: 8000, memUsedMb: 3000, memNanoclawMb: 5000, cpuUsed: 1, cpuNanoclaw: 3, diskFreeGb: 10 },
+      { cpus: 8, memTotalMb: 16000 },
+    );
+    expect(h).toMatchObject({ cpus: 4, memTotalMb: 8000, memUsedMb: 3000, memNanoclawMb: 3000, cpuNanoclaw: 1 });
+    // A smaller machine than it joined as (a resized VM) is taken as is; no disk total means no free disk.
+    expect(h.diskFreeGb).toBe(0);
+    const junk = clampHealth({ cpus: -1, memTotalMb: Number.NaN, memUsedMb: Infinity } as never, {
+      cpus: 2,
+      memTotalMb: 1000,
+    });
+    expect(junk).toMatchObject({ cpus: 2, memTotalMb: 1000, memUsedMb: 0 });
+    // Facts it never gave: the hard bounds still hold.
+    expect(clampHealth({ cpus: 1e9, memTotalMb: 1e15 }, { cpus: 0, memTotalMb: 0 })).toMatchObject({
+      cpus: MAX_CPUS,
+      memTotalMb: MAX_MEM_MB,
+    });
   });
 });
 
