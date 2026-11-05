@@ -12,6 +12,7 @@
 import { execFile, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { Transform, type Readable } from 'stream';
 import { promisify } from 'util';
 
 import { DATA_DIR } from '../../config.js';
@@ -25,7 +26,11 @@ import type { Workload } from './store.js';
 const run = promisify(execFile);
 export const KEEP = 3;
 /** Leave at least this much free on the backup disk. */
-const MIN_FREE_BYTES = 5 * 1024 ** 3;
+export const MIN_FREE_BYTES = 5 * 1024 ** 3;
+/** The most one volume's archive from a worker may take here: a worker must not fill central's disk. */
+export const MAX_WORKER_ARCHIVE_BYTES = 20 * 1024 ** 3;
+/** How often (in bytes received) the free disk is checked again while an archive arrives. */
+const FREE_CHECK_EVERY = 64 * 1024 ** 2;
 
 export const backupRoot = (id: string): string => path.join(DATA_DIR, 'workload-backups', id);
 const STAMP_RE = /^\d{8}T\d{6}Z$/;
@@ -160,6 +165,60 @@ function helper(args: string[], io: { toFile?: string; fromFile?: string }, time
   });
 }
 
+/**
+ * Write what a worker sends to `file`, within limits: at most `maxBytes`,
+ * and never once the disk it lands on has less than `minFreeBytes` free
+ * (checked at the start and every 64 MB). Over either, the stream is cut and
+ * the partial file removed, as on any other failure. Resolves once the file
+ * is complete; the sender ends the stream only when its tar succeeded.
+ */
+export function receiveCapped(
+  src: Readable & { destroy(err?: Error): unknown },
+  file: string,
+  limits: { maxBytes: number; minFreeBytes: number },
+  freeBytes: (file: string) => number = (f) => {
+    const st = fs.statfsSync(path.dirname(f));
+    return st.bavail * st.bsize;
+  },
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let received = 0;
+    let nextCheck = 0;
+    const out = fs.createWriteStream(file, { mode: 0o600, flags: 'wx' });
+    const fail = (err: Error): void => {
+      if (settled) return;
+      settled = true;
+      src.destroy(err);
+      out.destroy();
+      fs.rmSync(file, { force: true });
+      reject(err);
+    };
+    const meter = new Transform({
+      transform(chunk: Buffer, _enc, cb) {
+        received += chunk.length;
+        if (received > limits.maxBytes)
+          return cb(new Error(`the archive is larger than ${Math.round(limits.maxBytes / 1024 ** 3)} GB`));
+        if (received >= nextCheck) {
+          nextCheck = received + FREE_CHECK_EVERY;
+          if (freeBytes(file) < limits.minFreeBytes)
+            return cb(new Error('not enough free disk on this host for a backup'));
+        }
+        cb(null, chunk);
+      },
+    });
+    src.on('error', fail);
+    meter.on('error', fail);
+    out.on('error', fail);
+    out.on('finish', () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    });
+    src.pipe(meter).pipe(out);
+  });
+}
+
 /** A volume of a stack on a worker, out to a file here or in from one (worker-main.ts vol-out / vol-in). */
 function workerVolume(
   w: Workload,
@@ -180,14 +239,14 @@ function workerVolume(
       if (err) reject(err);
       else resolve();
     };
-    s.on('error', (e: Error) => done(e));
     if (io.toFile) {
-      const out = fs.createWriteStream(io.toFile, { mode: 0o600 });
-      out.on('error', (e) => (s.destroy(), done(e)));
       // The worker ends the stream only when its tar succeeded; a failure resets it.
-      out.on('finish', () => done());
-      s.pipe(out);
+      receiveCapped(s, io.toFile, { maxBytes: MAX_WORKER_ARCHIVE_BYTES, minFreeBytes: MIN_FREE_BYTES }).then(
+        () => done(),
+        (e: Error) => done(e),
+      );
     } else {
+      s.on('error', (e: Error) => done(e));
       const src = fs.createReadStream(io.fromFile!);
       src.on('error', (e) => (s.destroy(), done(e)));
       s.on('end', () => done());
