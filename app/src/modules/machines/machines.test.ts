@@ -26,11 +26,10 @@ vi.mock('../../db/agent-groups.js', async (orig) => ({
   getAllAgentGroups: async () => [],
 }));
 // No network in tests: no host-key scan, no vault, no session mailboxes.
-vi.mock('../deploy-keys/ssh-config.js', async (orig) => ({ ...(await orig<object>()), syncSshConfig: async () => {} }));
 vi.mock('../tool-secrets/index.js', () => ({ refreshCredentialNote: async () => {} }));
-vi.mock('../deploy-keys/notify.js', async (orig) => ({
+vi.mock('./notify.js', async (orig) => ({
   ...(await orig<object>()),
-  notifyKeyChange: async (group: string, text: string) => {
+  notifyAgent: async (group: string, text: string) => {
     notices.push({ group, text });
     return 1;
   },
@@ -112,7 +111,7 @@ describe('machine lifecycle on the fake backend', () => {
     expect(up.privateIp).toMatch(/^10\.99\./);
     const key = (await listDeployKeys('ag-a')).find((k) => k.name === 'machine-web')!;
     expect(key.target).toBe(`nanoclaw@${up.privateIp}`);
-    expect(notices.at(-1)?.text).toContain('ssh machine-web');
+    expect(notices.at(-1)?.text).toContain('deploy_key_machine-web');
 
     expect((await stopMachine('ag-a', 'web')).state).toBe('stopped');
     expect((await startMachine('ag-a', 'web')).state).toBe('running');

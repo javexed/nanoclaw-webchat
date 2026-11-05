@@ -8,11 +8,11 @@ import { audit } from '../../audit.js';
 import { INSTALL_SLUG } from '../../config.js';
 import { log } from '../../log.js';
 import { deleteDeployKey, setDeployKeyTarget } from '../deploy-keys/index.js';
-import { keyAddedText, keyRemovedText, notifyKeyChange } from '../deploy-keys/notify.js';
 import { refreshCredentialNote } from '../tool-secrets/index.js';
 import { realOnecliAdmin } from '../user-credentials/onecli-admin.js';
 import { keyNameFor, stopMachine } from './control.js';
 import { driverFor } from './drivers/index.js';
+import { machineKeyRemovedText, machineReadyText, notifyAgent } from './notify.js';
 import { listMachines, listSites, updateMachine } from './store.js';
 import type { Machine, Site } from './types.js';
 
@@ -21,16 +21,16 @@ let lastFull = 0;
 const reportedOrphans = new Set<string>();
 const autoStoppedOn = new Map<string, string>();
 
-/** The machine is up: point its key at it, so `ssh machine-<name>` works and the agent hears about it. */
+/** The machine is up: point its key at it, and tell the agent. */
 async function becameReady(m: Machine, ip: string): Promise<void> {
   const key = keyNameFor(m.name);
   const target = `nanoclaw@${ip}`;
   try {
     await setDeployKeyTarget(m.agentGroupId, key, target);
     await refreshCredentialNote(realOnecliAdmin, m.agentGroupId);
-    await notifyKeyChange(
+    await notifyAgent(
       m.agentGroupId,
-      `${keyAddedText(key, target)} It is your machine "${m.name}" (${m.size}); it shuts down when not in use and expires ${new Date(m.expiresAt ?? 0).toISOString().slice(0, 10)}.`,
+      `${machineReadyText(key, target)} It is your machine "${m.name}" (${m.size}); it shuts down when not in use and expires ${new Date(m.expiresAt ?? 0).toISOString().slice(0, 10)}.`,
     );
   } catch (err) {
     log.warn('Machine ready: key setup failed', { machineId: m.id, err: String(err) });
@@ -42,7 +42,7 @@ async function gone(m: Machine): Promise<void> {
   await updateMachine(m.id, { state: 'deleted', privateIp: null, lastError: 'no longer exists on the backend' });
   await deleteDeployKey(m.agentGroupId, keyNameFor(m.name)).catch(() => false);
   await refreshCredentialNote(realOnecliAdmin, m.agentGroupId).catch(() => undefined);
-  await notifyKeyChange(m.agentGroupId, keyRemovedText(keyNameFor(m.name)));
+  await notifyAgent(m.agentGroupId, machineKeyRemovedText(keyNameFor(m.name)));
   audit({ type: 'machine.gone', actor: `agent:${m.agentGroupId}`, effect: 'failed', detail: { machine: m.id } });
 }
 
@@ -119,7 +119,7 @@ export async function reconcileAll(now = Date.now()): Promise<void> {
       try {
         await stopMachine(m.agentGroupId, m.name, expired ? 'expired' : 'daily stop');
         if (expired)
-          await notifyKeyChange(
+          await notifyAgent(
             m.agentGroupId,
             `[System] Your machine "${m.name}" passed its expiry date and was stopped. Ask an admin to extend it, or delete it with \`ncl machines delete --name ${m.name}\`.`,
           );
