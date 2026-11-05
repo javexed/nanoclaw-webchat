@@ -134,6 +134,8 @@ src/api-access-note.test.ts
 container/agent-runner/src/runner-log.test.ts
 src/container-restart-idle.ts
 src/container-restart-idle.test.ts
+src/agent-image-freshness.ts
+src/agent-image-freshness.test.ts
 src/container-runner.stop-once.test.ts
 src/reconcile-session.ceiling.test.ts
 src/drivers/docker-driver.removal.test.ts

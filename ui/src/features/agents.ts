@@ -35,10 +35,12 @@ import AgentEnvList from './AgentEnvList.vue';
 import AgentKeyList from './AgentKeyList.vue';
 import {
   addAgentCandidates,
+  addAgentQuery,
   agentKeyRows,
   agentSecretRows,
   createAgentAnyExist,
   createAgentCandidates,
+  createAgentQuery,
   agentEnvNames,
   agentEnvDeleting,
 } from './agent-lists-state.js';
@@ -57,6 +59,7 @@ import {
 } from './agent-detail-state.js';
 import { buttonBusy } from '../core/busy.js';
 import { $, esc } from '../core/dom.js';
+import { clearListSearch } from '../core/list-filter.js';
 import { mountIsland } from '../core/island.js';
 import { renderAgentApps } from './apps.js';
 import { closeModelDetail, openModelPicker } from './models.js';
@@ -874,6 +877,7 @@ async function populateAddAgentSelect() {
   const wiredIds = new Set(roomDetailWiredAgents.value.map((a: any) => a.id));
   // Never offer archived agents for wiring (even if the list toggle is on).
   addAgentCandidates.value = state.allAgents.filter((a: Agent) => !wiredIds.has(a.id) && a.status !== 'archived');
+  clearListSearch('#room-add-agent-search', addAgentQuery);
   mountAddAgentPicker();
   // Once here; the per-checkbox change listener keeps it in step after that.
   updateAddAgentSubmitLabel();
@@ -970,6 +974,7 @@ export function renderRoomCreateAgentChecklist() {
   // (see createAgentAnyExist).
   createAgentAnyExist.value = state.allAgents.length > 0;
   createAgentCandidates.value = state.allAgents.filter((a: Agent) => a.status !== 'archived');
+  clearListSearch('#room-create-agent-search', createAgentQuery);
   mountRoomCreateAgentChecklist();
 }
 
@@ -1300,6 +1305,7 @@ function mountAgentKeyList(): void {
   agentKeysApp ??= mountIsland('#agent-keys-list', () =>
     createApp(AgentKeyList, {
       onRemove: (r: { key: unknown }) => void removeAgentKey(agentKeysGroupId, r.key),
+      onSaveTarget: (name: string, target: string) => saveAgentKeyTarget(agentKeysGroupId, name, target),
     }),
   );
 }
@@ -1322,6 +1328,7 @@ async function renderAgentKeys(agentGroupId?: any) {
   agentKeyRows.value = keys.map((k: any) => ({
     name: k.name,
     meta: k.target ? `ssh -i ${k.path} ${k.target}` : `${k.path} · no login target set`,
+    target: k.target || '',
     publicKey: k.publicKey,
     key: k,
   }));
@@ -1360,6 +1367,27 @@ async function createAgentKey() {
     showToast((err as any)?.body?.error || 'Could not create key', { kind: 'error' });
   } finally {
     btn!.disabled = false;
+  }
+}
+
+/**
+ * Re-point an existing key at a new user@host. The server re-stamps the
+ * target in the key's public half and refreshes the agent's credential note;
+ * the key material is unchanged, so the far end keeps trusting it. True when
+ * saved.
+ */
+export async function saveAgentKeyTarget(agentGroupId: any, name: string, target: string): Promise<boolean> {
+  try {
+    await apiJson(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? '')}`, {
+      method: 'POST',
+      body: { name, target },
+    });
+    showToast(`Saved ${name}`);
+    await renderAgentKeys(agentGroupId);
+    return true;
+  } catch (err) {
+    showToast((err as any)?.body?.error || 'Could not save', { kind: 'error' });
+    return false;
   }
 }
 

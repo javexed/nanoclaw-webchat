@@ -5,17 +5,24 @@
  * the property from the DOM, so a controlled ref would change what Save sends. The
  * `checked` attribute Vue also emits is inert, since nothing resets the form.
  */
-import { agentSkillRows, agentSkillsEnabled } from './agent-skills-state.js';
+import { computed } from 'vue';
+import { agentSkillRows, agentSkillsEnabled, agentSkillsQuery } from './agent-skills-state.js';
+import { NO_MATCH, matchesQuery } from '../core/list-filter.js';
 
 const emit = defineEmits<{ (e: 'view', name: string): void; (e: 'dirty'): void }>();
 
 const EMPTY = 'No skills available in this install';
+
+/** Hidden, not removed: Save reads every toggle from the DOM. */
+const shown = (s: any) => matchesQuery(agentSkillsQuery.value, s.name, s.description);
+const noMatch = computed(() => agentSkillRows.value.length > 0 && !agentSkillRows.value.some(shown));
 </script>
 
 <template>
   <li v-if="agentSkillRows.length === 0" class="agent-mcp-empty">{{ EMPTY }}</li>
   <template v-else>
-    <li v-for="s in agentSkillRows" :key="s.name" class="agent-skill-row">
+    <li v-if="noMatch" class="agent-mcp-empty">{{ NO_MATCH }}</li>
+    <li v-for="s in agentSkillRows" v-show="shown(s)" :key="s.name" class="agent-skill-row">
       <div
         class="agent-mcp-info"
         :style="{ cursor: 'pointer' }"

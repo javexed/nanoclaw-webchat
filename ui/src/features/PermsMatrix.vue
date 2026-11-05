@@ -6,7 +6,8 @@
  * ungranted cell has no title="".
  */
 import { computed } from 'vue';
-import { permsAgents, permsDetailUser } from './perms-list-state.js';
+import { permsAgents, permsDetailUser, permsGroupFilter } from './perms-list-state.js';
+import { NO_MATCH, matchesQuery } from '../core/list-filter.js';
 import { auditTooltip, findRole } from './perms-audit.js';
 import { findMembership } from './perms-user-info.js';
 
@@ -17,7 +18,8 @@ const EMPTY = 'No agent groups yet.';
 const rows = computed(() => {
   const u = permsDetailUser.value;
   if (!u) return [];
-  return permsAgents.value.map((a: any) => {
+  const shown = permsAgents.value.filter((a: any) => matchesQuery(permsGroupFilter.value, a.name || a.id));
+  return shown.map((a: any) => {
     const adminRole = findRole(u, 'admin', a.id);
     const member = findMembership(u, a.id);
     const name = a.name || a.id;
@@ -38,7 +40,7 @@ function toggle(kind: string, agentGroupId: string, granting: boolean, e: MouseE
 </script>
 
 <template>
-  <div v-if="rows.length === 0" class="perms-matrix-empty">{{ EMPTY }}</div>
+  <div v-if="rows.length === 0" class="perms-matrix-empty">{{ permsAgents.length ? NO_MATCH : EMPTY }}</div>
   <template v-else>
     <div v-for="r in rows" :key="r.id" class="perms-matrix-row">
       <span class="perms-group-name" :title="r.id">{{ r.name }}</span>

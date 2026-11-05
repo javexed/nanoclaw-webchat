@@ -8,6 +8,9 @@ import { ref } from 'vue';
 export const addAgentCandidates = ref<any[]>([]);
 /** Non-archived agents offered by the room-create form. */
 export const createAgentCandidates = ref<any[]>([]);
+/** The two checklists' search boxes, as typed. */
+export const addAgentQuery = ref('');
+export const createAgentQuery = ref('');
 /**
  * Whether ANY agent exists, archived or not. The empty note keys off this, not
  * the filtered list, so with every agent archived the list is empty and has no note.
@@ -42,7 +45,7 @@ export const agentSecretEffective = ref('');
  * object, which is what the delete call takes.
  */
 export const agentKeyRows = ref<
-  Array<{ name: string; meta: string; publicKey: string; key: unknown }>
+  Array<{ name: string; meta: string; target: string; publicKey: string; key: unknown }>
 >([]);
 
 /** Env var NAMES for the open agent — values are never sent to the client. */
