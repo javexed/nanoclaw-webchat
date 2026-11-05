@@ -5,7 +5,7 @@
 import ApprovalCard from './ApprovalCard.vue';
 import { approvalRows } from './approvals-state.js';
 
-const props = defineProps<{ onRespond: (questionId: string, value: string) => void }>();
+const props = defineProps<{ onRespond: (questionId: string, value: string, reason?: string) => void }>();
 </script>
 
 <template>

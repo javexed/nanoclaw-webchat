@@ -82,6 +82,8 @@ export interface InternalDeps extends OpenDeps {
   getRoute(id: string): Promise<AppRoute | null>;
   /** The route is live: its workload runs and its publishing route is on. */
   isLive(route: AppRoute): Promise<boolean>;
+  /** Someone was let in (opened.ts records it, throttled). Must not throw. */
+  opened?(route: AppRoute): Promise<unknown>;
 }
 
 const hostOf = (v: string): string => v.trim().toLowerCase().replace(/:\d+$/, '').replace(/\.$/, '');
@@ -101,6 +103,8 @@ async function check(req: IncomingMessage, res: ServerResponse, route: AppRoute,
     return send(res, 403, `${who.displayName} cannot open this app.`);
   }
   send(res, 200, '', identityHeaders(hostname, route.kind, who));
+  // After the answer: recording use never slows or fails a request.
+  void deps.opened?.(route).catch(() => undefined);
 }
 
 /** The internal listener's request handler. */

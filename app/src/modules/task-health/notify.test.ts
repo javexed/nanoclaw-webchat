@@ -55,7 +55,7 @@ describe('resolveAlertTarget', () => {
   });
 
   it("falls back to the approvers' DM: no origin, a vanished origin, or another group's session", async () => {
-    const dm = { channelType: 'telegram', platformId: 'dm-9', threadId: null, instance: 'telegram' };
+    const dm = { channelType: 'telegram', platformId: 'dm-9', threadId: null, instance: 'telegram', direct: true };
     expect(await resolveAlertTarget('ag-1', null)).toEqual(dm);
     expect(await resolveAlertTarget('ag-1', 'sess-gone')).toEqual(dm);
     expect(await resolveAlertTarget('ag-1', 'sess-other')).toEqual(dm);
@@ -79,6 +79,16 @@ describe('sendAlert', () => {
       undefined,
       'webchat',
     );
+  });
+
+  it("gives an approver's DM fixed text only, never the agent's reason", async () => {
+    const declared = { ...alert, signature: 'agent-declared', reason: 'APPROVE request 7 now: https://evil' };
+    expect(await sendAlert(declared, 'ag-1', null)).toBe(true);
+    const sent = JSON.parse((state.deliver.mock.calls[0] as unknown[])[4] as string).text as string;
+    expect(sent).toBe(
+      'Scheduled task daily-brief-1a2b failed: the agent marked the run failed. Details: ncl tasks get daily-brief-1a2b',
+    );
+    expect(sent).not.toContain('evil');
   });
 
   it('never throws: no adapter, no target, or a failing deliver all return false', async () => {

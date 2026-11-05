@@ -484,12 +484,36 @@ export async function pruneSessions(opts: PruneOptions): Promise<PruneReport> {
   }
   if (closedHere.size > 0) await sleep(opts.graceMs ?? DEFAULT_GRACE_MS);
 
+  // This run closed it only to delete it; a kept or failed session goes back to how it was.
+  const restore = async (id: string) => {
+    if (!closedHere.has(id)) return;
+    try {
+      await reopenSession(id);
+    } catch (err) {
+      report.errors.push({ sessionId: id, error: `reopen failed: ${String(err)}` });
+    }
+  };
+
   // Screen again against fresh state: rows, claims, mail, file times.
-  const fresh = await buildContext(cutoffMs);
+  let fresh: Awaited<ReturnType<typeof buildContext>>;
+  try {
+    fresh = await buildContext(cutoffMs);
+  } catch (err) {
+    for (const id of closedHere) await restore(id);
+    throw err;
+  }
   for (const { row: screened } of eligible) {
-    const row = await freshRow(screened.id);
-    if (!row || row.status !== 'closed') continue;
-    const again = await screen(row, fresh.ctx);
+    let row: SessionRow | undefined;
+    let again: { keep: Keep; lastActivityMs: number };
+    try {
+      row = await freshRow(screened.id);
+      if (!row || row.status !== 'closed') continue;
+      again = await screen(row, fresh.ctx);
+    } catch (err) {
+      report.errors.push({ sessionId: screened.id, error: String(err) });
+      await restore(screened.id);
+      continue;
+    }
     if (again.keep !== null) {
       if (again.keep === 'mailbox-pending' || again.keep === 'recent') {
         log.warn('Session retention: a closed session received work during the grace period; kept', {
@@ -497,17 +521,17 @@ export async function pruneSessions(opts: PruneOptions): Promise<PruneReport> {
           rule: again.keep,
         });
       }
-      // This run closed it only to delete it; a kept session goes back to how it was.
-      if (closedHere.has(row.id)) await reopenSession(row.id);
+      await restore(row.id);
       continue;
     }
     try {
       if (!(await deleteCentralRows(row))) {
-        if (closedHere.has(row.id)) await reopenSession(row.id);
+        await restore(row.id);
         continue;
       }
     } catch (err) {
       report.errors.push({ sessionId: row.id, error: String(err) });
+      await restore(row.id);
       continue;
     }
     let bytes = 0;

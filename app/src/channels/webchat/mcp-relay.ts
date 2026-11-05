@@ -23,7 +23,7 @@
  */
 import http from 'http';
 import os from 'os';
-import { Readable } from 'stream';
+import { pipeline, Readable } from 'stream';
 
 import { log } from '../../log.js';
 import { getDb } from '../../db/connection.js';
@@ -147,6 +147,9 @@ async function handleRelay(req: http.IncomingMessage, res: http.ServerResponse):
   // safeFetch: the SSRF gate runs on the target, and a redirect is refused
   // rather than followed, so the credential never reaches a host the server
   // points it at. Never the router's master key either.
+  // The client leaving ends the upstream call too, so nothing streams to nobody.
+  const gone = new AbortController();
+  res.on('close', () => gone.abort());
   const forward = async (): Promise<Response> =>
     safeFetch(
       target,
@@ -154,7 +157,7 @@ async function handleRelay(req: http.IncomingMessage, res: http.ServerResponse):
         method: req.method,
         headers,
         ...(hasBody ? { body: Readable.toWeb(req) as unknown as RequestInit['body'], duplex: 'half' } : {}),
-        signal: AbortSignal.timeout(10 * 60 * 1000), // long-poll friendly
+        signal: AbortSignal.any([gone.signal, AbortSignal.timeout(10 * 60 * 1000)]), // long-poll friendly
       } as RequestInit,
       { redirects: 'refuse', routerAuth: false },
     );
@@ -179,11 +182,16 @@ async function handleRelay(req: http.IncomingMessage, res: http.ServerResponse):
     res.writeHead(upstream.status, outHeaders);
     if (upstream.body) {
       // Stream — SSE and chunked Streamable HTTP responses flow through live.
-      Readable.fromWeb(upstream.body as never).pipe(res);
+      // pipeline, not pipe: an upstream reset or the timeout mid-stream must
+      // end this response, not throw past it and stop NanoClaw.
+      pipeline(Readable.fromWeb(upstream.body as never), res, (err) => {
+        if (err && !gone.signal.aborted) log.warn('MCP relay stream failed', { serverId, err: String(err) });
+      });
     } else {
       res.end();
     }
   } catch (err) {
+    if (gone.signal.aborted) return;
     log.warn('MCP relay forward failed', { serverId, err: String(err) });
     if (!res.headersSent) res.writeHead(502);
     res.end('relay forward failed');

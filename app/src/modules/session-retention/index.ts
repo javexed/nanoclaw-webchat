@@ -32,6 +32,7 @@ const FIRST_PRUNE_AFTER_MS = 10 * 60 * 1000;
 
 let nextPruneAt = Date.now() + FIRST_PRUNE_AFTER_MS;
 let lastVacuumAt = 0;
+/** One real prune at a time, tick or `ncl sessions prune`. */
 let running = false;
 
 export async function retentionTick(now = Date.now()): Promise<PruneReport | null> {
@@ -106,9 +107,17 @@ export const pruneOperation: CustomOperation = {
     if (days === 0) {
       throw new Error('session retention is off: set NANOCLAW_SESSION_KEEP_DAYS in .env, or pass --days');
     }
-    const report = await pruneSessions({ days, dryRun: args.dry_run === true });
-    if (!report.dryRun) log.info(`Session retention (ncl): ${summarize(report)}`, { removed: report.sessions.length });
-    return report;
+    const dryRun = args.dry_run === true;
+    if (dryRun) return pruneSessions({ days, dryRun });
+    if (running) throw new Error('a prune is already running; try again shortly');
+    running = true;
+    try {
+      const report = await pruneSessions({ days, dryRun });
+      log.info(`Session retention (ncl): ${summarize(report)}`, { removed: report.sessions.length });
+      return report;
+    } finally {
+      running = false;
+    }
   },
   formatHuman: formatReport,
 };

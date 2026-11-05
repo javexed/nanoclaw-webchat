@@ -1,6 +1,6 @@
 /**
- * Workloads run only when the operator turned them on (NANOCLAW_WORKLOADS=1)
- * AND this host passes the preflight:
+ * Workloads run only when an owner turned them on (NANOCLAW_WORKLOADS=1, the
+ * Workloads switch in Admin → Publishing) AND this host passes the preflight:
  *
  *   - the systemd slice exists and caps memory (deploy/workloads-slice.sh);
  *   - `docker compose` and `docker buildx` are there;
@@ -47,8 +47,7 @@ export interface PreflightResult {
 let last: PreflightResult | null = null;
 let running: Promise<PreflightResult> | null = null;
 
-export const OFF_REASON =
-  'workloads are off on this host (an operator turns them on with NANOCLAW_WORKLOADS=1; see docs/webchat/workloads.md)';
+export const OFF_REASON = 'workloads are off on this host: an owner can turn them on in Admin → Publishing';
 
 /** Throws unless workloads may start things right now. */
 export function requireWorkloads(): void {
@@ -58,6 +57,9 @@ export function requireWorkloads(): void {
 }
 
 export const lastPreflight = (): PreflightResult | null => last;
+
+/** A preflight is under way (Admin → Publishing says Checking…). */
+export const preflightRunning = (): boolean => running !== null;
 
 export interface PreflightDeps {
   slice: typeof sliceStatus;
@@ -153,7 +155,7 @@ async function check(deps: PreflightDeps, now: number): Promise<PreflightResult>
   }
   if (isolation === 'open')
     return fail(
-      'workload containers can reach this host: the host rules are missing (an operator runs deploy/workloads-host-rules.sh as root)',
+      'workload containers can reach this host: the host rules are missing (run deploy/workloads-host-rules.sh --install-unit as root)',
       true,
     );
   return { ok: true, reason: '', isolationOpen: false, at: now };

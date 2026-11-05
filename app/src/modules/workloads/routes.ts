@@ -35,6 +35,8 @@ export interface AppRoute {
   createdBy: string | null;
   createdAt: number;
   updatedAt: number;
+  /** When someone last opened it through the gateway (ms, recorded at most every few minutes); null: never. */
+  lastOpenedAt: number | null;
 }
 
 interface Row {
@@ -52,6 +54,7 @@ interface Row {
   created_by: string | null;
   created_at: number;
   updated_at: number;
+  last_opened_at?: number | null;
 }
 
 const toRoute = (r: Row): AppRoute => ({
@@ -69,6 +72,7 @@ const toRoute = (r: Row): AppRoute => ({
   createdBy: r.created_by,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
+  lastOpenedAt: r.last_opened_at ?? null,
 });
 
 function parseEmails(v: string | null): string[] {
@@ -166,6 +170,16 @@ export async function updateRoute(
 
 export async function deleteRoute(id: string): Promise<void> {
   await getDb().run(`DELETE FROM workload_app_routes WHERE id = ?`, id);
+}
+
+/** Someone opened the app (opened.ts decides how often this is written). */
+export async function noteRouteOpened(id: string, at: number): Promise<void> {
+  await getDb().run(
+    `UPDATE workload_app_routes SET last_opened_at = ? WHERE id = ? AND (last_opened_at IS NULL OR last_opened_at < ?)`,
+    at,
+    id,
+    at,
+  );
 }
 
 /**

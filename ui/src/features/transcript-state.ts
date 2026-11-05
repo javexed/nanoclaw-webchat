@@ -21,7 +21,7 @@ export interface MsgRow {
    * this, and Vue reuses the component instead of remounting it.
    */
   key: number | string;
-  kind: 'msg' | 'system' | 'divider' | 'approval' | 'draft';
+  kind: 'msg' | 'system' | 'divider' | 'approval' | 'approval-notice' | 'draft';
   /** Server id, once known. The optimistic echo gets one when the echo lands. */
   id?: string | null;
   /**
@@ -60,8 +60,12 @@ export interface MsgRow {
   body?: boolean;
   /** The approval/draft payloads are handed to their existing islands. */
   payload?: any;
-  approvalState?: 'resolved' | 'eligible' | 'awaiting';
+  approvalState?: import('./approval-row.js').RoomApprovalState;
   note?: string;
+  /** An approved card's outcome: its summary line and redacted details. */
+  approvalResult?: import('./approval-row.js').ApprovalOutcomeView | null;
+  /** An approval notice (reminder, or expired with "Send again"). */
+  notice?: import('./approval-row.js').ApprovalNoticeView;
   /** A rate-limit notice: when the limit resets, and the pending retry (LimitRetry.vue). */
   limitResetsAt?: number | null;
   limitRetryAt?: number | null;

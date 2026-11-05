@@ -1439,3 +1439,42 @@ export const moduleWebchatWorkloadAppRouteEmails: Migration = {
     await db.exec(`ALTER TABLE workload_app_routes ADD COLUMN emails TEXT;`);
   },
 };
+
+/**
+ * The expiry a workload's agent was last reminded of (modules/workloads/
+ * reconcile.ts): the reminder a few days before goes out once per expiry,
+ * across restarts; extending sets a new expiry and so re-arms it.
+ */
+export const moduleWebchatWorkloadExpiryNotice: Migration = {
+  version: 233,
+  name: 'webchat-workload-expiry-notice',
+  async up(db) {
+    await db.exec(`ALTER TABLE workloads ADD COLUMN expiry_notice_for INTEGER;`);
+  },
+};
+
+/**
+ * When a published app was last opened through the gateway (modules/
+ * workloads/opened.ts, written at most every few minutes per app): an app
+ * people use is renewed before it expires (reconcile.ts).
+ */
+export const moduleWebchatWorkloadAppRouteOpened: Migration = {
+  version: 234,
+  name: 'webchat-workload-app-route-opened',
+  async up(db) {
+    await db.exec(`ALTER TABLE workload_app_routes ADD COLUMN last_opened_at INTEGER;`);
+  },
+};
+
+/**
+ * Who started a topic thread, so its creator can delete it as well as an
+ * owner. NULL for threads made before this (and for main/agent lanes): those
+ * stay owner-only.
+ */
+export const moduleWebchatThreadCreator: Migration = {
+  version: 235,
+  name: 'webchat-thread-creator',
+  async up(db) {
+    await db.exec(`ALTER TABLE webchat_threads ADD COLUMN created_by TEXT;`);
+  },
+};

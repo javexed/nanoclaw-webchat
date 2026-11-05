@@ -1,11 +1,15 @@
 <script setup lang="ts">
 /**
- * An agent's apps, mounted into <div id="agent-apps"> (apps.ts). One row per app
- * (or per unpublished workload): name, state, route, who can open it, Open ↗ and
- * a ⋯ menu. Renders from apps-state.ts; every action lives in apps-actions.ts.
+ * An agent's apps, mounted into <div id="agent-apps"> (apps.ts). Above the list:
+ * "Allow Docker Hub for builds" while confined builds are on (a gate line while
+ * they are off, or while workloads are). One row per app (or per unpublished
+ * workload): name, state, its expiry, route, who can open it, Open ↗ and a ⋯
+ * menu. Renders from apps-state.ts; every action lives in apps-actions.ts.
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import {
+  appsBuildsBusy,
+  appsBuildsError,
   appsBusy,
   appsDrawer,
   appsErrors,
@@ -14,6 +18,7 @@ import {
   appsService,
   appsView,
   diskText,
+  expiryText,
   parseEmailList,
   routeOptions,
   rowKey,
@@ -26,15 +31,18 @@ import {
 import {
   closeDrawer,
   closeMenu,
+  extend,
   onRouteChange,
   onWhoChange,
   openLogs,
   openPeople,
   openRestore,
   pickService,
+  redeploy,
   remove,
   restore,
   savePeople,
+  setDockerHub,
   startStop,
   toggleInfo,
   toggleMenu,
@@ -62,6 +70,16 @@ onUnmounted(() => {
   document.removeEventListener('keydown', onKey);
 });
 const view = computed(() => appsView.value);
+const builds = computed(() => view.value?.builds ?? null);
+const expiry = (r: AppRow) =>
+  r.deployed ? expiryText(r.expiresAt, Date.now(), undefined, r.renewsWhileUsed === true) : null;
+
+function dockerHubChanged(e: Event): void {
+  const el = e.target as HTMLInputElement;
+  const on = el.checked;
+  el.checked = !on; // shows what is saved until the server answers
+  void setDockerHub(on);
+}
 const disk = computed(() => diskText(view.value?.disk ?? null));
 
 const busy = (r: AppRow) => appsBusy.value.has(rowKey(r));
@@ -107,7 +125,29 @@ function whoChanged(r: AppRow, e: Event): void {
 
 <template>
   <div v-if="view" class="apps">
+    <p v-if="!view.available" class="cred-hint apps-gate">
+      Workloads are off — an owner turns them on in Admin → Publishing
+    </p>
     <div v-if="disk" class="apps-disk" :class="`apps-disk-${view.disk?.level}`">{{ disk }}</div>
+    <template v-if="view.available && builds">
+      <div v-if="builds.on" id="agent-apps-docker-hub" class="setting-group install-row apps-builds">
+        <span class="setting-label">Allow Docker Hub for builds</span>
+        <span v-if="appsBuildsBusy" class="btn-spinner" aria-hidden="true"></span>
+        <span v-else-if="builds.pending" class="app-state app-state-needs-approval">Needs approval</span>
+        <label class="setting-toggle"
+          ><input
+            type="checkbox"
+            aria-label="Allow Docker Hub for builds"
+            :checked="builds.dockerHub"
+            :disabled="appsBuildsBusy || (builds.pending && !builds.dockerHub) || undefined"
+            @change="dockerHubChanged"
+        /></label>
+      </div>
+      <p v-else id="agent-apps-docker-hub" class="cred-hint apps-gate">
+        Builds are off — an owner turns them on in Admin → Publishing
+      </p>
+      <p v-if="appsBuildsError" class="cred-hint err" role="alert">{{ appsBuildsError }}</p>
+    </template>
     <p v-if="!view.apps.length" class="apps-empty">No apps yet</p>
     <ul v-else class="apps-list">
       <li v-for="r in view.apps" :key="rowKey(r)" class="app-row" :aria-busy="busy(r) || undefined">
@@ -115,6 +155,9 @@ function whoChanged(r: AppRow, e: Event): void {
           <span class="app-name">{{ r.app ?? r.workload }}</span>
           <span v-if="busy(r)" class="btn-spinner" aria-hidden="true"></span>
           <span class="app-state" :class="`app-state-${r.state}`">{{ STATE_LABEL[r.state] }}</span>
+          <span v-if="expiry(r)" class="app-expiry" :class="`app-expiry-${expiry(r)!.level}`">{{
+            expiry(r)!.text
+          }}</span>
           <a v-if="r.url" class="app-open" :href="r.url" target="_blank" rel="noopener noreferrer">Open ↗</a>
           <button
             v-if="r.deployed"
@@ -177,6 +220,8 @@ function whoChanged(r: AppRow, e: Event): void {
         <p v-if="appsErrors.get(rowKey(r))" class="cred-hint err" role="alert">{{ appsErrors.get(rowKey(r)) }}</p>
         <div v-if="appsMenuKey === rowKey(r)" class="app-menu" role="menu">
           <button type="button" role="menuitem" @click.stop="startStop(r)">{{ r.running ? 'Stop' : 'Start' }}</button>
+          <button type="button" role="menuitem" @click.stop="redeploy(r)">Redeploy</button>
+          <button v-if="r.expiresAt !== null" type="button" role="menuitem" @click.stop="extend(r)">Extend</button>
           <button type="button" role="menuitem" @click.stop="openLogs(r)">Logs</button>
           <button type="button" role="menuitem" @click.stop="openRestore(r)">Restore backup…</button>
           <button type="button" role="menuitem" class="app-menu-danger" @click.stop="remove(r)">Delete…</button>

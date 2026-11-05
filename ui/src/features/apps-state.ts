@@ -24,12 +24,18 @@ export interface AppRow {
   services: string[];
   deployed: boolean;
   running: boolean;
+  /** When it stops unless extended (ms); null: it does not expire. */
+  expiresAt: number | null;
+  /** Published: renewed near its expiry while people open it. Absent from an older server. */
+  renewsWhileUsed?: boolean;
 }
 
 export interface AppsView {
   available: boolean;
   routes: RouteKind[];
   disk: { usedGb: number; quotaGb: number; level: 'ok' | 'warn' | 'over' } | null;
+  /** Confined builds on this host; this agent's builds may pull from Docker Hub; a card for that waits. */
+  builds?: { on: boolean; dockerHub: boolean; pending: boolean };
   apps: AppRow[];
 }
 
@@ -127,6 +133,33 @@ export function diskText(d: AppsView['disk']): string {
   return `${n(d.usedGb)} GB of ${n(d.quotaGb)} GB`;
 }
 
+const DAY_MS = 86_400_000;
+/** As the server's reminder (reconcile.ts EXPIRY_NOTICE_MS): from here on the date is a warning. */
+export const EXPIRY_SOON_MS = 3 * DAY_MS;
+
+/** "1 Dec" in the viewer's own words for a date. */
+export const shortDay = (ms: number, locale?: string): string =>
+  new Date(ms).toLocaleDateString(locale, { day: 'numeric', month: 'short' });
+
+/**
+ * "Expires 1 Dec" (soon: within three days) or "Expired 1 Dec"; null when it
+ * does not expire. A published app is renewed while people open it, so until
+ * it is close (then it was not used: the date is the warning) it says
+ * "Renews while used".
+ */
+export function expiryText(
+  expiresAt: number | null,
+  now = Date.now(),
+  locale?: string,
+  renewsWhileUsed = false,
+): { text: string; level: 'ok' | 'soon' | 'past' } | null {
+  if (expiresAt === null) return null;
+  const day = shortDay(expiresAt, locale);
+  if (expiresAt <= now) return { text: `Expired ${day}`, level: 'past' };
+  if (expiresAt - now <= EXPIRY_SOON_MS) return { text: `Expires ${day}`, level: 'soon' };
+  return renewsWhileUsed ? { text: 'Renews while used', level: 'ok' } : { text: `Expires ${day}`, level: 'ok' };
+}
+
 // Reactive state the island renders from (apps.ts fills it).
 export const appsView = shallowRef<AppsView | null>(null);
 export const appsAgentId = ref<string | null>(null);
@@ -147,3 +180,6 @@ export const appsService = ref<Map<string, string>>(new Map());
 export const appsInfoKey = ref<string | null>(null);
 /** Rows with a request in flight. */
 export const appsBusy = ref<Set<string>>(new Set());
+/** "Allow Docker Hub for builds": a request in flight, and a refusal shown under it. */
+export const appsBuildsBusy = ref(false);
+export const appsBuildsError = ref('');

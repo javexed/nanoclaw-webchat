@@ -79,6 +79,8 @@ export const NEVER_AUTO_APPROVE_ACTIONS: ReadonlySet<string> = new Set([
   'instruction_change',
   // A person asking to publish an agent's app wider (modules/workloads/gui.ts).
   'workloads_publish',
+  // A person asking to let an agent's builds reach Docker Hub (modules/workloads/gui.ts).
+  'workloads_build_registries',
 ]);
 
 /** Each never-list payload shape, with the triage flag it implies. */
@@ -159,6 +161,7 @@ export function heuristicFlags(action: string, payloadJson: string): TriageFlag[
   if (action === 'add_mcp_server') out.add('capability');
   if (action === 'instruction_change') out.add('capability');
   if (action === 'workloads_publish') out.add('capability');
+  if (action === 'workloads_build_registries') out.add('outbound');
   for (const { re, flag } of NEVER_PAYLOAD_SHAPES) if (re.test(payloadJson)) out.add(flag);
   return [...out];
 }

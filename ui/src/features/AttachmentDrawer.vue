@@ -7,9 +7,10 @@
  * phone. Images keep the lightbox; everything else previewable opens here.
  *
  * Text is fetched and rendered by us (highlighted code, CSV table, JSON tree,
- * sanitized Markdown). PDFs load from the file URL itself in a frame: the server
- * serves every attachment with `CSP: sandbox`, so the framed document runs in an
- * opaque origin with the browser's own viewer.
+ * sanitized Markdown). PDFs load from the file URL itself in a frame, in the
+ * browser's own viewer: the server sends PDFs without the `CSP: sandbox` every
+ * other attachment gets, because Chromium refuses its viewer in a sandboxed
+ * document (files.ts handleFileServe says why that is safe).
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { marked } from '/marked.min.js';
@@ -38,7 +39,7 @@ import {
   HTML_PREVIEW_MAX,
   htmlFrameUrl,
 } from './attachment-preview.js';
-import { composeTextFrom } from './attachment-compose.js';
+import { composeTextFrom, newComposeNonce } from './attachment-compose.js';
 import { prefillComposer } from './compose-prefill.js';
 import { closeAttachmentDrawer, drawerFile } from './attachment-drawer-state.js';
 
@@ -58,7 +59,9 @@ const width = ref(0);
 const maxWidth = computed(() => drawerMax(viewport.value));
 
 const file = drawerFile;
-const kind = computed(() => (file.value ? previewKind(file.value.filename, file.value.mime) : null));
+const kind = computed(() =>
+  file.value ? previewKind(file.value.filename, file.value.mime, !!file.value.fromAgent) : null,
+);
 const tooLarge = computed(
   () =>
     !!file.value &&
@@ -230,26 +233,33 @@ function onKeydown(e: KeyboardEvent): void {
 
 // ── HTML attachments ──────────────────────────────────────────────────────
 // The rendered page may ask to pre-fill the composer. composeTextFrom accepts a
-// message only from THIS frame's window and only in the one fixed shape; the
-// text lands in the composer and the person still decides whether to send it.
+// message only from THIS frame's window, carrying this open's nonce, and only in
+// the one fixed shape; the text lands in the composer and the person still
+// decides whether to send it.
 const htmlFrame = ref<HTMLIFrameElement | null>(null);
 // The frame keeps its window when the page navigates itself elsewhere (a
-// sandboxed frame may), so a second load means it is no longer the attachment
-// talking: from then on it is not heard.
+// sandboxed frame may), and the new document's scripts run before its load
+// event. The nonce is what keeps it unheard: it rides in the first URL's
+// fragment only. A second load then takes the frame away altogether.
+const frameNonce = ref('');
+const frameLeft = ref(false);
 let htmlLoads = 0;
 function onHtmlLoad(): void {
-  htmlLoads++;
+  if (++htmlLoads > 1) frameLeft.value = true;
 }
 watch(
   () => file.value?.url,
   () => {
     htmlLoads = 0;
+    frameLeft.value = false;
+    frameNonce.value = newComposeNonce();
   },
+  { immediate: true },
 );
 function onFrameMessage(e: MessageEvent): void {
   const f = file.value;
-  if (!f || kind.value !== 'html' || htmlLoads > 1) return;
-  const text = composeTextFrom(e, htmlFrame.value?.contentWindow);
+  if (!f || kind.value !== 'html' || frameLeft.value) return;
+  const text = composeTextFrom(e, htmlFrame.value?.contentWindow, frameNonce.value);
   if (text !== null) prefillComposer(text, f.filename);
 }
 
@@ -333,7 +343,8 @@ const sizeLabel = computed(() => formatSize(file.value?.size));
       <p v-else-if="loading" class="attachment-drawer-status">
         <span class="btn-spinner" aria-hidden="true"></span>Loading…
       </p>
-      <p v-else-if="failed" class="attachment-drawer-status">Couldn't load this file</p>
+      <p v-else-if="failed" class="attachment-drawer-status">Can't load</p>
+      <p v-else-if="kind === 'html' && frameLeft" class="attachment-drawer-status">Left preview</p>
 
       <!-- sandbox: scripts only. Never allow-same-origin (the page would share the
            app's origin and its session) and never allow-popups-to-escape-sandbox. -->
@@ -342,7 +353,7 @@ const sizeLabel = computed(() => formatSize(file.value?.size));
         ref="htmlFrame"
         :key="file.url"
         class="attachment-drawer-frame attachment-drawer-page"
-        :src="htmlFrameUrl(file.url)"
+        :src="htmlFrameUrl(file.url, frameNonce)"
         sandbox="allow-scripts"
         referrerpolicy="no-referrer"
         :title="file.filename"
@@ -357,7 +368,7 @@ const sizeLabel = computed(() => formatSize(file.value?.size));
       ></iframe>
 
       <template v-else-if="kind === 'video'">
-        <p v-if="mediaFailed" class="attachment-drawer-status">Can't play this file here</p>
+        <p v-if="mediaFailed" class="attachment-drawer-status">Can't play</p>
         <video
           v-else
           class="attachment-drawer-video"
@@ -369,7 +380,7 @@ const sizeLabel = computed(() => formatSize(file.value?.size));
         ></video>
       </template>
       <template v-else-if="kind === 'audio'">
-        <p v-if="mediaFailed" class="attachment-drawer-status">Can't play this file here</p>
+        <p v-if="mediaFailed" class="attachment-drawer-status">Can't play</p>
         <audio
           v-else
           class="attachment-drawer-audio"

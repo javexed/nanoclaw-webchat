@@ -19,6 +19,7 @@ import {
   compose,
   copyBuildContext,
   ensureNetwork,
+  foreignIndexes,
   joinAgentContainers,
   networkName,
   pinRef,
@@ -59,7 +60,8 @@ import {
 } from './store.js';
 
 export const WORKLOAD_NAME_RE = /^[a-z][a-z0-9-]{0,28}[a-z0-9]$/;
-const DEFAULT_DAYS = 30;
+/** A first deploy runs this long; Extend makes it this long from today again. */
+export const DEFAULT_DAYS = 30;
 const actor = (g: string): string => `agent:${g}`;
 
 /** How image references become digests; tests swap it. */
@@ -212,7 +214,7 @@ async function deploy(w: Workload, agentGroupId: string): Promise<Workload> {
   requireWorkloads();
   const approved = decodeApproved(w.approvedShape);
   if (!approved) throw new Error(`${w.name} has no approval on record: run \`ncl workloads up\``);
-  const net = await claimNetwork(agentGroupId, networkName, MAX_NETWORKS);
+  const net = await claimNetwork(agentGroupId, networkName, MAX_NETWORKS, await foreignIndexes());
   const network = await ensureNetwork(net.idx);
   const taken = (await listWorkloads({ agentGroupId }))
     .filter((o) => o.id !== w.id)
@@ -227,7 +229,10 @@ async function deploy(w: Workload, agentGroupId: string): Promise<Workload> {
   try {
     const builds = Object.keys(w.stack.compose.services).filter((n) => w.stack.compose.services[n].build !== undefined);
     if (builds.length) {
-      if (!confinedBuildsOn()) throw new Error('builds are not available on this host; use a published image');
+      if (!confinedBuildsOn())
+        throw new Error(
+          'builds are off on this host (an owner can turn on confined builds in Admin → Publishing); use a published image',
+        );
       const dir = await groupDir(agentGroupId);
       const builder = await ensureBuilder(agentGroupId);
       for (const name of builds) await buildService(w, dir, name, approved, builder);
@@ -312,6 +317,43 @@ export async function redeployWorkload(agentGroupId: string, name: string, file:
     );
   if (hasBuild(stack)) await noteUnapprovedBuild(agentGroupId);
   return deploy(await updateWorkload(existing.id, { composeText: text, stack }), agentGroupId);
+}
+
+/**
+ * Deploy the stack as it is on record again: what an admin's Redeploy in
+ * Agent → Apps runs. Builds are rebuilt from the agent's current folder,
+ * held to the approved Dockerfiles and args like any start, so no card.
+ */
+export async function redeployApproved(agentGroupId: string, name: string): Promise<Workload> {
+  const w = await own(agentGroupId, name);
+  requireWorkloads();
+  assertDiskRoom(agentGroupId, (await quotaFor(agentGroupId)).diskGb);
+  if (hasBuild(w.stack)) await noteUnapprovedBuild(agentGroupId);
+  return deploy(w, agentGroupId);
+}
+
+/**
+ * Keep a workload for DEFAULT_DAYS from now. It never shortens one, and it
+ * never stacks up past that: extending is keeping what was approved, not
+ * approving more. A workload without an expiry stays without one.
+ */
+export async function extendWorkload(
+  agentGroupId: string,
+  name: string,
+  by: string,
+  now = Date.now(),
+): Promise<Workload> {
+  const w = await own(agentGroupId, name);
+  if (w.expiresAt === null) return w;
+  const expiresAt = Math.max(w.expiresAt, now + DEFAULT_DAYS * 86_400_000);
+  if (expiresAt === w.expiresAt) return w;
+  audit({
+    type: 'workload.extend',
+    actor: by,
+    effect: 'allow',
+    detail: { workload: w.id, from: w.expiresAt, to: expiresAt },
+  });
+  return updateWorkload(w.id, { expiresAt });
 }
 
 async function own(agentGroupId: string, name: string): Promise<Workload> {

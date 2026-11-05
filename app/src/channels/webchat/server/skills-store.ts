@@ -7,6 +7,7 @@ import { DATA_DIR } from '../../../config.js';
 import { getMessagingGroup } from '../../../db/messaging-groups.js';
 import { getSession } from '../../../db/sessions.js';
 import { listRevisions } from '../../../modules/learning/apply.js';
+import { skillUsageDir } from '../../../modules/learning/curator.js';
 import { getWebchatRoomsForAgent } from '../db.js';
 import { listAgentsForUser } from './agent-lookup.js';
 import { json, readJsonBody } from './http.js';
@@ -191,10 +192,13 @@ export function listScopedSkills(
       const text = readScopedSkillFile(agentGroupId, entry);
       const fm = text.match(/^---\s*\n([\s\S]*?)\n---/);
       let invocations = 0;
-      try {
-        invocations = parseInt(fs.readFileSync(path.join(p, '.invocations'), 'utf8'), 10) || 0;
-      } catch {
-        /* never invoked */
+      for (const at of [skillUsageDir(p), p]) {
+        try {
+          invocations = parseInt(fs.readFileSync(path.join(at, '.invocations'), 'utf8'), 10) || 0;
+        } catch {
+          /* never invoked */
+        }
+        if (invocations) break;
       }
       out.push({
         name: entry,

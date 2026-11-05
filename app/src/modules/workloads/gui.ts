@@ -16,8 +16,14 @@
  * port); on approve it is planned again, refused if anything moved, and the
  * person who asked must still administer the agent. The asker becomes the
  * app's "only me".
+ *
+ * The same rule holds for "Allow Docker Hub for builds": turning it on widens
+ * what the agent's builds may reach (a registry a build pulls from is one it
+ * can send to), so it is a card; turning it off applies at once. Extend and
+ * Redeploy keep what was approved, so a person's click applies directly.
  */
 import { quoteForCard } from '../../card-text.js';
+import { getAgentGroup } from '../../db/agent-groups.js';
 import { getPendingApprovalsByAction } from '../../db/sessions.js';
 import { log } from '../../log.js';
 import { registerSessionlessApprovalHandler, requestSessionlessApproval } from '../approvals/sessionless.js';
@@ -25,13 +31,33 @@ import { getUser } from '../permissions/db/users.js';
 import { diskLevel, diskUsed, gb, type DiskLevel } from './disk.js';
 import { syncGateway } from './gateway/index.js';
 import { enabledRoutes, isRouteKind, publishingRoute, type RouteKind } from './gateway/publishing.js';
-import { exposeApp, parseEmails, planExpose, routeView, unexposeApp, widensAccess } from './publish.js';
+import { declaredPort, exposeApp, parseEmails, planExpose, routeView, unexposeApp, widensAccess } from './publish.js';
 import { findRouteByApp, isWho, listRoutes, updateRoute, type AppRoute, type Who } from './routes.js';
-import { workloadsSwitchedOn } from './settings.js';
-import { findWorkload, listWorkloads, quotaFor, workloadsReady, type Workload } from './store.js';
+import { notifyWorkloadAgent } from './notify.js';
+import { confinedBuildsOn, workloadsSwitchedOn } from './settings.js';
+import {
+  buildRegistries,
+  findWorkload,
+  listWorkloads,
+  quotaFor,
+  setBuildRegistries,
+  workloadsReady,
+  type Workload,
+} from './store.js';
 
 /** The session-less approval action a person's widening asks under. */
 export const PUBLISH_ACTION = 'workloads_publish';
+/** …and the one "Allow Docker Hub for builds" asks under. */
+export const BUILD_REGISTRIES_ACTION = 'workloads_build_registries';
+
+/** Docker Hub's registry, token service and the CDNs its layers come from. */
+export const DOCKER_HUB: readonly string[] = [
+  'registry-1.docker.io',
+  'auth.docker.io',
+  'production.cloudflare.docker.com',
+  'production.cloudfront.docker.com',
+];
+export const hasDockerHub = (hosts: readonly string[]): boolean => DOCKER_HUB.every((h) => hosts.includes(h));
 
 export type RouteChoice = 'off' | RouteKind;
 export const isRouteChoice = (v: unknown): v is RouteChoice => v === 'off' || isRouteKind(v);
@@ -65,11 +91,7 @@ export function exposable(w: Pick<Workload, 'stack' | 'addresses'>): Array<{ ser
   const found: Array<{ service: string; port: number }> = [];
   for (const [service, def] of Object.entries(w.stack.compose.services)) {
     if (!w.addresses[service]) continue;
-    const ex = Array.isArray(def.expose) ? def.expose : [];
-    const port = ex
-      .map((x) => /^(\d{1,5})(\/tcp)?$/.exec(String(x))?.[1])
-      .map(Number)
-      .find((n) => Number.isInteger(n) && n >= 1 && n <= 65535);
+    const port = declaredPort(def);
     if (port) found.push({ service, port });
   }
   return found.sort((a, b) => a.service.localeCompare(b.service));
@@ -87,13 +109,21 @@ export function pickTarget(
 
 // --- Pending cards ---------------------------------------------------------
 
-const AGENT_CARD_COMMANDS = new Set(['workloads-expose', 'workloads-up', 'workloads-restore', 'workloads-delete']);
+const AGENT_CARD_COMMANDS = new Set([
+  'workloads-expose',
+  'workloads-up',
+  'workloads-restore',
+  'workloads-delete',
+  'workloads-extend',
+]);
 
 export interface Pending {
   /** App names with a card waiting. */
   apps: Set<string>;
   /** Workload names with a card waiting. */
   workloads: Set<string>;
+  /** A card to allow Docker Hub for its builds is waiting. */
+  buildRegistries: boolean;
 }
 
 const parse = (s: string): Record<string, unknown> => {
@@ -107,7 +137,9 @@ const parse = (s: string): Record<string, unknown> => {
 
 /** Cards waiting for this agent's workloads and apps: the agent's own (`ncl workloads …`) and people's. */
 export async function pendingFor(agentGroupId: string): Promise<Pending> {
-  const out: Pending = { apps: new Set(), workloads: new Set() };
+  const out: Pending = { apps: new Set(), workloads: new Set(), buildRegistries: false };
+  for (const a of await getPendingApprovalsByAction(BUILD_REGISTRIES_ACTION))
+    if (a.status === 'pending' && parse(a.payload).agentGroupId === agentGroupId) out.buildRegistries = true;
   for (const a of await getPendingApprovalsByAction(PUBLISH_ACTION)) {
     if (a.status !== 'pending') continue;
     const p = parse(a.payload);
@@ -124,7 +156,9 @@ export async function pendingFor(agentGroupId: string): Promise<Pending> {
     if ((caller.agentGroupId ?? a.agent_group_id) !== agentGroupId) continue;
     const name = typeof frame.args?.name === 'string' ? frame.args.name : '';
     if (name) out.workloads.add(name);
-    if (frame.command === 'workloads-expose') out.apps.add(String(frame.args?.app || name).toLowerCase());
+    // An expose, or a deploy that publishes (`up --publish`), waits on the app too.
+    if (frame.command === 'workloads-expose' || (frame.command === 'workloads-up' && frame.args?.publish))
+      out.apps.add(String(frame.args?.app || name).toLowerCase());
   }
   return out;
 }
@@ -151,6 +185,10 @@ export interface AppRow {
   deployed: boolean;
   /** Its containers are running. */
   running: boolean;
+  /** When it is stopped (ms), unless extended; null: it does not expire. */
+  expiresAt: number | null;
+  /** Published: renewed near its expiry while people open it (reconcile.ts). */
+  renewsWhileUsed: boolean;
 }
 
 export interface AppsView {
@@ -159,19 +197,25 @@ export interface AppsView {
   /** The routes switched on and usable now. */
   routes: RouteKind[];
   disk: { usedGb: number; quotaGb: number; level: DiskLevel } | null;
+  /** Confined builds on this host, and whether this agent's builds may pull from Docker Hub. */
+  builds: { on: boolean; dockerHub: boolean; pending: boolean };
   apps: AppRow[];
 }
 
 export async function appsOf(agentGroupId: string): Promise<AppsView> {
   const routes = (await enabledRoutes()).map((r) => r.kind);
   const available = workloadsSwitchedOn();
-  if (!(await workloadsReady())) return { available, routes, disk: null, apps: [] };
-  const [workloads, published, pending, quota] = await Promise.all([
+  const builds = { on: confinedBuildsOn(), dockerHub: false, pending: false };
+  if (!(await workloadsReady())) return { available, routes, disk: null, builds, apps: [] };
+  const [workloads, published, pending, quota, registries] = await Promise.all([
     listWorkloads({ agentGroupId }),
     listRoutes({ agentGroupId }),
     pendingFor(agentGroupId),
     quotaFor(agentGroupId),
+    buildRegistries(agentGroupId),
   ]);
+  builds.dockerHub = hasDockerHub(registries);
+  builds.pending = pending.buildRegistries;
   const apps: AppRow[] = [];
   const shown = new Set<string>();
   for (const w of workloads) {
@@ -193,6 +237,8 @@ export async function appsOf(agentGroupId: string): Promise<AppsView> {
         services: [r.service],
         deployed: true,
         running: w.state === 'running',
+        expiresAt: w.expiresAt,
+        renewsWhileUsed: w.expiresAt !== null,
       });
     }
     if (!mine.length)
@@ -208,6 +254,8 @@ export async function appsOf(agentGroupId: string): Promise<AppsView> {
         services: exposable(w).map((t) => t.service),
         deployed: true,
         running: w.state === 'running',
+        expiresAt: w.expiresAt,
+        renewsWhileUsed: false,
       });
   }
   // A first deploy waiting for its card has no workload row yet.
@@ -225,12 +273,15 @@ export async function appsOf(agentGroupId: string): Promise<AppsView> {
         services: [],
         deployed: false,
         running: false,
+        expiresAt: null,
+        renewsWhileUsed: false,
       });
   const used = diskUsed(agentGroupId);
   return {
     available,
     routes,
     disk: used ? { usedGb: gb(used.bytes), quotaGb: quota.diskGb, level: diskLevel(used.bytes, quota.diskGb) } : null,
+    builds,
     apps,
   };
 }
@@ -435,5 +486,75 @@ registerSessionlessApprovalHandler(PUBLISH_ACTION, async ({ payload, outcome, us
     log.info('Apps: widening approved and applied', { app: r.app, approvedBy: userId });
   } catch (err) {
     log.warn('Apps: approved widening not applied', { app: payload.app, err: String(err).slice(0, 300) });
+  }
+});
+
+// --- Docker Hub for builds -------------------------------------------------
+
+/**
+ * "Allow Docker Hub for builds": on raises a card (it widens what the agent's
+ * builds reach), off clears the agent's build registries at once.
+ */
+export async function setDockerHub(agentGroupId: string, userId: string, on: unknown): Promise<ChangeResult> {
+  if (typeof on !== 'boolean') throw new ChangeRefused('on must be true or false');
+  const current = await buildRegistries(agentGroupId);
+  if (!on) {
+    if (!current.length) return { change: 'none', applied: false, pending: false };
+    await setBuildRegistries(agentGroupId, []);
+    log.info('Apps: build registries cleared by a person', { agentGroupId, by: userId });
+    return { change: 'narrow', applied: true, pending: false };
+  }
+  if (hasDockerHub(current)) return { change: 'none', applied: false, pending: false };
+  if (!confinedBuildsOn()) throw new ChangeRefused('Builds are off on this host');
+  if ((await pendingFor(agentGroupId)).buildRegistries) throw new ChangeRefused('Already waiting for approval', 409);
+  const agent = (await getAgentGroup(agentGroupId))?.name || agentGroupId;
+  const asker = await displayName(userId);
+  const id = await requestSessionlessApproval({
+    action: BUILD_REGISTRIES_ACTION,
+    payload: { agentGroupId, hosts: [...DOCKER_HUB], requestedBy: userId },
+    title: `Docker Hub for ${agent}’s builds`,
+    question: [
+      `${quoteForCard(asker)} wants to let ${quoteForCard(agent)}’s builds pull base images from Docker Hub.`,
+      '',
+      `Allows: ${DOCKER_HUB.join(', ')}`,
+      'Only while it builds. A build could also send data there.',
+    ].join('\n'),
+  });
+  if (!id) throw new ChangeRefused('No owner or admin could be asked right now', 503);
+  log.info('Apps: Docker Hub for builds sent for approval', { agentGroupId, by: userId, approvalId: id });
+  return { change: 'widen', applied: false, pending: true };
+}
+
+/** Apply an approved "Allow Docker Hub for builds". Throws when it no longer holds. */
+export async function applyApprovedBuildRegistries(payload: Record<string, unknown>): Promise<string[]> {
+  const agentGroupId = String(payload.agentGroupId ?? '');
+  const requestedBy = String(payload.requestedBy ?? '');
+  const hosts = Array.isArray(payload.hosts) ? payload.hosts.map(String) : [];
+  if (!agentGroupId || !requestedBy || hosts.length !== DOCKER_HUB.length || !hasDockerHub(hosts))
+    throw new Error('malformed card');
+  if (!publishDeps || !(await publishDeps.isAdmin(requestedBy, agentGroupId)))
+    throw new Error('the person who asked no longer administers this agent');
+  const next = [...new Set([...(await buildRegistries(agentGroupId)), ...hosts])];
+  await setBuildRegistries(agentGroupId, next);
+  await notifyWorkloadAgent(
+    agentGroupId,
+    '[System] Docker Hub is now allowed for your builds: base images in FROM lines can be pulled from it. Redeploy to build.',
+  );
+  return next;
+}
+
+registerSessionlessApprovalHandler(BUILD_REGISTRIES_ACTION, async ({ payload, outcome, userId }) => {
+  if (outcome !== 'approve') return;
+  try {
+    await applyApprovedBuildRegistries(payload);
+    log.info('Apps: Docker Hub for builds approved and applied', {
+      agentGroupId: payload.agentGroupId,
+      approvedBy: userId,
+    });
+  } catch (err) {
+    log.warn('Apps: approved Docker Hub for builds not applied', {
+      agentGroupId: payload.agentGroupId,
+      err: String(err).slice(0, 300),
+    });
   }
 });

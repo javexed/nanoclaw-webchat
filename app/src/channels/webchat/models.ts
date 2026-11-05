@@ -18,6 +18,8 @@ import { ensureContainerConfig, getContainerConfig, updateContainerConfigScalars
 import { listProviderContainerConfigNames } from '../../providers/provider-container-registry.js';
 import { log } from '../../log.js';
 import { readEnvFile } from '../../env.js';
+import { recordInstructionEdit } from '../../modules/instruction-guard/store.js';
+import { readNoFollow, writeNoFollow } from '../../no-follow-fs.js';
 import { getAssignedModelForAgent, getEffectiveModelForAgent, type WebchatModel } from './db.js';
 import { agentRouterBase, CLOUD_PROVIDERS, cloudModelMaxOutput, routerAuthHeaders } from './cloud-models.js';
 import { upsertEnv } from './env-write.js';
@@ -502,7 +504,10 @@ async function modelSettingsStale(agentGroupId: string): Promise<boolean> {
   if (!model) return false; // nothing assigned: keys there are the operator's
   let env: Record<string, unknown> = {};
   try {
-    const raw = JSON.parse(fs.readFileSync(agentSettingsPath(agentGroupId), 'utf8')) as { env?: unknown };
+    const settingsPath = agentSettingsPath(agentGroupId);
+    const text = readNoFollow(path.dirname(settingsPath), path.basename(settingsPath));
+    if (text === null) return false;
+    const raw = JSON.parse(text) as { env?: unknown };
     if (raw.env && typeof raw.env === 'object') env = raw.env as Record<string, unknown>;
   } catch {
     return false; // no settings yet: the first write comes with the folder
@@ -538,14 +543,19 @@ export async function writeAgentSettingsForAssignedModel(agentGroupId: string): 
     return;
   }
 
+  // The folder is the agent's (~/.claude, read-write): a link planted at either
+  // file is replaced, never read or written through, so a link to a host file
+  // cannot have that file read into settings or overwritten by them.
+  const home = path.dirname(settingsPath);
   let existing: Record<string, unknown> = {};
-  if (fs.existsSync(settingsPath)) {
-    try {
-      existing = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    } catch {
-      // corrupt — start fresh, log so the operator notices
-      log.warn('Webchat: settings.json unparseable, rewriting from scratch', { agentGroupId });
-    }
+  let before: string | null = null;
+  try {
+    before = readNoFollow(home, path.basename(settingsPath));
+    if (before !== null) existing = JSON.parse(before);
+  } catch {
+    // corrupt or not a regular file — start fresh, log so the operator notices
+    before = null;
+    log.warn('Webchat: settings.json unreadable, rewriting from scratch', { agentGroupId });
   }
   const existingEnv = (
     typeof existing.env === 'object' && existing.env !== null ? (existing.env as Record<string, string>) : {}
@@ -563,8 +573,8 @@ export async function writeAgentSettingsForAssignedModel(agentGroupId: string): 
   delete cleaned.NO_PROXY;
   delete cleaned.no_proxy;
   // Only when this writer put it there: an operator's own value (an output cap, an alias) stays, and wins.
-  const ownedPath = path.join(path.dirname(settingsPath), OWNED_ENV_FILE);
-  const owned = readOwnedEnv(ownedPath);
+  const ownedPath = path.join(home, OWNED_ENV_FILE);
+  const owned = readOwnedEnv(home);
   for (const k of OWNED_ENV_KEYS) {
     const v = cleaned[k];
     if (v === undefined) continue;
@@ -573,10 +583,18 @@ export async function writeAgentSettingsForAssignedModel(agentGroupId: string): 
   }
 
   const merged = { ...existing, env: { ...cleaned, ...overrides } };
-  fs.writeFileSync(settingsPath, JSON.stringify(merged, null, 2) + '\n');
+  const after = JSON.stringify(merged, null, 2) + '\n';
+  writeNoFollow(home, path.basename(settingsPath), after);
+  // The file is guarded (modules/instruction-guard): the host's own write is
+  // approved, unless an unapproved agent edit was already in it.
+  try {
+    recordInstructionEdit(agentGroupId, 'claude-user-settings-json', before, after);
+  } catch (err) {
+    log.warn('Webchat: could not record the settings write as approved', { agentGroupId, err });
+  }
   const nextOwned: Record<string, string> = {};
   for (const k of OWNED_ENV_KEYS) if (overrides[k] !== undefined) nextOwned[k] = envHash(overrides[k]);
-  if (Object.keys(nextOwned).length) fs.writeFileSync(ownedPath, JSON.stringify(nextOwned) + '\n');
+  if (Object.keys(nextOwned).length) writeNoFollow(home, OWNED_ENV_FILE, JSON.stringify(nextOwned) + '\n');
   else fs.rmSync(ownedPath, { force: true });
 }
 
@@ -610,9 +628,9 @@ const OWNED_ENV_KEYS = [
 const OWNED_ENV_FILE = 'model-env-owned.json';
 const envHash = (v: string): string => createHash('sha256').update(v).digest('hex');
 
-function readOwnedEnv(file: string): Record<string, string> {
+function readOwnedEnv(home: string): Record<string, string> {
   try {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown;
+    const raw = JSON.parse(readNoFollow(home, OWNED_ENV_FILE) ?? '{}') as unknown;
     return raw && typeof raw === 'object' ? (raw as Record<string, string>) : {};
   } catch {
     return {};

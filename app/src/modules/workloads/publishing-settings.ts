@@ -1,6 +1,7 @@
 /**
- * Admin → Publishing (owner only): the two publishing routes' switches,
- * settings and credentials, and their status lines.
+ * Admin → Publishing (owner only): the Workloads and Confined builds switches
+ * with this host's readiness, the two publishing routes' switches, settings
+ * and credentials, and their status lines.
  *
  * The switches and settings ARE the `.env` keys the docs name
  * (NANOCLAW_WORKLOAD_TAILNET, NANOCLAW_WORKLOAD_CLOUDFLARE_DOMAIN, …): the
@@ -10,6 +11,11 @@
  * them. Every route still runs only when its full check passes
  * (tailnetStatus / cloudflareStatus); switching one off takes its apps down
  * at the next sweep.
+ *
+ * The Workloads status line is the preflight's result in a few words
+ * (`Ready`, `Host rules missing`, `Slice missing`, `Checking…`) and, when
+ * something is missing on the host, the one command that fixes it, for the
+ * owner to run there (the page cannot: it needs root).
  *
  * Connect hands a credential straight to the OneCLI vault
  * (connectTailnetClient / connectCloudflareToken). NanoClaw never stores it
@@ -22,9 +28,13 @@ import { cloudflareStatus, refreshCloudflareStatus, type CloudflareStatus } from
 import { domainConflict, HEX32, ownHostNames, TEAM_RE } from './cloudflare/config.js';
 import { connectCloudflareToken } from './cloudflare/credential.js';
 import { normalizeHost, registrableDomain } from './cloudflare/domain.js';
+import path from 'path';
+
+import { builderRuntime, runtimeAvailable } from './builder.js';
+import { sliceName } from './docker.js';
 import { gatewayState } from './gateway/index.js';
-import { lastPreflight, OFF_REASON } from './preflight.js';
-import { workloadSetting, workloadsSwitchedOn, type WorkloadEnvKey } from './settings.js';
+import { lastPreflight, OFF_REASON, preflightRunning, runPreflight, type PreflightResult } from './preflight.js';
+import { confinedBuildsOn, workloadSetting, workloadsSwitchedOn, type WorkloadEnvKey } from './settings.js';
 import { DOMAIN_RE } from './tailnet/config.js';
 import { connectTailnetClient } from './tailnet/credential.js';
 import { refreshTailnetStatus, tailnetStatus, type TailnetStatus } from './tailnet/index.js';
@@ -89,21 +99,137 @@ export function statusLine(kind: 'tailnet' | 'cloudflare', s: RouteStatus): Stat
   return { text, ok: false, needsConnect: text === 'Not connected', detail: sentence(s.missing), warnings };
 }
 
-/** Workloads are not usable on this host: a few words, and the full reason. */
-export function workloadsGate(): { text: string; detail: string } | null {
-  if (!workloadsSwitchedOn()) return { text: 'Workloads off on this host', detail: sentence(OFF_REASON) };
-  const p = lastPreflight();
-  if (!p) return { text: 'Workloads still being checked', detail: '' };
-  if (!p.ok)
-    return {
-      text: p.isolationOpen ? 'Workload host rules missing' : 'Workloads not available on this host',
-      detail: sentence(p.reason),
-    };
-  return null;
+// --- Workloads and confined builds on this host ----------------------------
+
+export interface HostStatus {
+  /** `Off`, `Ready`, `Checking…`, or the one thing missing in a few words. */
+  text: string;
+  ok: boolean;
+  /** Still being checked: the page asks again shortly. */
+  checking: boolean;
+  /** The command that fixes it, run on this host; '' when there is none to give. */
+  fix: string;
+  /** The full reason, for a tooltip and the log. */
+  detail: string;
 }
 
-export interface PublishingView {
-  /** Why workloads cannot run here, or null. */
+const status = (text: string, extra: Partial<HostStatus> = {}): HostStatus => ({
+  text,
+  ok: false,
+  checking: false,
+  fix: '',
+  detail: '',
+  ...extra,
+});
+
+/** A script under this install's deploy/, as the owner runs it on the host. */
+const script = (root: string, rel: string): string => path.join(root, 'deploy', rel);
+
+/**
+ * The Workloads switch's status line, from the last preflight. Pure: `p` is
+ * lastPreflight(), `running` whether one is under way.
+ */
+export function workloadsStatus(
+  on: boolean,
+  p: PreflightResult | null,
+  running: boolean,
+  root: string,
+  slice: string = sliceName(),
+): HostStatus {
+  if (!on) return status('Off');
+  // Never checked, or last checked while it was off: the result says nothing about the host yet.
+  if (!p || p.reason === OFF_REASON) return status('Checking…', { checking: true });
+  if (p.ok) return status('Ready', { ok: true });
+  // A failure being checked again keeps its words until the new answer is in; the page asks again.
+  return { ...missingOnHost(p, root, slice), checking: running };
+}
+
+function missingOnHost(p: PreflightResult, root: string, slice: string): HostStatus {
+  const detail = sentence(p.reason);
+  if (p.isolationOpen)
+    return status('Host rules missing', {
+      fix: `sudo bash ${script(root, 'workloads-host-rules.sh')} --install-unit`,
+      detail,
+    });
+  if (/slice/i.test(p.reason))
+    return status('Slice missing', {
+      fix: `sudo bash ${script(root, 'workloads-slice.sh')} --name ${slice} --memory 8G`,
+      detail,
+    });
+  if (/docker compose is not installed/i.test(p.reason))
+    return status('Docker Compose missing', { fix: 'sudo apt-get install docker-compose-plugin', detail });
+  if (/docker buildx is not installed/i.test(p.reason))
+    return status('Docker Buildx missing', { fix: 'sudo apt-get install docker-buildx-plugin', detail });
+  if (/could not run/i.test(p.reason)) return status('Check failed', { detail });
+  return status('Not available', { detail });
+}
+
+/** The Confined builds switch's status line: gVisor must be registered with Docker. */
+export function buildsStatus(on: boolean, gvisor: boolean, root: string): HostStatus {
+  if (!on) return status('Off');
+  if (!gvisor)
+    return status('gVisor missing', {
+      fix: `bash ${script(root, 'install-gvisor.sh')}`,
+      detail: `Confined builds need the ${builderRuntime()} runtime registered with Docker.`,
+    });
+  return status('Ready', { ok: true });
+}
+
+export interface HostView {
+  workloads: { on: boolean; status: HostStatus };
+  builds: { on: boolean; status: HostStatus };
+}
+
+/** A failed check is run again when the page is opened at least this long after it. */
+const RECHECK_MS = 60_000;
+
+export async function hostView(
+  root: string = process.cwd(),
+  gvisor: () => Promise<boolean> = () => runtimeAvailable(),
+  now = Date.now(),
+): Promise<HostView> {
+  const on = workloadsSwitchedOn();
+  const p = lastPreflight();
+  // Not checked since it was switched on (by hand, too), or the owner may have run the fix since:
+  // check now rather than at the next half hour. The answer reads Checking… until it is in.
+  const stale = !p || p.reason === OFF_REASON || (!p.ok && now - p.at >= RECHECK_MS);
+  if (on && stale && !preflightRunning()) void runPreflight().catch(() => undefined);
+  const builds = confinedBuildsOn();
+  return {
+    workloads: { on, status: workloadsStatus(on, p, preflightRunning(), root) },
+    builds: { on: builds, status: buildsStatus(builds, builds ? await gvisor().catch(() => false) : true, root) },
+  };
+}
+
+export interface WorkloadsInput {
+  on?: unknown;
+  confinedBuilds?: unknown;
+}
+
+/** The Workloads and Confined builds switches: their `.env` keys. Switching on checks the host at once. */
+export async function applyWorkloads(
+  root: string,
+  i: WorkloadsInput,
+  env: Env = process.env,
+  check: () => Promise<unknown> = () => runPreflight(),
+): Promise<void> {
+  const flag = (v: unknown, field: string): boolean | undefined => {
+    if (v === undefined) return undefined;
+    if (typeof v !== 'boolean') throw new SettingRefused(field, 'Must be on or off');
+    return v;
+  };
+  const on = flag(i.on, 'on');
+  const builds = flag(i.confinedBuilds, 'confinedBuilds');
+  if (builds !== undefined) setOrDrop(root, env, 'NANOCLAW_WORKLOAD_CONFINED_BUILDS', builds ? '1' : '');
+  if (on !== undefined) {
+    setOrDrop(root, env, 'NANOCLAW_WORKLOADS', on ? '1' : '');
+    // Takes up to a minute (it starts a probe container): the page shows Checking… and asks again.
+    void check().catch(() => undefined);
+  }
+}
+
+export interface PublishingView extends HostView {
+  /** Why apps cannot be published while workloads are ready (the app gateway), or null. */
   gate: { text: string; detail: string } | null;
   tailnet: { on: boolean; domain: string; status: StatusLine };
   cloudflare: {
@@ -116,12 +242,15 @@ export interface PublishingView {
   };
 }
 
-export function publishingView(get: (k: WorkloadEnvKey) => string | undefined = workloadSetting): PublishingView {
+export async function publishingView(
+  get: (k: WorkloadEnvKey) => string | undefined = workloadSetting,
+  host: () => Promise<HostView> = () => hostView(),
+): Promise<PublishingView> {
   const g = gatewayState();
   return {
-    gate:
-      workloadsGate() ??
-      (g.on && !g.ok && g.reason ? { text: 'App gateway not running', detail: sentence(g.reason) } : null),
+    ...(await host()),
+    // The Workloads row says when workloads themselves are off or not ready.
+    gate: g.on && !g.ok && g.reason ? { text: 'App gateway not running', detail: sentence(g.reason) } : null,
     tailnet: {
       on: get('NANOCLAW_WORKLOAD_TAILNET') === '1',
       domain: get('NANOCLAW_WORKLOAD_TAILNET_DOMAIN') ?? '',

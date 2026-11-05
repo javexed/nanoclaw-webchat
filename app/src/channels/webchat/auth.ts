@@ -963,7 +963,9 @@ export function parseProxyEntry(entry: string): { address: string; prefix: numbe
     prefix = Number(rawPrefix);
     // A mapped spelling counts its prefix over 128 bits; 96 of them are the ::ffff: part.
     if (fam === 4 && address !== rawAddr.trim().toLowerCase()) prefix -= 96;
-    if (prefix < 0 || prefix > max) return null;
+    // /0 trusts every address while reading as a restriction: refused, as
+    // `auto` says the same thing honestly.
+    if (prefix < 1 || prefix > max) return null;
   }
   return { address, prefix, family: fam === 4 ? 'ipv4' : 'ipv6' };
 }
@@ -988,6 +990,11 @@ async function authenticateTrustedProxy(req: IncomingMessage, remoteIp: string):
   const cleanIp = remoteIp.replace(/^::ffff:/, '');
   const cfg = proxyCfg();
   if (!cfg.raw) return null;
+  // The Serve listener carries tailnet visitors relayed by Tailscale Serve from
+  // loopback; they are signed in by Serve's own login header (serveLoginOf). A
+  // proxy header there is the visitor's to write, so a loopback (or `auto`)
+  // trust entry must not turn it into an identity.
+  if (arrivedOnServeListener(req)) return null;
 
   // Step 1 — the IP gate. This is the ONLY thing the trust mode changes.
   //   "auto" / "*"  → no gate. Safe only when the server is reachable

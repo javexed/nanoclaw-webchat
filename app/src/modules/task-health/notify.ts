@@ -8,6 +8,7 @@
  *   2. otherwise (created from the CLI, or the origin is gone) the agent
  *      group's approver chain — scoped admin, global admin, owner — by DM,
  *      the same people who are asked to approve its privileged actions.
+ *      A DM carries fixed failure text only, never the agent's own words.
  */
 import { resolveGroupTimezone } from '../../container-config.js';
 import { getMessagingGroup } from '../../db/messaging-groups.js';
@@ -23,6 +24,8 @@ export interface AlertTarget {
   platformId: string;
   threadId: string | null;
   instance?: string;
+  /** An approver's DM, not the task's own chat: gets fixed text only. */
+  direct?: boolean;
 }
 
 export async function resolveAlertTarget(
@@ -46,7 +49,13 @@ export async function resolveAlertTarget(
   const delivery = await pickApprovalDelivery(await pickApprover(agentGroupId), '');
   if (!delivery) return null;
   const mg = delivery.messagingGroup;
-  return { channelType: mg.channel_type, platformId: mg.platform_id, threadId: null, instance: mg.instance };
+  return {
+    channelType: mg.channel_type,
+    platformId: mg.platform_id,
+    threadId: null,
+    instance: mg.instance,
+    direct: true,
+  };
 }
 
 /** Send one alert. Never throws: a lost alert is logged, the incident state stands. */
@@ -59,7 +68,7 @@ export async function sendAlert(alert: Alert, agentGroupId: string, originSessio
       return false;
     }
     const tz = await resolveGroupTimezone(agentGroupId);
-    const text = alertText(alert, (iso) => formatLocalTime(iso, tz));
+    const text = alertText(alert, (iso) => formatLocalTime(iso, tz), { fixedText: target.direct === true });
     await adapter.deliver(
       target.channelType,
       target.platformId,

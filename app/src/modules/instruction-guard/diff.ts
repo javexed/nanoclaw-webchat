@@ -13,6 +13,23 @@ const MAX_LINE = 200;
 
 type Op = { kind: ' ' | '-' | '+'; line: string };
 
+// Characters an approver cannot see or that reorder what they see: format
+// controls (bidi overrides and isolates, zero-width, soft hyphen, BOM, tag
+// characters), other control characters, variation selectors and the blank
+// Hangul fillers. Tab stays as it is.
+// Combining ones are listed outside the class, where they cannot combine.
+const INVISIBLE = /(?!\t)(?:[\p{Cf}\p{Cc}\p{Zl}\p{Zp}\p{Variation_Selector}\u115F\u3164\uFFA0]|\u034F|\u1160)/gu;
+
+/** `line` with every invisible character shown as ⟦U+XXXX⟧, and whether there were any. */
+export function revealInvisible(line: string): { text: string; found: boolean } {
+  let found = false;
+  const text = line.replace(INVISIBLE, (ch) => {
+    found = true;
+    return `⟦U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}⟧`;
+  });
+  return { text, found };
+}
+
 function splitLines(text: string | null): string[] {
   if (!text) return [];
   const lines = text.split('\n');
@@ -74,6 +91,7 @@ export function compactDiff(before: string | null, after: string | null, budget:
   });
 
   const out: string[] = [];
+  let revealed = false;
   let used = 0;
   let shownChanges = 0;
   // Characters cut from changed lines that ARE shown: a long line's hidden
@@ -81,20 +99,23 @@ export function compactDiff(before: string | null, after: string | null, budget:
   let hiddenChars = 0;
   const totalChanges = ops.filter((op) => op.kind !== ' ').length;
   let gap = false;
-  // Room for the truncation line, so the whole result stays within budget.
-  const room = budget - 128;
+  // Room for the truncation and invisible-character lines, so the whole
+  // result stays within budget.
+  const room = budget - 192;
   for (let idx = 0; idx < ops.length; idx++) {
     if (!keep[idx]) {
       gap = true;
       continue;
     }
     const { kind, line } = ops[idx];
-    const shown = line.length > MAX_LINE ? `${line.slice(0, MAX_LINE)}…` : line;
+    const cut = line.length > MAX_LINE ? `${line.slice(0, MAX_LINE)}…` : line;
+    const { text: shown, found } = revealInvisible(cut);
     const rendered = [...(gap && out.length > 0 ? ['…'] : []), `${kind} ${shown}`];
     const cost = rendered.reduce((n, s) => n + s.length + 1, 0);
     if (used + cost > room) break;
     out.push(...rendered);
     used += cost;
+    revealed ||= found;
     gap = false;
     if (kind !== ' ') {
       shownChanges++;
@@ -107,5 +128,24 @@ export function compactDiff(before: string | null, after: string | null, budget:
   if (missing > 0) notes.push(`${missing} more changed line${missing === 1 ? '' : 's'} not shown`);
   if (hiddenChars > 0) notes.push(`${hiddenChars} character${hiddenChars === 1 ? '' : 's'} of long lines not shown`);
   if (notes.length > 0) out.push(`(diff truncated: ${notes.join('; ')})`);
+  if (revealed) out.push('(invisible characters shown as ⟦U+XXXX⟧)');
   return out.join('\n');
+}
+
+/**
+ * The diff in a fenced block whose fence is longer than any backtick run in
+ * it, so no line of the agent's content can close the fence early and pass
+ * as card text.
+ */
+export function fencedDiff(before: string | null, after: string | null, budget: number): string {
+  const fenceFor = (body: string): string =>
+    '`'.repeat(Math.max(3, 1 + Math.max(0, ...(body.match(/`+/g) ?? []).map((run) => run.length))));
+  let body = compactDiff(before, after, budget - 16);
+  let fence = fenceFor(body);
+  // A long backtick run makes a long fence: shrink the diff to fit both.
+  if (body.length + 2 * fence.length + 6 > budget) {
+    body = compactDiff(before, after, budget - 2 * fence.length - 6);
+    fence = fenceFor(body);
+  }
+  return `${fence}diff\n${body}\n${fence}`;
 }

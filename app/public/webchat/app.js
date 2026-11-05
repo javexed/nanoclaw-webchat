@@ -311,11 +311,11 @@ function showSignInAgain() {
 	shown = true;
 	const banner = $("#connection-banner");
 	if (banner) {
-		banner.replaceChildren(document.createTextNode("Your sign-in expired."));
+		banner.replaceChildren(document.createTextNode("Signed out"));
 		const btn = document.createElement("button");
 		btn.type = "button";
 		btn.className = "banner-action";
-		btn.textContent = "Sign in again";
+		btn.textContent = "Reload";
 		btn.addEventListener("click", () => signInAgain());
 		banner.appendChild(btn);
 		banner.classList.add("visible");
@@ -397,13 +397,28 @@ function authFetch(url, opts = {}) {
 	const headers = { ...opts.headers };
 	if (authToken && !headers["Authorization"] && !headers["authorization"]) headers["Authorization"] = `Bearer ${authToken}`;
 	headers["X-Webchat-CSRF"] = "1";
+	if (sessionExpiredShown()) return PAUSED();
 	return fetch(url, {
 		...opts,
 		headers
 	}).then((res) => {
 		noteAuthHint(res);
 		return res;
+	}, async (err) => {
+		if (url.startsWith("/") && !url.startsWith("//") && await expiredOnce()) return PAUSED();
+		throw err;
 	});
+}
+/** A request that never settles: callers stay quiet while the banner is up. */
+var PAUSED = () => new Promise(() => {});
+/** One check at a time: a burst of failed polls shares it. */
+var checking = null;
+function expiredOnce() {
+	if (sessionExpiredShown()) return Promise.resolve(true);
+	checking ??= checkSessionExpired().finally(() => {
+		checking = null;
+	});
+	return checking;
 }
 /** authFetch + JSON ceremony in one call. Sends a JSON body when `body` is
 * given, parses the JSON response (tolerating empty/non-JSON), and throws
@@ -473,12 +488,24 @@ var _hoisted_7$30 = {
 	class: "approval-details"
 };
 var _hoisted_8$21 = { class: "approval-payload" };
-var _hoisted_9$17 = { class: "approval-actions" };
-var _hoisted_10$16 = ["disabled", "onClick"];
-var _hoisted_11$11 = {
-	key: 3,
+var _hoisted_9$17 = ["disabled"];
+var _hoisted_10$17 = {
+	key: 4,
+	class: "approval-actions"
+};
+var _hoisted_11$12 = ["disabled", "onClick"];
+var _hoisted_12$11 = {
+	key: 5,
 	class: "approval-error"
 };
+/**
+* Triage — why this request is in front of a human. Chips are checkable CLAIMS, never
+* a risk level or confidence score: the triage model cannot withhold a review, so it
+* must not be trusted to reassure either. Never-list chips are authoritative
+* (deterministic) and render beside model chips so a disagreement stays visible. The
+* note makes ABSENCE legible: "no chips" must never read as "screened, nothing found".
+*/
+var REJECT_WITH_REASON = "reject_with_reason";
 //#endregion
 //#region src/features/ApprovalCard.vue
 var ApprovalCard_default = /* @__PURE__ */ defineComponent({
@@ -523,6 +550,20 @@ var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 		};
 		const chipTitle = (authoritative) => authoritative ? "Always requires a human" : "Proposed by the triage model — check it against the payload";
 		const props = __props;
+		/** "Reject with reason…" asks for the reason right on the card, then rejects with it. */
+		const askingReason = ref(false);
+		const reason = ref("");
+		const pick = (value) => {
+			if (value === REJECT_WITH_REASON) {
+				askingReason.value = true;
+				return;
+			}
+			props.onRespond(props.approval.questionId, value);
+		};
+		const sendReason = () => {
+			const r = reason.value.trim();
+			if (r) props.onRespond(props.approval.questionId, REJECT_WITH_REASON, r);
+		};
 		const FALLBACK = [{
 			label: "Approve",
 			value: "approve"
@@ -549,16 +590,39 @@ var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 					}, toDisplayString(c.flag), 11, _hoisted_4$56);
 				}), 128)), triageNote() ? (openBlock(), createElementBlock("span", _hoisted_5$46, toDisplayString(triageNote()), 1)) : createCommentVNode("", true)])) : createCommentVNode("", true),
 				cardText() ? (openBlock(), createElementBlock("p", _hoisted_6$37, toDisplayString(cardText()), 1)) : createCommentVNode("", true),
-				rawPayload() ? (openBlock(), createElementBlock("details", _hoisted_7$30, [_cache[0] || (_cache[0] = createElementVNode("summary", null, "Details", -1)), createElementVNode("pre", _hoisted_8$21, toDisplayString(payloadText(rawPayload())), 1)])) : createCommentVNode("", true),
-				createElementVNode("div", _hoisted_9$17, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
+				rawPayload() ? (openBlock(), createElementBlock("details", _hoisted_7$30, [_cache[3] || (_cache[3] = createElementVNode("summary", null, "Details", -1)), createElementVNode("pre", _hoisted_8$21, toDisplayString(payloadText(rawPayload())), 1)])) : createCommentVNode("", true),
+				askingReason.value ? (openBlock(), createElementBlock("form", {
+					key: 3,
+					class: "approval-actions approval-reason",
+					onSubmit: withModifiers(sendReason, ["prevent"])
+				}, [
+					withDirectives(createElementVNode("input", {
+						"onUpdate:modelValue": _cache[0] || (_cache[0] = ($event) => reason.value = $event),
+						type: "text",
+						maxlength: "500",
+						placeholder: "Reason",
+						"aria-label": "Reason",
+						autofocus: "",
+						onKeydown: _cache[1] || (_cache[1] = withKeys(($event) => askingReason.value = false, ["esc"]))
+					}, null, 544), [[vModelText, reason.value]]),
+					createElementVNode("button", {
+						type: "button",
+						onClick: _cache[2] || (_cache[2] = ($event) => askingReason.value = false)
+					}, "Cancel"),
+					createElementVNode("button", {
+						type: "submit",
+						class: "reject",
+						disabled: !reason.value.trim() || unref(approvalBusy).has(__props.approval.questionId) || void 0
+					}, "Reject", 8, _hoisted_9$17)
+				], 32)) : (openBlock(), createElementBlock("div", _hoisted_10$17, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
 					return openBlock(), createElementBlock("button", {
 						key: i,
 						class: normalizeClass(btnClass(o.value)),
 						disabled: unref(approvalBusy).has(__props.approval.questionId) || void 0,
-						onClick: ($event) => props.onRespond(__props.approval.questionId, o.value)
-					}, toDisplayString(o.label || o.value), 11, _hoisted_10$16);
-				}), 128))]),
-				unref(approvalErrors)[__props.approval.questionId] ? (openBlock(), createElementBlock("div", _hoisted_11$11, toDisplayString(unref(approvalErrors)[__props.approval.questionId]), 1)) : createCommentVNode("", true)
+						onClick: ($event) => pick(o.value)
+					}, toDisplayString(o.label || o.value), 11, _hoisted_11$12);
+				}), 128))])),
+				unref(approvalErrors)[__props.approval.questionId] ? (openBlock(), createElementBlock("div", _hoisted_12$11, toDisplayString(unref(approvalErrors)[__props.approval.questionId]), 1)) : createCommentVNode("", true)
 			], 8, _hoisted_1$82);
 		};
 	}
@@ -612,7 +676,7 @@ var ApprovalToast_default = /* @__PURE__ */ defineComponent({
 			label: "Reject",
 			value: "reject"
 		}];
-		const options = () => Array.isArray(props.approval.options) && props.approval.options.length ? props.approval.options : FALLBACK;
+		const options = () => (Array.isArray(props.approval.options) && props.approval.options.length ? props.approval.options : FALLBACK).filter((o) => o.value !== "reject_with_reason");
 		const btnClass = (v) => v === "approve" ? "approve" : v === "reject" ? "reject" : "";
 		return (_ctx, _cache) => {
 			return openBlock(), createElementBlock(Fragment, null, [createElementVNode("div", _hoisted_1$81, toDisplayString(__props.approval.title || __props.approval.action || "Approval requested"), 1), createElementVNode("div", _hoisted_2$70, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
@@ -652,7 +716,7 @@ function setApprovalsBanner(count) {
 }
 var approvalsApp = null;
 function mountApprovalsList() {
-	approvalsApp ??= mountIsland("#approval-list", () => createApp(ApprovalsList_default, { onRespond: (questionId, value) => respondToApproval(questionId, value, null) }));
+	approvalsApp ??= mountIsland("#approval-list", () => createApp(ApprovalsList_default, { onRespond: (questionId, value, reason) => respondToApproval(questionId, value, null, reason) }));
 }
 function renderApprovalsList() {
 	if ($("#approval-list")) {
@@ -696,14 +760,6 @@ function handleApprovalResolvedEvent(msg) {
 	pendingApprovals = pendingApprovals.filter((a) => a.questionId !== approvalId);
 	renderApprovalsList();
 	document.querySelectorAll(`.approval-toast[data-question-id="${approvalId}"]`).forEach((el) => el.remove());
-	document.querySelectorAll(`.approval-msg[data-question-id="${approvalId}"]`).forEach((el) => {
-		const who = msg.resolvedBy ? " by " + (String(msg.resolvedBy).split(":").pop() ?? "").split("@")[0] : "";
-		el.innerHTML = "";
-		const note = document.createElement("div");
-		note.className = "approval-inroom-note resolved";
-		note.textContent = `🔒 Approval — resolved${who}`;
-		el.appendChild(note);
-	});
 }
 function handleApprovalEvent(msg) {
 	showApprovalToast(msg);
@@ -712,7 +768,7 @@ function handleApprovalEvent(msg) {
 		new Notification(msg.title || "Approval requested", { body: msg.question || "" });
 	} catch {}
 }
-async function respondToApproval(questionId, value, cardEl) {
+async function respondToApproval(questionId, value, cardEl, reason) {
 	const setBusy = (on) => {
 		const next = new Set(approvalBusy.value);
 		if (on) next.add(questionId);
@@ -736,7 +792,10 @@ async function respondToApproval(questionId, value, cardEl) {
 				"Content-Type": "application/json",
 				"X-Webchat-CSRF": "1"
 			},
-			body: JSON.stringify({ value })
+			body: JSON.stringify(reason ? {
+				value,
+				reason
+			} : { value })
 		});
 		if (!r.ok) {
 			const body = await r.json().catch(() => ({}));
@@ -756,6 +815,44 @@ async function respondToApproval(questionId, value, cardEl) {
 		toastEl?.querySelectorAll("button").forEach((b) => b.disabled = false);
 	}
 }
+/**
+* "Send again" on an expired request's notice. Busy and error state ride the
+* approval maps under `resend:<id>`; the server re-broadcasts the notice as
+* sent again, and the new card arrives as its own message.
+*/
+async function resendApproval(questionId) {
+	const key = `resend:${questionId}`;
+	approvalBusy.value = /* @__PURE__ */ new Set([...approvalBusy.value, key]);
+	const errors = { ...approvalErrors.value };
+	delete errors[key];
+	approvalErrors.value = errors;
+	try {
+		const r = await authFetch(`/api/approvals/${encodeURIComponent(questionId)}/resend`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"X-Webchat-CSRF": "1"
+			},
+			body: "{}"
+		});
+		if (!r.ok) {
+			const body = await r.json().catch(() => ({}));
+			approvalErrors.value = {
+				...approvalErrors.value,
+				[key]: body.error || `Couldn't send it again (${r.status})`
+			};
+		}
+	} catch {
+		approvalErrors.value = {
+			...approvalErrors.value,
+			[key]: "Couldn't send it again"
+		};
+	} finally {
+		const next = new Set(approvalBusy.value);
+		next.delete(key);
+		approvalBusy.value = next;
+	}
+}
 var approvalsBannerToggle = $("#approvals-banner-toggle");
 function wireApprovalsPanel() {
 	if (approvalsBannerToggle) approvalsBannerToggle.addEventListener("click", () => {
@@ -766,6 +863,110 @@ function wireApprovalsPanel() {
 		list.hidden = !expanded;
 		approvalsBannerToggle.setAttribute("aria-expanded", String(expanded));
 	});
+}
+//#endregion
+//#region src/features/approval-row.ts
+function parse(content) {
+	if (content && typeof content === "object") return content;
+	try {
+		const v = JSON.parse(String(content ?? "{}"));
+		return v && typeof v === "object" ? v : {};
+	} catch {
+		return {};
+	}
+}
+/** The short name of a user id: "webchat:tailscale:bob@x.com" → "bob". */
+function shortName(userId) {
+	return (String(userId ?? "").split(":").pop() ?? "").split("@")[0];
+}
+/** Names without their "(owner)"/"(admin)" role, joined with "or". */
+function waitingFor(names) {
+	const list = Array.isArray(names) ? names.map((n) => String(n).replace(/ \((owner|admin)\)$/, "")) : [];
+	return list.length ? list.join(" or ") : "an admin";
+}
+/**
+* May this viewer act on the card? The client knows its viewer by identity
+* (the name it signed in with), so the card lists its approvers' identities;
+* a card stored before that matches the identity its approver ids end with.
+* The server checks every click either way.
+*/
+function canActOn(approvers, identities, myIdentity) {
+	if (!myIdentity) return false;
+	if (Array.isArray(identities) && identities.includes(myIdentity)) return true;
+	return Array.isArray(approvers) && approvers.some((a) => String(a).split(":").pop() === myIdentity);
+}
+function roomApprovalView(msg, myIdentity) {
+	const data = parse(msg.content);
+	const questionId = String(data.questionId || msg.id || "");
+	const title = String(data.title || "Approval");
+	const card = {
+		questionId,
+		title: data.title,
+		payload: data.question,
+		options: data.options
+	};
+	const resolved = msg.message_type === "approval_resolved" || !!data.resolvedBy;
+	const by = String(data.resolvedByName || shortName(data.resolvedBy));
+	const r = data.result;
+	const line = r && typeof r.outcome === "string" ? r.outcome : r && typeof r.line === "string" ? r.line : null;
+	const result = line !== null ? {
+		line,
+		details: String(r.details || ""),
+		failed: !!r.failed
+	} : null;
+	if (resolved) {
+		if (data.outcome === "expired") return {
+			questionId,
+			state: "expired",
+			note: `⏱ ${title} — expired`,
+			result: null,
+			card
+		};
+		if (data.outcome === "approved") return {
+			questionId,
+			state: "approved",
+			note: `✅ ${title} — approved${by ? ` by ${by}` : ""}`,
+			result,
+			card
+		};
+		if (data.outcome === "rejected") return {
+			questionId,
+			state: "rejected",
+			note: `❌ ${title} — rejected${by ? ` by ${by}` : ""}`,
+			result: null,
+			card
+		};
+		return {
+			questionId,
+			state: "resolved",
+			note: `🔒 ${title} — resolved${by ? ` by ${by}` : ""}`,
+			result: null,
+			card
+		};
+	}
+	if (canActOn(data.approvers, data.approverIdentities, myIdentity)) return {
+		questionId,
+		state: "eligible",
+		note: "",
+		result: null,
+		card
+	};
+	return {
+		questionId,
+		state: "awaiting",
+		note: `🔒 ${title} — waiting for ${waitingFor(data.approverNames)}`,
+		result: null,
+		card
+	};
+}
+function approvalNoticeView(msg) {
+	const data = parse(msg.content);
+	return {
+		questionId: String(data.questionId || ""),
+		kind: data.kind === "expired" ? "expired" : "reminder",
+		text: String(data.text || ""),
+		resentByName: data.resentBy ? String(data.resentByName || shortName(data.resentBy)) : null
+	};
 }
 //#endregion
 //#region src/features/transcript-state.ts
@@ -978,8 +1179,8 @@ var _hoisted_6$35 = { class: "bubble" };
 var _hoisted_7$28 = ["hidden"];
 var _hoisted_8$20 = ["hidden"];
 var _hoisted_9$16 = ["hidden"];
-var _hoisted_10$15 = ["hidden"];
-var _hoisted_11$10 = {
+var _hoisted_10$16 = ["hidden"];
+var _hoisted_11$11 = {
 	ref: "trace",
 	class: "thinking-fulltrace"
 };
@@ -1078,8 +1279,8 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 				createElementVNode("div", {
 					class: "thinking-preview",
 					hidden: !__props.turn.preview
-				}, toDisplayString(__props.turn.preview), 9, _hoisted_10$15),
-				createElementVNode("div", _hoisted_11$10, [createTextVNode(toDisplayString(traceEmpty.value), 1), liveView.value && !traceEmpty.value ? (openBlock(), createBlock(TraceView_default, {
+				}, toDisplayString(__props.turn.preview), 9, _hoisted_10$16),
+				createElementVNode("div", _hoisted_11$11, [createTextVNode(toDisplayString(traceEmpty.value), 1), liveView.value && !traceEmpty.value ? (openBlock(), createBlock(TraceView_default, {
 					key: 0,
 					view: liveView.value
 				}, null, 8, ["view"])) : createCommentVNode("", true)], 512),
@@ -1341,7 +1542,11 @@ function unlockAudio() {
 	}
 	ttsQueue.resume();
 }
-/** The first tap or key anywhere unlocks audio, so auto-read can start on its own. */
+/**
+* The first tap or key anywhere unlocks audio, so auto-read can start on its
+* own. Re-armed whenever playback is blocked again (the queue reports
+* 'blocked'), or a sentence would wait on a tap nothing is listening for.
+*/
 function armAudioUnlock() {
 	if (unlockArmed || typeof document === "undefined") return;
 	unlockArmed = true;
@@ -1350,6 +1555,7 @@ function armAudioUnlock() {
 		if (audioUnlocked && ttsQueue.current.phase !== "blocked") {
 			document.removeEventListener("pointerdown", onGesture, true);
 			document.removeEventListener("keydown", onGesture, true);
+			unlockArmed = false;
 		}
 	};
 	document.addEventListener("pointerdown", onGesture, true);
@@ -1436,6 +1642,7 @@ var ttsErrorShown = false;
 var ttsQueue = new ReadAloudQueue(backend, (s) => {
 	ttsActiveKey.value = s.key;
 	ttsPhase.value = s.phase === "blocked" ? "loading" : s.phase;
+	if (s.phase === "blocked") armAudioUnlock();
 }, (err) => {
 	console.error("Read aloud failed", err);
 	if (!ttsErrorShown) {
@@ -1855,6 +2062,24 @@ function nextPreset(current, presets) {
 	const sorted = [...presets].sort((a, b) => a - b);
 	return sorted.find((p) => p > current) ?? sorted[0];
 }
+/**
+* One press on a handle. It becomes a drag once it travels the slop and stays
+* one, even if it ends back where it started: only a press that never moved is
+* a click.
+*/
+function startPress(x) {
+	let moved = false;
+	return {
+		/** Whether the press is a drag now. */
+		move(nx) {
+			if (!moved && Math.abs(nx - x) >= 4) moved = true;
+			return moved;
+		},
+		isClick(nx) {
+			return !moved && Math.abs(nx - x) < 4;
+		}
+	};
+}
 /** What a screen reader announces for a size. */
 function sizeText(px) {
 	return `${px} pixels`;
@@ -1910,15 +2135,15 @@ function wireResizer(opts) {
 		e.preventDefault();
 		dragFrom = {
 			x: e.clientX,
-			size
+			size,
+			press: startPress(e.clientX)
 		};
 		handle.setPointerCapture(e.pointerId);
 		handle.classList.add("dragging");
 	};
 	const onMove = (e) => {
 		if (!dragFrom) return;
-		const dx = e.clientX - dragFrom.x;
-		if (Math.abs(dx) >= 4) apply(sizeForDrag(dragFrom.size, dx, {
+		if (dragFrom.press.move(e.clientX)) apply(sizeForDrag(dragFrom.size, e.clientX - dragFrom.x, {
 			min,
 			max,
 			growsToward
@@ -1930,7 +2155,7 @@ function wireResizer(opts) {
 		dragFrom = null;
 		if (handle.hasPointerCapture(e.pointerId)) handle.releasePointerCapture(e.pointerId);
 		handle.classList.remove("dragging");
-		if (e.type === "pointerup" && Math.abs(e.clientX - from.x) < 4) apply(nextPreset(from.size, presets));
+		if (e.type === "pointerup" && from.press.isClick(e.clientX)) apply(nextPreset(from.size, presets));
 		save();
 	};
 	handle.addEventListener("keydown", onKey);
@@ -1983,8 +2208,12 @@ var PLAIN_TEXT = /* @__PURE__ */ new Set([
 * Which renderer the drawer uses, or null for "no preview" (the chip stays a
 * download). The extension decides first: agents' files often arrive typed
 * application/octet-stream, so the MIME type is only a fallback.
+*
+* HTML is the exception: it runs scripts in the frame, so it renders only when an
+* agent sent it (`fromAgent`), and only by extension, matching the server's frame
+* route, which serves .html/.htm alone. Anything else is shown as text or not at all.
 */
-function previewKind(filename, mime = "") {
+function previewKind(filename, mime = "", fromAgent = false) {
 	const ext = fileExt(filename);
 	const m = (mime || "").toLowerCase();
 	if (ext === "pdf" || m === "application/pdf") return "pdf";
@@ -1993,7 +2222,7 @@ function previewKind(filename, mime = "") {
 	if (ext === "md" || ext === "markdown" || m === "text/markdown") return "markdown";
 	if (ext === "csv" || ext === "tsv" || m === "text/csv") return "csv";
 	if (ext === "json" || m === "application/json") return "json";
-	if (ext === "html" || ext === "htm" || m === "text/html") return "html";
+	if (ext === "html" || ext === "htm") return fromAgent ? "html" : null;
 	if (codeLanguage(filename)) return "code";
 	if (PLAIN_TEXT.has(ext) || m.startsWith("text/")) return "text";
 	if (ext === "" && /^(readme|license|copying|notice|authors|changelog)$/i.test(filename)) return "text";
@@ -2466,10 +2695,12 @@ function formatSize(n) {
 /**
 * Where the drawer's frame loads an HTML attachment from: the same file, served
 * for a frame under a CSP of its own. A srcdoc or blob: frame would inherit the
-* app's CSP, whose script-src 'self' blocks the page's inline scripts.
+* app's CSP, whose script-src 'self' blocks the page's inline scripts. The
+* open's compose nonce rides in the fragment (never sent to the server); the
+* page reads it from location.hash.
 */
-function htmlFrameUrl(url) {
-	return `${url}${url.includes("?") ? "&" : "?"}view=frame`;
+function htmlFrameUrl(url, nonce = "") {
+	return `${url}${url.includes("?") ? "&" : "?"}view=frame${nonce ? `#${nonce}` : ""}`;
 }
 //#endregion
 //#region src/features/attachment-drawer-state.ts
@@ -2531,7 +2762,7 @@ var _hoisted_9$15 = {
 	key: 0,
 	class: "file-caption"
 };
-var _hoisted_10$14 = ["innerHTML"];
+var _hoisted_10$15 = ["innerHTML"];
 var DOWNLOAD = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-download\"></use></svg>";
 var IMAGE = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-image\"></use></svg>";
 var FILE_TEXT = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-file-text\"></use></svg>";
@@ -2559,14 +2790,15 @@ var MessageBubble_default = /* @__PURE__ */ defineComponent({
 		const bubbleEl = ref(null);
 		const fileIcon = (m) => m.mime?.startsWith("image/") ? IMAGE : m.mime?.includes("pdf") ? FILE_TEXT : PAPERCLIP;
 		const fileSize = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
-		const previewable = (m) => !m.mime?.startsWith("image/") && previewKind(m.filename, m.mime) !== null;
+		const previewable = (m) => !m.mime?.startsWith("image/") && previewKind(m.filename, m.mime, !!props.row.isAgent) !== null;
 		function openPreview(e) {
 			const f = props.row.file;
 			openAttachmentDrawer({
 				url: f.url,
 				filename: f.filename,
 				mime: f.mime,
-				size: f.size
+				size: f.size,
+				fromAgent: !!props.row.isAgent
 			}, e.currentTarget);
 		}
 		const showTts = () => props.row.isAgent && !!props.row.ttsText && ttsOffered();
@@ -2615,7 +2847,7 @@ var MessageBubble_default = /* @__PURE__ */ defineComponent({
 				ref: bind,
 				class: "bubble",
 				innerHTML: __props.row.html
-			}, null, 8, _hoisted_10$14)) : (openBlock(), createElementBlock("div", {
+			}, null, 8, _hoisted_10$15)) : (openBlock(), createElementBlock("div", {
 				key: 2,
 				ref: bind,
 				class: "bubble"
@@ -2840,14 +3072,14 @@ var _hoisted_9$14 = {
 	key: 3,
 	class: "approval-inroom-note resolved"
 };
-var _hoisted_10$13 = {
+var _hoisted_10$14 = {
 	key: 4,
 	class: "skill-draft-card"
 };
-var _hoisted_11$9 = { class: "skill-head" };
-var _hoisted_12$9 = { class: "skill-name" };
-var _hoisted_13$9 = { class: "skill-desc" };
-var _hoisted_14$9 = { class: "skill-draft-actions" };
+var _hoisted_11$10 = { class: "skill-head" };
+var _hoisted_12$10 = { class: "skill-name" };
+var _hoisted_13$10 = { class: "skill-desc" };
+var _hoisted_14$10 = { class: "skill-draft-actions" };
 var _hoisted_15$9 = ["onClick"];
 var _hoisted_16$9 = {
 	key: 1,
@@ -2938,21 +3170,21 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 				busy: undoing.value,
 				label: UNDO$1,
 				"busy-label": UNDOING
-			}, null, 8, ["busy"])], 8, _hoisted_7$26)])) : unref(draftAction)[__props.draftId]?.phase === "undone" ? (openBlock(), createElementBlock("div", _hoisted_8$18, " ↩ " + toDisplayString(unref(draftAction)[__props.draftId].name) + " — undone ", 1)) : __props.resolved ? (openBlock(), createElementBlock("div", _hoisted_9$14, toDisplayString(__props.status === "kept" ? `✅ ${__props.title} — kept` : `🗑 ${__props.title} — discarded`), 1)) : (openBlock(), createElementBlock("div", _hoisted_10$13, [
-				createElementVNode("div", _hoisted_11$9, [createElementVNode("span", _hoisted_12$9, toDisplayString(__props.title), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
+			}, null, 8, ["busy"])], 8, _hoisted_7$26)])) : unref(draftAction)[__props.draftId]?.phase === "undone" ? (openBlock(), createElementBlock("div", _hoisted_8$18, " ↩ " + toDisplayString(unref(draftAction)[__props.draftId].name) + " — undone ", 1)) : __props.resolved ? (openBlock(), createElementBlock("div", _hoisted_9$14, toDisplayString(__props.status === "kept" ? `✅ ${__props.title} — kept` : `🗑 ${__props.title} — discarded`), 1)) : (openBlock(), createElementBlock("div", _hoisted_10$14, [
+				createElementVNode("div", _hoisted_11$10, [createElementVNode("span", _hoisted_12$10, toDisplayString(__props.title), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
 					key: 0,
 					origin: {
 						label: `loads in every ${__props.agentName} session`,
 						official: false
 					}
 				}, null, 8, ["origin"])) : createCommentVNode("", true)]),
-				createElementVNode("div", _hoisted_13$9, toDisplayString(__props.desc), 1),
+				createElementVNode("div", _hoisted_13$10, toDisplayString(__props.desc), 1),
 				unref(draftAction)[__props.draftId]?.phase === "overlaps" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(draftAction)[__props.draftId].overlaps, (o) => {
 					return openBlock(), createElementBlock("div", {
 						key: o.name,
 						class: "import-warning"
 					}, " ⚠ " + toDisplayString(o.name) + " (" + toDisplayString(o.source === "pending-draft" ? "pending draft" : o.source) + ") — " + toDisplayString(o.reason), 1);
-				}), 128)), createElementVNode("div", _hoisted_14$9, [
+				}), 128)), createElementVNode("div", _hoisted_14$10, [
 					(openBlock(true), createElementBlock(Fragment, null, renderList(unref(draftAction)[__props.draftId].overlaps.filter((x) => x.source !== "pending-draft"), (o) => {
 						return openBlock(), createElementBlock("button", {
 							key: o.name,
@@ -3209,7 +3441,7 @@ var LimitRetry_default = /* @__PURE__ */ defineComponent({
 					const target = messages.value.find((m) => m.id === pending.noticeId) ?? props.row;
 					target.limitRetryAt = pending.retryAt;
 					target.limitRetryBy = pending.by;
-				} else showToast("Could not schedule the retry: " + (err?.message || err), { kind: "error" });
+				} else showToast("Retry failed: " + (err?.message || err), { kind: "error" });
 			} finally {
 				busy.value = false;
 			}
@@ -3222,7 +3454,7 @@ var LimitRetry_default = /* @__PURE__ */ defineComponent({
 				props.row.limitRetryAt = null;
 				props.row.limitRetryBy = null;
 			} catch (err) {
-				showToast("Could not cancel the retry: " + (err?.message || err), { kind: "error" });
+				showToast("Cancel failed: " + (err?.message || err), { kind: "error" });
 			} finally {
 				busy.value = false;
 			}
@@ -3263,19 +3495,30 @@ var _hoisted_2$63 = {
 var _hoisted_3$59 = ["data-question-id"];
 var _hoisted_4$49 = {
 	key: 0,
-	class: "approval-inroom-note resolved"
+	class: "approval-result"
 };
 var _hoisted_5$40 = {
-	key: 2,
-	class: "approval-inroom-note"
+	key: 1,
+	class: "approval-details"
 };
-var _hoisted_6$32 = ["data-draft-id"];
-var _hoisted_7$25 = {
+var _hoisted_6$32 = { class: "approval-payload" };
+var _hoisted_7$25 = ["data-message-id"];
+var _hoisted_8$17 = {
+	key: 0,
+	class: "approval-notice-done"
+};
+var _hoisted_9$13 = ["disabled", "onClick"];
+var _hoisted_10$13 = {
+	key: 2,
+	class: "approval-error"
+};
+var _hoisted_11$9 = ["data-draft-id"];
+var _hoisted_12$9 = {
 	key: 0,
 	class: "msg-body"
 };
-var _hoisted_8$17 = ["title"];
-var _hoisted_9$13 = {
+var _hoisted_13$9 = ["title"];
+var _hoisted_14$9 = {
 	key: 0,
 	class: "served-model"
 };
@@ -3309,29 +3552,53 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 					key: 2,
 					class: "msg approval-msg",
 					"data-question-id": row.id || ""
-				}, [row.approvalState === "resolved" ? (openBlock(), createElementBlock("div", _hoisted_4$49, toDisplayString(row.note), 1)) : row.approvalState === "eligible" ? (openBlock(), createBlock(ApprovalCard_default, {
-					key: 1,
+				}, [row.approvalState === "eligible" ? (openBlock(), createBlock(ApprovalCard_default, {
+					key: 0,
 					approval: row.payload,
 					"on-respond": props.onApprovalRespond
-				}, null, 8, ["approval", "on-respond"])) : (openBlock(), createElementBlock("div", _hoisted_5$40, toDisplayString(row.note), 1))], 8, _hoisted_3$59)) : row.kind === "draft" ? (openBlock(), createElementBlock("div", {
+				}, null, 8, ["approval", "on-respond"])) : (openBlock(), createElementBlock("div", {
+					key: 1,
+					class: normalizeClass(["approval-inroom-note", {
+						resolved: row.approvalState !== "awaiting",
+						failed: row.approvalResult?.failed
+					}])
+				}, [
+					createElementVNode("div", null, toDisplayString(row.note), 1),
+					row.approvalResult ? (openBlock(), createElementBlock("div", _hoisted_4$49, toDisplayString(row.approvalResult.line), 1)) : createCommentVNode("", true),
+					row.approvalResult?.details ? (openBlock(), createElementBlock("details", _hoisted_5$40, [_cache[0] || (_cache[0] = createElementVNode("summary", null, "Details", -1)), createElementVNode("pre", _hoisted_6$32, toDisplayString(row.approvalResult.details), 1)])) : createCommentVNode("", true)
+				], 2))], 8, _hoisted_3$59)) : row.kind === "approval-notice" && row.notice ? (openBlock(), createElementBlock("div", {
 					key: 3,
+					class: "msg approval-msg",
+					"data-message-id": row.id || ""
+				}, [createElementVNode("div", { class: normalizeClass(["approval-inroom-note approval-notice", row.notice.kind]) }, [
+					createElementVNode("span", null, toDisplayString(row.notice.text), 1),
+					row.notice.resentByName ? (openBlock(), createElementBlock("span", _hoisted_8$17, "Sent again by " + toDisplayString(row.notice.resentByName), 1)) : row.notice.kind === "expired" ? (openBlock(), createElementBlock("button", {
+						key: 1,
+						type: "button",
+						class: "btn btn-secondary",
+						disabled: unref(approvalBusy).has(`resend:${row.notice.questionId}`) || void 0,
+						onClick: ($event) => unref(resendApproval)(row.notice.questionId)
+					}, "Send again", 8, _hoisted_9$13)) : createCommentVNode("", true),
+					unref(approvalErrors)[`resend:${row.notice.questionId}`] ? (openBlock(), createElementBlock("span", _hoisted_10$13, toDisplayString(unref(approvalErrors)[`resend:${row.notice.questionId}`]), 1)) : createCommentVNode("", true)
+				], 2)], 8, _hoisted_7$25)) : row.kind === "draft" ? (openBlock(), createElementBlock("div", {
+					key: 4,
 					class: "msg skill-draft-msg",
 					"data-draft-id": row.id || ""
-				}, [createVNode(SkillDraftCard_default, mergeProps({ ref_for: true }, row.payload), null, 16)], 8, _hoisted_6$32)) : (openBlock(), createElementBlock("div", mergeProps({
-					key: 4,
+				}, [createVNode(SkillDraftCard_default, mergeProps({ ref_for: true }, row.payload), null, 16)], 8, _hoisted_11$9)) : (openBlock(), createElementBlock("div", mergeProps({
+					key: 5,
 					class: row.cls
 				}, { ref_for: true }, row.id ? { "data-message-id": row.id } : {}, { style: row.isA2a ? { "--a2a-accent": row.a2aAccent } : void 0 }), [
 					createElementVNode("div", { class: normalizeClass(row.isA2a ? "sender a2a-label" : "sender") }, [row.isA2a ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("span", {
 						class: "a2a-agent",
 						style: normalizeStyle({ color: row.senderColor })
-					}, toDisplayString(row.sender), 5), row.a2aTo ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [_cache[0] || (_cache[0] = createElementVNode("span", { class: "a2a-arrow" }, "→", -1)), createElementVNode("span", {
+					}, toDisplayString(row.sender), 5), row.a2aTo ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [_cache[1] || (_cache[1] = createElementVNode("span", { class: "a2a-arrow" }, "→", -1)), createElementVNode("span", {
 						class: "a2a-agent",
 						style: normalizeStyle({ color: row.toColor })
-					}, toDisplayString(row.a2aTo), 5)], 64)) : createCommentVNode("", true)], 64)) : row.isAgent ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [_cache[1] || (_cache[1] = createElementVNode("svg", {
+					}, toDisplayString(row.a2aTo), 5)], 64)) : createCommentVNode("", true)], 64)) : row.isAgent ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [_cache[2] || (_cache[2] = createElementVNode("svg", {
 						class: "icon",
 						"aria-hidden": "true"
 					}, [createElementVNode("use", { href: "#i-bot" })], -1)), createTextVNode(toDisplayString(" " + row.sender), 1)], 64)) : (openBlock(), createElementBlock(Fragment, { key: 2 }, [createTextVNode(toDisplayString(row.isMine ? "You" : row.sender), 1)], 64))], 2),
-					row.body ? (openBlock(), createElementBlock("div", _hoisted_7$25, [row.id ? (openBlock(), createBlock(MsgDeleteButton_default, {
+					row.body ? (openBlock(), createElementBlock("div", _hoisted_12$9, [row.id ? (openBlock(), createBlock(MsgDeleteButton_default, {
 						key: 0,
 						"message-id": row.id
 					}, null, 8, ["message-id"])) : createCommentVNode("", true), createVNode(MessageBubble_default, {
@@ -3368,7 +3635,7 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 						key: 4,
 						class: "timestamp",
 						title: row.timeTitle || void 0
-					}, [createTextVNode(toDisplayString(row.timeStr), 1), unref(servedModelShown)(row, unref(state).settings) ? (openBlock(), createElementBlock("span", _hoisted_9$13, toDisplayString(" · " + unref(servedModelShown)(row, unref(state).settings)), 1)) : createCommentVNode("", true)], 8, _hoisted_8$17)) : createCommentVNode("", true),
+					}, [createTextVNode(toDisplayString(row.timeStr), 1), unref(servedModelShown)(row, unref(state).settings) ? (openBlock(), createElementBlock("span", _hoisted_14$9, toDisplayString(" · " + unref(servedModelShown)(row, unref(state).settings)), 1)) : createCommentVNode("", true)], 8, _hoisted_13$9)) : createCommentVNode("", true),
 					row.isMine && row.status ? (openBlock(), createElementBlock("div", {
 						key: 5,
 						class: normalizeClass(row.status === "✓✓" ? "status delivered" : "status")
@@ -3527,12 +3794,13 @@ function formatTime(ts) {
 * reads state gone by the next render (see transcript-state.ts).
 */
 function appendMessage(msg, statusText, prepend) {
-	if (msg?.id) {
+	if (msg?.id && !String(msg.message_type || "").startsWith("approval")) {
 		const existing = messages.value.find((r) => r.id === msg.id);
 		if (existing) return existing;
 	}
 	if (msg.type === "system") return appendSystem(msg.message);
 	if (msg.message_type === "approval" || msg.message_type === "approval_resolved") return pushRow(approvalRow(msg), prepend);
+	if (msg.message_type === "approval_notice") return pushRow(noticeRow(msg), prepend);
 	if (msg.message_type === "skill_draft") return pushRow(deps$16.skillDraftRow(msg), prepend);
 	if (msg.message_type === "context-divider") return pushRow({
 		key: nextKey(),
@@ -3656,31 +3924,28 @@ function pushRow(row, prepend) {
 function removeRow(row) {
 	messages.value = messages.value.filter((r) => r.key !== row.key);
 }
-/** In-room approval card. Actionable for eligible approvers; others see a
-*  read-only note, and a resolved card is a static note. */
+/** In-room approval card (approval-row.ts decides its state). Keyed by the
+*  approval, so the resolve re-broadcast replaces the card in place. */
 function approvalRow(msg) {
-	let data = {};
-	try {
-		data = JSON.parse(msg.content ?? "{}") || {};
-	} catch {
-		data = {};
-	}
-	const questionId = data.questionId || msg.id || "";
-	const resolved = msg.message_type === "approval_resolved" || !!data.resolvedBy;
-	const eligible = Array.isArray(data.approvers) && data.approvers.includes(state.myIdentity);
-	const who = data.resolvedBy ? " by " + (String(data.resolvedBy).split(":").pop() ?? "").split("@")[0] : "";
+	const v = roomApprovalView(msg, state.myIdentity);
 	return {
-		key: nextKey(),
+		key: `appr:${v.questionId}`,
 		kind: "approval",
-		id: questionId,
-		approvalState: resolved ? "resolved" : eligible ? "eligible" : "awaiting",
-		note: resolved ? `🔒 ${data.title || "Approval"} — resolved${who}` : `🔒 ${data.title || "Approval requested"} — awaiting an admin`,
-		payload: {
-			questionId,
-			title: data.title,
-			payload: data.question,
-			options: data.options
-		}
+		id: v.questionId,
+		approvalState: v.state,
+		note: v.note,
+		approvalResult: v.result,
+		payload: v.card
+	};
+}
+/** A reminder or expired notice for an approval card. */
+function noticeRow(msg) {
+	const notice = approvalNoticeView(msg);
+	return {
+		key: `appr-notice:${msg.id}`,
+		kind: "approval-notice",
+		id: msg.id,
+		notice
 	};
 }
 function appendSystem(text) {
@@ -3852,7 +4117,7 @@ function mountTranscript() {
 			decorateMentions(bubble);
 		},
 		clampA2a: (bubble, container) => applyA2aClamp(bubble, container),
-		onApprovalRespond: (questionId, value) => respondToApproval(questionId, value),
+		onApprovalRespond: (questionId, value, reason) => respondToApproval(questionId, value, null, reason),
 		onOpenLightbox: (url, filename) => deps$16.openLightbox(url, filename),
 		onStopAgent: (name) => deps$16.interruptAgent(name),
 		onToggleTurn: (name) => deps$16.toggleThinkingExpanded(name)
@@ -4211,11 +4476,25 @@ var OWN_MODEL_HARNESSES = /* @__PURE__ */ new Set([
 	"grok",
 	"copilot"
 ]);
-/** Whether `provider` can run `model` (null: none assigned). `cloud`: the model ids the router serves. */
-function harnessRuns(provider, model, cloud) {
+/**
+* Whether `provider` can run `model` (null: none assigned). `cloud`: the model
+* ids the router serves. Mirrors the server's harnessFits (models.ts): Claude
+* runs Anthropic models and anything no installed local harness takes — an
+* Ollama model when neither OpenCode nor pi is installed, a cloud model when
+* OpenCode is not.
+*/
+function harnessRuns(provider, model, cloud, local = null) {
 	if (!model || OWN_MODEL_HARNESSES.has(provider)) return true;
+	const installed = local ?? {
+		opencode: true,
+		pi: true
+	};
 	const isCloud = model.kind === "openai-compatible" && cloud.has(model.model_id);
-	if (provider === "claude") return model.kind === "anthropic" || model.kind === "openai-compatible" && !isCloud;
+	if (provider === "claude") {
+		if (model.kind === "ollama") return !installed.opencode && !installed.pi;
+		if (isCloud) return !installed.opencode;
+		return true;
+	}
 	if (provider === "opencode") return model.kind === "ollama" || isCloud;
 	if (provider === "pi") return model.kind === "ollama";
 	return true;
@@ -4975,6 +5254,7 @@ var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 function buttonBusy(btn, busyLabel) {
 	const original = Array.from(btn.childNodes);
 	btn.disabled = true;
+	btn.setAttribute("aria-busy", "true");
 	btn.textContent = "";
 	const spin = document.createElement("span");
 	spin.className = "btn-spinner";
@@ -4983,6 +5263,7 @@ function buttonBusy(btn, busyLabel) {
 	btn.appendChild(document.createTextNode(busyLabel));
 	return () => {
 		btn.disabled = false;
+		btn.removeAttribute("aria-busy");
 		btn.replaceChildren(...original);
 	};
 }
@@ -5096,6 +5377,36 @@ function diskText(d) {
 	const n = (v) => v >= 10 ? String(Math.round(v)) : String(Math.round(v * 10) / 10);
 	return `${n(d.usedGb)} GB of ${n(d.quotaGb)} GB`;
 }
+/** "1 Dec" in the viewer's own words for a date. */
+var shortDay = (ms, locale) => new Date(ms).toLocaleDateString(locale, {
+	day: "numeric",
+	month: "short"
+});
+/**
+* "Expires 1 Dec" (soon: within three days) or "Expired 1 Dec"; null when it
+* does not expire. A published app is renewed while people open it, so until
+* it is close (then it was not used: the date is the warning) it says
+* "Renews while used".
+*/
+function expiryText(expiresAt, now = Date.now(), locale, renewsWhileUsed = false) {
+	if (expiresAt === null) return null;
+	const day = shortDay(expiresAt, locale);
+	if (expiresAt <= now) return {
+		text: `Expired ${day}`,
+		level: "past"
+	};
+	if (expiresAt - now <= 2592e5) return {
+		text: `Expires ${day}`,
+		level: "soon"
+	};
+	return renewsWhileUsed ? {
+		text: "Renews while used",
+		level: "ok"
+	} : {
+		text: `Expires ${day}`,
+		level: "ok"
+	};
+}
 var appsView = shallowRef(null);
 var appsAgentId = ref(null);
 /** The row whose ⋯ menu is open. */
@@ -5110,6 +5421,9 @@ var appsService = ref(/* @__PURE__ */ new Map());
 var appsInfoKey = ref(null);
 /** Rows with a request in flight. */
 var appsBusy = ref(/* @__PURE__ */ new Set());
+/** "Allow Docker Hub for builds": a request in flight, and a refusal shown under it. */
+var appsBuildsBusy = ref(false);
+var appsBuildsError = ref("");
 //#endregion
 //#region src/features/file-preview-state.ts
 var previewRows = ref([]);
@@ -6704,6 +7018,16 @@ function seedUnread(counts, id, serverCount) {
 	counts.set(id, Math.max(1, Number(serverCount) || 0));
 }
 /**
+* Bring `id` in line with a server payload (rooms list, thread list): its count
+* when the server says unread, otherwise no entry at all, so one read on
+* another device (or before a reconnect) clears here too. The open room or
+* thread never shows a count; opening it reads it.
+*/
+function syncUnread(counts, id, serverUnread, serverCount, isOpen) {
+	if (serverUnread && !isOpen) seedUnread(counts, id, serverCount);
+	else counts.delete(id);
+}
+/**
 * Index of the first message the user has not seen, or -1 for none: the first
 * one newer than their read marker that someone else sent. Their own messages
 * never count — they were read by being written. No marker (never opened)
@@ -6877,7 +7201,7 @@ async function loadThreadList(roomId) {
 		if (roomId !== state.currentRoom) return;
 		const list = Array.isArray(threads) ? threads : [];
 		state.threadCache.set(roomId, list);
-		for (const t of list) if (t.unread && t.thread_id !== state.currentThread) seedUnread(state.threadUnread, t.thread_id, t.unread_count);
+		for (const t of list) syncUnread(state.threadUnread, t.thread_id, t.unread, t.unread_count, t.thread_id === state.currentThread);
 		updateThreadSyncControls();
 	} catch (err) {
 		if (roomId !== state.currentRoom) return;
@@ -6914,6 +7238,8 @@ function updateThreadSyncControls() {
 	}
 	const sync = $("#thread-sync");
 	if (sync) sync.hidden = !inThread;
+	const del = $("#thread-delete");
+	if (del) del.hidden = !(roomThreads().find((t) => t.thread_id === state.currentThread)?.can_delete ?? state.isOwnerView);
 	const crumb = $("#thread-crumb");
 	if (crumb) {
 		crumb.hidden = !inThread;
@@ -7308,7 +7634,7 @@ var ThreadRows_default = /* @__PURE__ */ defineComponent({
 						"aria-label": NEW_THREAD$1,
 						onClick: _cache[0] || (_cache[0] = withModifiers((...args) => __props.onStartCreate && __props.onStartCreate(...args), ["stop"]))
 					}, toDisplayString(PLUS$1))) : createCommentVNode("", true),
-					__props.active && unref(openThreadMenuId) === t.thread_id ? (openBlock(), createElementBlock("div", _hoisted_8$13, [createElementVNode("button", { onClick: withModifiers(($event) => __props.onStartRename(t.thread_id), ["stop"]) }, toDisplayString(RENAME), 8, _hoisted_9$11), unref(state).isOwnerView ? (openBlock(), createElementBlock("button", {
+					__props.active && unref(openThreadMenuId) === t.thread_id ? (openBlock(), createElementBlock("div", _hoisted_8$13, [createElementVNode("button", { onClick: withModifiers(($event) => __props.onStartRename(t.thread_id), ["stop"]) }, toDisplayString(RENAME), 8, _hoisted_9$11), t.can_delete ?? unref(state).isOwnerView ? (openBlock(), createElementBlock("button", {
 						key: 0,
 						class: "danger",
 						onClick: withModifiers(($event) => __props.onDelete(t.thread_id), ["stop"])
@@ -7861,6 +8187,7 @@ function joinRoom(roomId, roomName, jumpMessageId, initialThread) {
 	$("#chat").hidden = false;
 	endAllAgentTurns();
 	const prevRoom = state.currentRoom;
+	if (prevRoom !== roomId) stopTts();
 	state.currentRoom = roomId;
 	if (prevRoom && prevRoom !== roomId) state.expandedRooms.delete(prevRoom);
 	state.expandedRooms.add(roomId);
@@ -9046,6 +9373,21 @@ function getMentionSelectedIndex() {
 }
 function setMentionSelectedIndex(v) {
 	mentionSelectedIndex$1 = v;
+}
+//#endregion
+//#region src/core/latest.ts
+/**
+* Latest-wins for overlapping async actions on the same thing (a default
+* picked twice in a row): each start takes a ticket, and a superseded run
+* checks `current` before its write and stops, so a slow earlier choice
+* cannot land after a later one.
+*/
+function latestOnly() {
+	let latest = 0;
+	return {
+		start: () => ++latest,
+		current: (ticket) => ticket === latest
+	};
 }
 //#endregion
 //#region src/features/wizard-state.ts
@@ -15485,7 +15827,7 @@ var _hoisted_18$4 = { class: "ollama-model-name" };
 var _hoisted_19$4 = { class: "ollama-model-meta" };
 var _hoisted_20$4 = ["title"];
 var _hoisted_21$3 = { class: "ollama-pull-row" };
-var _hoisted_22$2 = ["onKeydown", "onInput"];
+var _hoisted_22$3 = ["onKeydown", "onInput"];
 var _hoisted_23$2 = ["onClick"];
 var _hoisted_24$2 = {
 	key: 0,
@@ -15681,7 +16023,7 @@ var OllamaHostCards_default = /* @__PURE__ */ defineComponent({
 							class: "ollama-pull-input",
 							onKeydown: ($event) => pullKey(c.host, $event),
 							onInput: ($event) => preview(c.host, $event)
-						}, null, 40, _hoisted_22$2), createElementVNode("button", {
+						}, null, 40, _hoisted_22$3), createElementVNode("button", {
 							class: "btn btn-secondary",
 							type: "button",
 							onClick: ($event) => pull(c.host, $event)
@@ -17116,6 +17458,7 @@ function copilotConnectedText(s) {
 /** The status line under the card: progress while it runs, the reason when it did not complete, else nothing. */
 function copilotStatusLine(p) {
 	if (!p) return null;
+	if (p.running && p.mine === false) return `In progress by ${p.startedBy || "another admin"}`;
 	if (p.running) return p.message ?? null;
 	if (p.outcome && p.outcome !== "complete") return p.error || "The sign-in did not complete.";
 	return null;
@@ -17435,8 +17778,11 @@ async function wizardProbeOllama() {
 		done();
 	}
 }
+/** Picks and clears of the workspace default: the latest wins (core/latest.ts). */
+var wizardDefaultTurn = latestOnly();
 async function wizardSelectOllamaModel(modelId, control) {
 	if (!wizardOllamaProbe || !modelId) return;
+	const turn = wizardDefaultTurn.start();
 	const endpoint = String(wizardOllamaProbe.endpoint || "").replace(/\/+$/, "");
 	const host = (() => {
 		try {
@@ -17472,6 +17818,7 @@ async function wizardSelectOllamaModel(modelId, control) {
 			}
 			id = created.id;
 		}
+		if (!wizardDefaultTurn.current(turn)) return;
 		const dr = await authFetch("/api/workspace-model", {
 			method: "PUT",
 			headers: { "Content-Type": "application/json" },
@@ -17490,6 +17837,7 @@ async function wizardSelectOllamaModel(modelId, control) {
 	}
 }
 async function wizardClearOllamaDefault() {
+	wizardDefaultTurn.start();
 	if (wizardCred?.defaultModelKind !== "ollama" || !wizardCred?.defaultModelId) return;
 	try {
 		await authFetch("/api/workspace-model", {
@@ -18617,9 +18965,10 @@ function renderCopilotLogin(p) {
 	const device = $("#wizard-copilot-device");
 	const row = $("#wizard-copilot-login-row");
 	if (!device || !row) return;
-	device.hidden = !p?.running;
+	const mine = p?.mine !== false;
+	device.hidden = !p?.running || !mine;
 	row.hidden = !!p?.running;
-	if (p?.running) {
+	if (p?.running && mine) {
 		const url = $("#wizard-copilot-url");
 		if (url && p.verificationUrl) {
 			url.textContent = p.verificationUrl;
@@ -18677,7 +19026,11 @@ function wireCopilotLogin() {
 	$("#wizard-copilot-disconnect")?.addEventListener("click", async () => {
 		const r = await authFetch("/api/workspace-credential/copilot/disconnect", { method: "POST" });
 		if (!r.ok) {
-			showToast("Failed to disconnect: " + ((await r.json().catch(() => ({}))).error || r.statusText), { kind: "error" });
+			showToast((await r.json().catch(() => ({}))).error || "Disconnect failed", {
+				kind: "error",
+				timeout: 9e3
+			});
+			await refreshWizardCredState();
 			return;
 		}
 		await refreshWizardCredState();
@@ -19591,6 +19944,7 @@ async function loadAgentApps(agentId) {
 	appsAgentId.value = agentId;
 	appsMenuKey.value = null;
 	appsDrawer.value = null;
+	appsBuildsError.value = "";
 	let view = null;
 	try {
 		view = await apiJson(`${base()}/apps`);
@@ -19770,6 +20124,40 @@ async function remove(r) {
 	if (await busy(r, () => apiJson(workloadUrl(r), { method: "DELETE" }))) showToast("Deleted", { kind: "success" });
 	await reload();
 }
+/** Redeploy the approved stack (rebuilt from the agent's current folder). No card: nothing new is approved. */
+async function redeploy(r) {
+	appsMenuKey.value = null;
+	const out = await busy(r, () => apiJson(workloadUrl(r, "redeploy"), { method: "POST" }));
+	await reload();
+	if (out?.state === "failed") setError(rowKey(r), String(out.error || "Redeploy failed"));
+	else if (out) showToast("Redeployed", { kind: "success" });
+}
+/** Keep it 30 days from today. No card: it keeps what was approved. */
+async function extend(r) {
+	appsMenuKey.value = null;
+	const out = await busy(r, () => apiJson(workloadUrl(r, "extend"), { method: "POST" }));
+	if (out && typeof out.expiresAt === "number") showToast(`Expires ${shortDay(out.expiresAt)}`, { kind: "success" });
+	await reload();
+}
+/** "Allow Docker Hub for builds": on goes to an approval card, off applies at once. */
+async function setDockerHub(on) {
+	if (appsBuildsBusy.value) return;
+	appsBuildsBusy.value = true;
+	appsBuildsError.value = "";
+	try {
+		const out = await apiJson(`${base()}/apps/build-registries`, {
+			method: "PUT",
+			body: { on }
+		});
+		if (out?.pending) showToast("Sent for approval");
+		else if (out?.applied) showToast("Saved", { kind: "success" });
+	} catch (err) {
+		appsBuildsError.value = err?.message || "That did not work";
+	} finally {
+		appsBuildsBusy.value = false;
+	}
+	await reload();
+}
 //#endregion
 //#region src/features/AgentApps.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$12 = {
@@ -19777,115 +20165,147 @@ var _hoisted_1$12 = {
 	class: "apps"
 };
 var _hoisted_2$9 = {
-	key: 1,
-	class: "apps-empty"
+	key: 0,
+	class: "cred-hint apps-gate"
 };
 var _hoisted_3$9 = {
-	key: 2,
-	class: "apps-list"
+	key: 0,
+	id: "agent-apps-docker-hub",
+	class: "setting-group install-row apps-builds"
 };
-var _hoisted_4$7 = ["aria-busy"];
-var _hoisted_5$6 = { class: "app-row-head" };
-var _hoisted_6$6 = { class: "app-name" };
-var _hoisted_7$6 = {
+var _hoisted_4$7 = {
 	key: 0,
 	class: "btn-spinner",
 	"aria-hidden": "true"
 };
-var _hoisted_8$5 = ["href"];
-var _hoisted_9$5 = [
+var _hoisted_5$6 = {
+	key: 1,
+	class: "app-state app-state-needs-approval"
+};
+var _hoisted_6$6 = { class: "setting-toggle" };
+var _hoisted_7$6 = ["checked", "disabled"];
+var _hoisted_8$5 = {
+	key: 1,
+	id: "agent-apps-docker-hub",
+	class: "cred-hint apps-gate"
+};
+var _hoisted_9$5 = {
+	key: 2,
+	class: "cred-hint err",
+	role: "alert"
+};
+var _hoisted_10$5 = {
+	key: 3,
+	class: "apps-empty"
+};
+var _hoisted_11$4 = {
+	key: 4,
+	class: "apps-list"
+};
+var _hoisted_12$4 = ["aria-busy"];
+var _hoisted_13$4 = { class: "app-row-head" };
+var _hoisted_14$4 = { class: "app-name" };
+var _hoisted_15$4 = {
+	key: 0,
+	class: "btn-spinner",
+	"aria-hidden": "true"
+};
+var _hoisted_16$4 = ["href"];
+var _hoisted_17$4 = [
 	"aria-label",
 	"aria-expanded",
 	"onClick",
 	"innerHTML"
 ];
-var _hoisted_10$5 = {
+var _hoisted_18$3 = {
 	key: 0,
 	class: "app-row-controls"
 };
-var _hoisted_11$4 = [
+var _hoisted_19$3 = [
 	"value",
 	"disabled",
 	"onChange"
 ];
-var _hoisted_12$4 = ["value"];
-var _hoisted_13$4 = [
+var _hoisted_20$3 = ["value"];
+var _hoisted_21$2 = [
 	"value",
 	"disabled",
 	"onChange"
 ];
-var _hoisted_14$4 = ["value"];
-var _hoisted_15$4 = [
+var _hoisted_22$2 = ["value"];
+var _hoisted_23$1 = [
 	"aria-expanded",
 	"onClick",
 	"innerHTML"
 ];
-var _hoisted_16$4 = [
+var _hoisted_24$1 = [
 	"value",
 	"disabled",
 	"onChange"
 ];
-var _hoisted_17$4 = ["value"];
-var _hoisted_18$3 = ["onClick"];
-var _hoisted_19$3 = {
+var _hoisted_25$1 = ["value"];
+var _hoisted_26$1 = ["onClick"];
+var _hoisted_27$1 = {
 	key: 1,
 	class: "cred-hint"
 };
-var _hoisted_20$3 = {
+var _hoisted_28$1 = {
 	key: 2,
 	class: "cred-hint err",
 	role: "alert"
 };
-var _hoisted_21$2 = {
+var _hoisted_29$1 = {
 	key: 3,
 	class: "app-menu",
 	role: "menu"
 };
-var _hoisted_22$1 = ["onClick"];
-var _hoisted_23$1 = ["onClick"];
-var _hoisted_24$1 = ["onClick"];
-var _hoisted_25$1 = ["onClick"];
-var _hoisted_26$1 = {
+var _hoisted_30$1 = ["onClick"];
+var _hoisted_31$1 = ["onClick"];
+var _hoisted_32$1 = ["onClick"];
+var _hoisted_33$1 = ["onClick"];
+var _hoisted_34$1 = ["onClick"];
+var _hoisted_35$1 = ["onClick"];
+var _hoisted_36$1 = {
 	key: 0,
 	class: "app-drawer"
 };
-var _hoisted_27$1 = { class: "app-drawer-head" };
-var _hoisted_28$1 = {
+var _hoisted_37$1 = { class: "app-drawer-head" };
+var _hoisted_38$1 = {
 	key: 0,
 	class: "apps-empty"
 };
-var _hoisted_29$1 = {
+var _hoisted_39$1 = {
 	key: 1,
 	class: "app-logs"
 };
-var _hoisted_30$1 = {
+var _hoisted_40$1 = {
 	key: 1,
 	class: "app-drawer"
 };
-var _hoisted_31$1 = { class: "app-drawer-head" };
-var _hoisted_32$1 = {
+var _hoisted_41$1 = { class: "app-drawer-head" };
+var _hoisted_42$1 = {
 	key: 0,
 	class: "apps-empty"
 };
-var _hoisted_33$1 = {
+var _hoisted_43$1 = {
 	key: 1,
 	class: "apps-empty"
 };
-var _hoisted_34$1 = {
+var _hoisted_44$1 = {
 	key: 2,
 	class: "app-drawer-row"
 };
-var _hoisted_35$1 = ["value"];
-var _hoisted_36$1 = ["onClick"];
-var _hoisted_37 = {
+var _hoisted_45$1 = ["value"];
+var _hoisted_46$1 = ["onClick"];
+var _hoisted_47$1 = {
 	key: 2,
 	class: "app-drawer"
 };
-var _hoisted_38 = { class: "app-drawer-head" };
-var _hoisted_39 = { class: "app-drawer-row" };
-var _hoisted_40 = ["onKeydown"];
-var _hoisted_41 = ["disabled", "onClick"];
-var _hoisted_42 = {
+var _hoisted_48$1 = { class: "app-drawer-head" };
+var _hoisted_49$1 = { class: "app-drawer-row" };
+var _hoisted_50$1 = ["onKeydown"];
+var _hoisted_51$1 = ["disabled", "onClick"];
+var _hoisted_52 = {
 	key: 0,
 	class: "cred-hint err"
 };
@@ -19898,9 +20318,11 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 	__name: "AgentApps",
 	setup(__props) {
 		/**
-		* An agent's apps, mounted into <div id="agent-apps"> (apps.ts). One row per app
-		* (or per unpublished workload): name, state, route, who can open it, Open ↗ and
-		* a ⋯ menu. Renders from apps-state.ts; every action lives in apps-actions.ts.
+		* An agent's apps, mounted into <div id="agent-apps"> (apps.ts). Above the list:
+		* "Allow Docker Hub for builds" while confined builds are on (a gate line while
+		* they are off, or while workloads are). One row per app (or per unpublished
+		* workload): name, state, its expiry, route, who can open it, Open ↗ and a ⋯
+		* menu. Renders from apps-state.ts; every action lives in apps-actions.ts.
 		*/
 		const KEBAB = lucide("ellipsis");
 		const INFO = lucide("info");
@@ -19917,6 +20339,14 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 			document.removeEventListener("keydown", onKey);
 		});
 		const view = computed(() => appsView.value);
+		const builds = computed(() => view.value?.builds ?? null);
+		const expiry = (r) => r.deployed ? expiryText(r.expiresAt, Date.now(), void 0, r.renewsWhileUsed === true) : null;
+		function dockerHubChanged(e) {
+			const el = e.target;
+			const on = el.checked;
+			el.checked = !on;
+			setDockerHub(on);
+		}
 		const disk = computed(() => diskText(view.value?.disk ?? null));
 		const busy = (r) => appsBusy.value.has(rowKey(r));
 		const drawerOf = (r) => appsDrawer.value?.key === rowKey(r) ? appsDrawer.value : null;
@@ -19948,164 +20378,194 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 			onWhoChange(r, v);
 		}
 		return (_ctx, _cache) => {
-			return view.value ? (openBlock(), createElementBlock("div", _hoisted_1$12, [disk.value ? (openBlock(), createElementBlock("div", {
-				key: 0,
-				class: normalizeClass(["apps-disk", `apps-disk-${view.value.disk?.level}`])
-			}, toDisplayString(disk.value), 3)) : createCommentVNode("", true), !view.value.apps.length ? (openBlock(), createElementBlock("p", _hoisted_2$9, "No apps yet")) : (openBlock(), createElementBlock("ul", _hoisted_3$9, [(openBlock(true), createElementBlock(Fragment, null, renderList(view.value.apps, (r) => {
-				return openBlock(), createElementBlock("li", {
-					key: unref(rowKey)(r),
-					class: "app-row",
-					"aria-busy": busy(r) || void 0
-				}, [
-					createElementVNode("div", _hoisted_5$6, [
-						createElementVNode("span", _hoisted_6$6, toDisplayString(r.app ?? r.workload), 1),
-						busy(r) ? (openBlock(), createElementBlock("span", _hoisted_7$6)) : createCommentVNode("", true),
-						createElementVNode("span", { class: normalizeClass(["app-state", `app-state-${r.state}`]) }, toDisplayString(unref(STATE_LABEL)[r.state]), 3),
-						r.url ? (openBlock(), createElementBlock("a", {
-							key: 1,
-							class: "app-open",
-							href: r.url,
-							target: "_blank",
-							rel: "noopener noreferrer"
-						}, "Open ↗", 8, _hoisted_8$5)) : createCommentVNode("", true),
-						r.deployed ? (openBlock(), createElementBlock("button", {
-							key: 2,
-							class: "app-kebab",
-							type: "button",
-							"aria-label": `Actions for ${r.app ?? r.workload}`,
-							"aria-expanded": unref(appsMenuKey) === unref(rowKey)(r),
-							onClick: withModifiers(($event) => unref(toggleMenu)(r), ["stop"]),
-							innerHTML: unref(KEBAB)
-						}, null, 8, _hoisted_9$5)) : createCommentVNode("", true)
-					]),
-					r.deployed ? (openBlock(), createElementBlock("div", _hoisted_10$5, [
-						createElementVNode("select", {
-							value: r.route,
-							"aria-label": "Route",
-							disabled: busy(r) || r.route === "off" && !r.canPublish || void 0,
-							onChange: ($event) => routeChanged(r, $event)
-						}, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(routeOptions)(view.value.routes, r.route), (o) => {
-							return openBlock(), createElementBlock("option", {
-								key: o.value,
-								value: o.value
-							}, toDisplayString(o.label), 9, _hoisted_12$4);
-						}), 128))], 40, _hoisted_11$4),
-						!r.app && r.services.length > 1 ? (openBlock(), createElementBlock("select", {
-							key: 0,
-							value: unref(appsService).get(unref(rowKey)(r)) ?? r.services[0],
-							"aria-label": "Service",
-							disabled: busy(r) || void 0,
-							onChange: ($event) => unref(pickService)(r, $event.target.value)
-						}, [(openBlock(true), createElementBlock(Fragment, null, renderList(r.services, (sv) => {
-							return openBlock(), createElementBlock("option", {
-								key: sv,
-								value: sv
-							}, toDisplayString(sv), 9, _hoisted_14$4);
-						}), 128))], 40, _hoisted_13$4)) : createCommentVNode("", true),
-						!r.app && !r.canPublish ? (openBlock(), createElementBlock("button", {
-							key: 1,
-							class: "feature-info-btn",
-							type: "button",
-							"aria-expanded": unref(appsInfoKey) === unref(rowKey)(r),
-							"aria-label": "Why it can’t be published here",
-							onClick: ($event) => unref(toggleInfo)(r),
-							innerHTML: unref(INFO)
-						}, null, 8, _hoisted_15$4)) : createCommentVNode("", true),
-						r.route !== "off" ? (openBlock(), createElementBlock("select", {
-							key: 2,
-							value: r.who,
-							"aria-label": "Who can open",
-							disabled: busy(r) || void 0,
-							onChange: ($event) => whoChanged(r, $event)
-						}, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(whoOptions)(r.route), (o) => {
-							return openBlock(), createElementBlock("option", {
-								key: o.value,
-								value: o.value
-							}, toDisplayString(o.label), 9, _hoisted_17$4);
-						}), 128))], 40, _hoisted_16$4)) : createCommentVNode("", true),
-						r.who === "specific" && r.route === "cloudflare" ? (openBlock(), createElementBlock("button", {
-							key: 3,
+			return view.value ? (openBlock(), createElementBlock("div", _hoisted_1$12, [
+				!view.value.available ? (openBlock(), createElementBlock("p", _hoisted_2$9, " Workloads are off — an owner turns them on in Admin → Publishing ")) : createCommentVNode("", true),
+				disk.value ? (openBlock(), createElementBlock("div", {
+					key: 1,
+					class: normalizeClass(["apps-disk", `apps-disk-${view.value.disk?.level}`])
+				}, toDisplayString(disk.value), 3)) : createCommentVNode("", true),
+				view.value.available && builds.value ? (openBlock(), createElementBlock(Fragment, { key: 2 }, [builds.value.on ? (openBlock(), createElementBlock("div", _hoisted_3$9, [
+					_cache[5] || (_cache[5] = createElementVNode("span", { class: "setting-label" }, "Allow Docker Hub for builds", -1)),
+					unref(appsBuildsBusy) ? (openBlock(), createElementBlock("span", _hoisted_4$7)) : builds.value.pending ? (openBlock(), createElementBlock("span", _hoisted_5$6, "Needs approval")) : createCommentVNode("", true),
+					createElementVNode("label", _hoisted_6$6, [createElementVNode("input", {
+						type: "checkbox",
+						"aria-label": "Allow Docker Hub for builds",
+						checked: builds.value.dockerHub,
+						disabled: unref(appsBuildsBusy) || builds.value.pending && !builds.value.dockerHub || void 0,
+						onChange: dockerHubChanged
+					}, null, 40, _hoisted_7$6)])
+				])) : (openBlock(), createElementBlock("p", _hoisted_8$5, " Builds are off — an owner turns them on in Admin → Publishing ")), unref(appsBuildsError) ? (openBlock(), createElementBlock("p", _hoisted_9$5, toDisplayString(unref(appsBuildsError)), 1)) : createCommentVNode("", true)], 64)) : createCommentVNode("", true),
+				!view.value.apps.length ? (openBlock(), createElementBlock("p", _hoisted_10$5, "No apps yet")) : (openBlock(), createElementBlock("ul", _hoisted_11$4, [(openBlock(true), createElementBlock(Fragment, null, renderList(view.value.apps, (r) => {
+					return openBlock(), createElementBlock("li", {
+						key: unref(rowKey)(r),
+						class: "app-row",
+						"aria-busy": busy(r) || void 0
+					}, [
+						createElementVNode("div", _hoisted_13$4, [
+							createElementVNode("span", _hoisted_14$4, toDisplayString(r.app ?? r.workload), 1),
+							busy(r) ? (openBlock(), createElementBlock("span", _hoisted_15$4)) : createCommentVNode("", true),
+							createElementVNode("span", { class: normalizeClass(["app-state", `app-state-${r.state}`]) }, toDisplayString(unref(STATE_LABEL)[r.state]), 3),
+							expiry(r) ? (openBlock(), createElementBlock("span", {
+								key: 1,
+								class: normalizeClass(["app-expiry", `app-expiry-${expiry(r).level}`])
+							}, toDisplayString(expiry(r).text), 3)) : createCommentVNode("", true),
+							r.url ? (openBlock(), createElementBlock("a", {
+								key: 2,
+								class: "app-open",
+								href: r.url,
+								target: "_blank",
+								rel: "noopener noreferrer"
+							}, "Open ↗", 8, _hoisted_16$4)) : createCommentVNode("", true),
+							r.deployed ? (openBlock(), createElementBlock("button", {
+								key: 3,
+								class: "app-kebab",
+								type: "button",
+								"aria-label": `Actions for ${r.app ?? r.workload}`,
+								"aria-expanded": unref(appsMenuKey) === unref(rowKey)(r),
+								onClick: withModifiers(($event) => unref(toggleMenu)(r), ["stop"]),
+								innerHTML: unref(KEBAB)
+							}, null, 8, _hoisted_17$4)) : createCommentVNode("", true)
+						]),
+						r.deployed ? (openBlock(), createElementBlock("div", _hoisted_18$3, [
+							createElementVNode("select", {
+								value: r.route,
+								"aria-label": "Route",
+								disabled: busy(r) || r.route === "off" && !r.canPublish || void 0,
+								onChange: ($event) => routeChanged(r, $event)
+							}, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(routeOptions)(view.value.routes, r.route), (o) => {
+								return openBlock(), createElementBlock("option", {
+									key: o.value,
+									value: o.value
+								}, toDisplayString(o.label), 9, _hoisted_20$3);
+							}), 128))], 40, _hoisted_19$3),
+							!r.app && r.services.length > 1 ? (openBlock(), createElementBlock("select", {
+								key: 0,
+								value: unref(appsService).get(unref(rowKey)(r)) ?? r.services[0],
+								"aria-label": "Service",
+								disabled: busy(r) || void 0,
+								onChange: ($event) => unref(pickService)(r, $event.target.value)
+							}, [(openBlock(true), createElementBlock(Fragment, null, renderList(r.services, (sv) => {
+								return openBlock(), createElementBlock("option", {
+									key: sv,
+									value: sv
+								}, toDisplayString(sv), 9, _hoisted_22$2);
+							}), 128))], 40, _hoisted_21$2)) : createCommentVNode("", true),
+							!r.app && !r.canPublish ? (openBlock(), createElementBlock("button", {
+								key: 1,
+								class: "feature-info-btn",
+								type: "button",
+								"aria-expanded": unref(appsInfoKey) === unref(rowKey)(r),
+								"aria-label": "Why it can’t be published here",
+								onClick: ($event) => unref(toggleInfo)(r),
+								innerHTML: unref(INFO)
+							}, null, 8, _hoisted_23$1)) : createCommentVNode("", true),
+							r.route !== "off" ? (openBlock(), createElementBlock("select", {
+								key: 2,
+								value: r.who,
+								"aria-label": "Who can open",
+								disabled: busy(r) || void 0,
+								onChange: ($event) => whoChanged(r, $event)
+							}, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(whoOptions)(r.route), (o) => {
+								return openBlock(), createElementBlock("option", {
+									key: o.value,
+									value: o.value
+								}, toDisplayString(o.label), 9, _hoisted_25$1);
+							}), 128))], 40, _hoisted_24$1)) : createCommentVNode("", true),
+							r.who === "specific" && r.route === "cloudflare" ? (openBlock(), createElementBlock("button", {
+								key: 3,
+								class: "btn btn-ghost",
+								type: "button",
+								onClick: ($event) => unref(openPeople)(r)
+							}, toDisplayString(r.emails.length === 1 ? "1 person" : `${r.emails.length} people`), 9, _hoisted_26$1)) : createCommentVNode("", true)
+						])) : createCommentVNode("", true),
+						!r.app && !r.canPublish && unref(appsInfoKey) === unref(rowKey)(r) ? (openBlock(), createElementBlock("p", _hoisted_27$1, toDisplayString(NO_SERVICE))) : createCommentVNode("", true),
+						unref(appsErrors).get(unref(rowKey)(r)) ? (openBlock(), createElementBlock("p", _hoisted_28$1, toDisplayString(unref(appsErrors).get(unref(rowKey)(r))), 1)) : createCommentVNode("", true),
+						unref(appsMenuKey) === unref(rowKey)(r) ? (openBlock(), createElementBlock("div", _hoisted_29$1, [
+							createElementVNode("button", {
+								type: "button",
+								role: "menuitem",
+								onClick: withModifiers(($event) => unref(startStop)(r), ["stop"])
+							}, toDisplayString(r.running ? "Stop" : "Start"), 9, _hoisted_30$1),
+							createElementVNode("button", {
+								type: "button",
+								role: "menuitem",
+								onClick: withModifiers(($event) => unref(redeploy)(r), ["stop"])
+							}, "Redeploy", 8, _hoisted_31$1),
+							r.expiresAt !== null ? (openBlock(), createElementBlock("button", {
+								key: 0,
+								type: "button",
+								role: "menuitem",
+								onClick: withModifiers(($event) => unref(extend)(r), ["stop"])
+							}, "Extend", 8, _hoisted_32$1)) : createCommentVNode("", true),
+							createElementVNode("button", {
+								type: "button",
+								role: "menuitem",
+								onClick: withModifiers(($event) => unref(openLogs)(r), ["stop"])
+							}, "Logs", 8, _hoisted_33$1),
+							createElementVNode("button", {
+								type: "button",
+								role: "menuitem",
+								onClick: withModifiers(($event) => unref(openRestore)(r), ["stop"])
+							}, "Restore backup…", 8, _hoisted_34$1),
+							createElementVNode("button", {
+								type: "button",
+								role: "menuitem",
+								class: "app-menu-danger",
+								onClick: withModifiers(($event) => unref(remove)(r), ["stop"])
+							}, "Delete…", 8, _hoisted_35$1)
+						])) : createCommentVNode("", true),
+						drawerOf(r) ? (openBlock(), createElementBlock(Fragment, { key: 4 }, [drawerOf(r).kind === "logs" ? (openBlock(), createElementBlock("div", _hoisted_36$1, [createElementVNode("div", _hoisted_37$1, [_cache[6] || (_cache[6] = createElementVNode("span", { class: "form-label" }, "Logs", -1)), createElementVNode("button", {
 							class: "btn btn-ghost",
 							type: "button",
-							onClick: ($event) => unref(openPeople)(r)
-						}, toDisplayString(r.emails.length === 1 ? "1 person" : `${r.emails.length} people`), 9, _hoisted_18$3)) : createCommentVNode("", true)
-					])) : createCommentVNode("", true),
-					!r.app && !r.canPublish && unref(appsInfoKey) === unref(rowKey)(r) ? (openBlock(), createElementBlock("p", _hoisted_19$3, toDisplayString(NO_SERVICE))) : createCommentVNode("", true),
-					unref(appsErrors).get(unref(rowKey)(r)) ? (openBlock(), createElementBlock("p", _hoisted_20$3, toDisplayString(unref(appsErrors).get(unref(rowKey)(r))), 1)) : createCommentVNode("", true),
-					unref(appsMenuKey) === unref(rowKey)(r) ? (openBlock(), createElementBlock("div", _hoisted_21$2, [
-						createElementVNode("button", {
-							type: "button",
-							role: "menuitem",
-							onClick: withModifiers(($event) => unref(startStop)(r), ["stop"])
-						}, toDisplayString(r.running ? "Stop" : "Start"), 9, _hoisted_22$1),
-						createElementVNode("button", {
-							type: "button",
-							role: "menuitem",
-							onClick: withModifiers(($event) => unref(openLogs)(r), ["stop"])
-						}, "Logs", 8, _hoisted_23$1),
-						createElementVNode("button", {
-							type: "button",
-							role: "menuitem",
-							onClick: withModifiers(($event) => unref(openRestore)(r), ["stop"])
-						}, "Restore backup…", 8, _hoisted_24$1),
-						createElementVNode("button", {
-							type: "button",
-							role: "menuitem",
-							class: "app-menu-danger",
-							onClick: withModifiers(($event) => unref(remove)(r), ["stop"])
-						}, "Delete…", 8, _hoisted_25$1)
-					])) : createCommentVNode("", true),
-					drawerOf(r) ? (openBlock(), createElementBlock(Fragment, { key: 4 }, [drawerOf(r).kind === "logs" ? (openBlock(), createElementBlock("div", _hoisted_26$1, [createElementVNode("div", _hoisted_27$1, [_cache[5] || (_cache[5] = createElementVNode("span", { class: "form-label" }, "Logs", -1)), createElementVNode("button", {
-						class: "btn btn-ghost",
-						type: "button",
-						onClick: _cache[0] || (_cache[0] = (...args) => unref(closeDrawer) && unref(closeDrawer)(...args))
-					}, "Close")]), drawerOf(r).text === null ? (openBlock(), createElementBlock("p", _hoisted_28$1, [_cache[6] || (_cache[6] = createElementVNode("span", {
-						class: "btn-spinner",
-						"aria-hidden": "true"
-					}, null, -1)), createTextVNode(toDisplayString(LOADING))])) : (openBlock(), createElementBlock("pre", _hoisted_29$1, toDisplayString(drawerOf(r).text || NO_LOGS), 1))])) : drawerOf(r).kind === "restore" ? (openBlock(), createElementBlock("div", _hoisted_30$1, [createElementVNode("div", _hoisted_31$1, [_cache[7] || (_cache[7] = createElementVNode("span", { class: "form-label" }, "Restore backup", -1)), createElementVNode("button", {
-						class: "btn btn-ghost",
-						type: "button",
-						onClick: _cache[1] || (_cache[1] = (...args) => unref(closeDrawer) && unref(closeDrawer)(...args))
-					}, "Close")]), drawerOf(r).backups === null ? (openBlock(), createElementBlock("p", _hoisted_32$1, [_cache[8] || (_cache[8] = createElementVNode("span", {
-						class: "btn-spinner",
-						"aria-hidden": "true"
-					}, null, -1)), createTextVNode(toDisplayString(LOADING))])) : !drawerOf(r).backups.length ? (openBlock(), createElementBlock("p", _hoisted_33$1, "No backups yet")) : (openBlock(), createElementBlock("div", _hoisted_34$1, [withDirectives(createElementVNode("select", {
-						"onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => restoreStamp.value = $event),
-						"aria-label": "Backup"
-					}, [(openBlock(true), createElementBlock(Fragment, null, renderList(drawerOf(r).backups, (b) => {
-						return openBlock(), createElementBlock("option", {
-							key: b.stamp,
-							value: b.stamp
-						}, toDisplayString(b.at), 9, _hoisted_35$1);
-					}), 128))], 512), [[vModelSelect, restoreStamp.value]]), createElementVNode("button", {
-						class: "btn btn-danger",
-						type: "button",
-						onClick: ($event) => doRestore(r, drawerOf(r).backups)
-					}, " Restore ", 8, _hoisted_36$1)]))])) : (openBlock(), createElementBlock("div", _hoisted_37, [
-						createElementVNode("div", _hoisted_38, [_cache[9] || (_cache[9] = createElementVNode("span", { class: "form-label" }, "Specific people", -1)), createElementVNode("button", {
+							onClick: _cache[0] || (_cache[0] = (...args) => unref(closeDrawer) && unref(closeDrawer)(...args))
+						}, "Close")]), drawerOf(r).text === null ? (openBlock(), createElementBlock("p", _hoisted_38$1, [_cache[7] || (_cache[7] = createElementVNode("span", {
+							class: "btn-spinner",
+							"aria-hidden": "true"
+						}, null, -1)), createTextVNode(toDisplayString(LOADING))])) : (openBlock(), createElementBlock("pre", _hoisted_39$1, toDisplayString(drawerOf(r).text || NO_LOGS), 1))])) : drawerOf(r).kind === "restore" ? (openBlock(), createElementBlock("div", _hoisted_40$1, [createElementVNode("div", _hoisted_41$1, [_cache[8] || (_cache[8] = createElementVNode("span", { class: "form-label" }, "Restore backup", -1)), createElementVNode("button", {
 							class: "btn btn-ghost",
 							type: "button",
-							onClick: _cache[3] || (_cache[3] = (...args) => unref(closeDrawer) && unref(closeDrawer)(...args))
-						}, "Close")]),
-						createElementVNode("div", _hoisted_39, [withDirectives(createElementVNode("input", {
-							"onUpdate:modelValue": _cache[4] || (_cache[4] = ($event) => peopleText.value = $event),
-							onKeydown: withKeys(withModifiers(($event) => people.value.emails.length && !people.value.bad.length && unref(savePeople)(r, people.value.emails), ["prevent"]), ["enter"]),
-							type: "text",
-							inputmode: "email",
-							autocomplete: "off",
-							spellcheck: "false",
-							placeholder: "name@example.com, …",
-							"aria-label": "Email addresses"
-						}, null, 40, _hoisted_40), [[vModelText, peopleText.value]]), createElementVNode("button", {
-							class: "btn btn-primary",
+							onClick: _cache[1] || (_cache[1] = (...args) => unref(closeDrawer) && unref(closeDrawer)(...args))
+						}, "Close")]), drawerOf(r).backups === null ? (openBlock(), createElementBlock("p", _hoisted_42$1, [_cache[9] || (_cache[9] = createElementVNode("span", {
+							class: "btn-spinner",
+							"aria-hidden": "true"
+						}, null, -1)), createTextVNode(toDisplayString(LOADING))])) : !drawerOf(r).backups.length ? (openBlock(), createElementBlock("p", _hoisted_43$1, "No backups yet")) : (openBlock(), createElementBlock("div", _hoisted_44$1, [withDirectives(createElementVNode("select", {
+							"onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => restoreStamp.value = $event),
+							"aria-label": "Backup"
+						}, [(openBlock(true), createElementBlock(Fragment, null, renderList(drawerOf(r).backups, (b) => {
+							return openBlock(), createElementBlock("option", {
+								key: b.stamp,
+								value: b.stamp
+							}, toDisplayString(b.at), 9, _hoisted_45$1);
+						}), 128))], 512), [[vModelSelect, restoreStamp.value]]), createElementVNode("button", {
+							class: "btn btn-danger",
 							type: "button",
-							disabled: !people.value.emails.length || people.value.bad.length > 0 || void 0,
-							onClick: ($event) => unref(savePeople)(r, people.value.emails)
-						}, " Save ", 8, _hoisted_41)]),
-						people.value.bad.length ? (openBlock(), createElementBlock("p", _hoisted_42, "Not an email address: " + toDisplayString(people.value.bad.join(", ")), 1)) : createCommentVNode("", true)
-					]))], 64)) : createCommentVNode("", true)
-				], 8, _hoisted_4$7);
-			}), 128))]))])) : createCommentVNode("", true);
+							onClick: ($event) => doRestore(r, drawerOf(r).backups)
+						}, " Restore ", 8, _hoisted_46$1)]))])) : (openBlock(), createElementBlock("div", _hoisted_47$1, [
+							createElementVNode("div", _hoisted_48$1, [_cache[10] || (_cache[10] = createElementVNode("span", { class: "form-label" }, "Specific people", -1)), createElementVNode("button", {
+								class: "btn btn-ghost",
+								type: "button",
+								onClick: _cache[3] || (_cache[3] = (...args) => unref(closeDrawer) && unref(closeDrawer)(...args))
+							}, "Close")]),
+							createElementVNode("div", _hoisted_49$1, [withDirectives(createElementVNode("input", {
+								"onUpdate:modelValue": _cache[4] || (_cache[4] = ($event) => peopleText.value = $event),
+								onKeydown: withKeys(withModifiers(($event) => people.value.emails.length && !people.value.bad.length && unref(savePeople)(r, people.value.emails), ["prevent"]), ["enter"]),
+								type: "text",
+								inputmode: "email",
+								autocomplete: "off",
+								spellcheck: "false",
+								placeholder: "name@example.com, …",
+								"aria-label": "Email addresses"
+							}, null, 40, _hoisted_50$1), [[vModelText, peopleText.value]]), createElementVNode("button", {
+								class: "btn btn-primary",
+								type: "button",
+								disabled: !people.value.emails.length || people.value.bad.length > 0 || void 0,
+								onClick: ($event) => unref(savePeople)(r, people.value.emails)
+							}, " Save ", 8, _hoisted_51$1)]),
+							people.value.bad.length ? (openBlock(), createElementBlock("p", _hoisted_52, "Not an email address: " + toDisplayString(people.value.bad.join(", ")), 1)) : createCommentVNode("", true)
+						]))], 64)) : createCommentVNode("", true)
+					], 8, _hoisted_12$4);
+				}), 128))]))
+			])) : createCommentVNode("", true);
 		};
 	}
 });
@@ -20302,8 +20762,23 @@ function setAgentHarnessControl(provider) {
 }
 /** The harness the open agent is on (as the Harness control shows it). */
 var agentHarness = "claude";
+/** Which local harnesses this install has (credentials-config); null until loaded. */
+var localHarnesses = null;
+var localHarnessesLoading = false;
+function loadLocalHarnesses() {
+	if (localHarnesses || localHarnessesLoading) return;
+	localHarnessesLoading = true;
+	apiJson("/api/webchat/credentials-config").then((cfg) => {
+		localHarnesses = {
+			opencode: !!cfg?.opencodeAvailable,
+			pi: !!cfg?.piAvailable
+		};
+		refreshHarnessOptions();
+	}).catch(() => {}).finally(() => localHarnessesLoading = false);
+}
 /** The Harness control offers what can run the agent's model, and always the one it is on (harness-fit.ts). */
 function refreshHarnessOptions() {
+	loadLocalHarnesses();
 	const id = $("#agent-model")?.value || "";
 	const m = id ? allModels.value.find((x) => x.id === id) : null;
 	const model = m ? {
@@ -20312,7 +20787,7 @@ function refreshHarnessOptions() {
 	} : null;
 	document.querySelectorAll("#agent-harness-control .setting-option").forEach((b) => {
 		const h = b.dataset.provider || "";
-		b.hidden = h !== agentHarness && !harnessRuns(h, model, cloudModelNames);
+		b.hidden = h !== agentHarness && !harnessRuns(h, model, cloudModelNames, localHarnesses);
 	});
 }
 /** Codex and Grok take their own model (the model field) instead of a registry one; OpenCode and pi only the latter. */
@@ -23655,10 +24130,10 @@ function connect() {
 				state.lastRoomsList = msg.rooms;
 				roomsReceived.value = true;
 				msg.rooms.forEach((r) => {
-					if (r.unread && r.id !== state.currentRoom) seedUnread(state.unreadRooms, r.id, r.unread_count);
-					if (r.mention && r.id !== state.currentRoom) state.mentionedRooms.add(r.id);
-					else if (!r.mention) state.mentionedRooms.delete(r.id);
-					else state.unreadRooms.delete(r.id);
+					const open = r.id === state.currentRoom;
+					syncUnread(state.unreadRooms, r.id, r.unread, r.unread_count, open);
+					if (r.mention && !open) state.mentionedRooms.add(r.id);
+					else state.mentionedRooms.delete(r.id);
 				});
 				renderRooms(msg.rooms);
 				if (state.allAgents.length === 0) authFetch("/api/agents").then((r) => r.json()).then((b) => {
@@ -23751,7 +24226,7 @@ function connect() {
 					break;
 				}
 				const wasNearBottom = isNearBottom();
-				if (state.settings?.notifications && document.hidden && msg.sender !== state.myIdentity && msg.message_type !== "a2a" && msg.sender_type !== "a2a") try {
+				if (state.settings?.notifications && document.hidden && msg.sender !== state.myIdentity && msg.message_type !== "a2a" && msg.sender_type !== "a2a" && !String(msg.message_type || "").startsWith("approval")) try {
 					const mentioned = messageMentionsMe(msg.content);
 					new Notification(mentioned ? `${msg.sender} mentioned you` : `${msg.sender}`, {
 						body: msg.content.slice(0, 100),
@@ -24480,6 +24955,10 @@ function changedFields(saved, typed) {
 	}
 	return out;
 }
+/** How long the panel waits before asking again while a status reads Checking…, and how many times. */
+var RECHECK_MS = 3e3;
+/** Is either host status still being checked? */
+var anyChecking = (v) => !!v && (!!(v.workloads?.on && v.workloads.status.checking) || !!(v.builds?.on && v.builds.status.checking));
 /** A refusal's field, as the server names it, or '' for one shown under the form. */
 function errorField(err) {
 	const f = err?.body?.field;
@@ -24494,6 +24973,17 @@ async function saveRoute(kind, body) {
 		body
 	});
 }
+/** PUT the Workloads or Confined builds switch; the answer is the whole fresh view. */
+async function saveWorkloads(body) {
+	publishingView.value = await apiJson("/api/publishing/workloads", {
+		method: "PUT",
+		body
+	});
+}
+/** Read the view again (a status still being checked). */
+async function refreshPublishing() {
+	publishingView.value = await apiJson("/api/publishing");
+}
 /** Hand a credential to the vault. Throws the server's refusal. */
 async function connectRoute(kind, body) {
 	publishingView.value = await apiJson(`/api/publishing/${kind}/connect`, {
@@ -24507,59 +24997,100 @@ var _hoisted_1$6 = {
 	key: 0,
 	class: "publishing"
 };
-var _hoisted_2$5 = ["title"];
-var _hoisted_3$5 = { class: "publishing-route" };
-var _hoisted_4$4 = { class: "setting-group install-row" };
-var _hoisted_5$3 = { class: "setting-toggle" };
-var _hoisted_6$3 = ["checked", "disabled"];
-var _hoisted_7$3 = {
+var _hoisted_2$5 = {
+	id: "publishing-workloads",
+	class: "publishing-route"
+};
+var _hoisted_3$5 = { class: "setting-group install-row" };
+var _hoisted_4$4 = { class: "setting-toggle" };
+var _hoisted_5$3 = ["checked", "disabled"];
+var _hoisted_6$3 = {
 	key: 0,
 	class: "cred-hint err"
 };
-var _hoisted_8$2 = ["title"];
-var _hoisted_9$2 = ["title"];
-var _hoisted_10$2 = { class: "secret-form" };
-var _hoisted_11$2 = { class: "secret-field" };
-var _hoisted_12$2 = ["disabled"];
-var _hoisted_13$2 = {
+var _hoisted_7$3 = ["title"];
+var _hoisted_8$2 = {
+	key: 0,
+	class: "btn-spinner",
+	"aria-hidden": "true"
+};
+var _hoisted_9$2 = {
+	key: 1,
+	class: "publishing-dot",
+	"aria-hidden": "true"
+};
+var _hoisted_10$2 = {
+	key: 0,
+	class: "publishing-fix"
+};
+var _hoisted_11$2 = {
+	id: "publishing-confined-builds",
+	class: "setting-group install-row"
+};
+var _hoisted_12$2 = { class: "setting-toggle" };
+var _hoisted_13$2 = ["checked", "disabled"];
+var _hoisted_14$2 = {
+	key: 1,
+	class: "cred-hint err"
+};
+var _hoisted_15$2 = ["title"];
+var _hoisted_16$2 = {
+	key: 0,
+	class: "publishing-fix"
+};
+var _hoisted_17$2 = ["title"];
+var _hoisted_18$2 = { class: "publishing-route" };
+var _hoisted_19$2 = { class: "setting-group install-row" };
+var _hoisted_20$2 = { class: "setting-toggle" };
+var _hoisted_21$1 = ["checked", "disabled"];
+var _hoisted_22$1 = {
 	key: 0,
 	class: "cred-hint err"
 };
-var _hoisted_14$2 = { class: "secret-form" };
-var _hoisted_15$2 = { class: "secret-field" };
-var _hoisted_16$2 = { class: "secret-field" };
-var _hoisted_17$2 = {
+var _hoisted_23 = ["title"];
+var _hoisted_24 = ["title"];
+var _hoisted_25 = { class: "secret-form" };
+var _hoisted_26 = { class: "secret-field" };
+var _hoisted_27 = ["disabled"];
+var _hoisted_28 = {
 	key: 0,
 	class: "cred-hint err"
 };
-var _hoisted_18$2 = { class: "publishing-actions" };
-var _hoisted_19$2 = ["disabled"];
-var _hoisted_20$2 = { class: "publishing-route" };
-var _hoisted_21$1 = { class: "setting-group install-row" };
-var _hoisted_22 = { class: "setting-toggle" };
-var _hoisted_23 = ["checked", "disabled"];
-var _hoisted_24 = {
+var _hoisted_29 = { class: "secret-form" };
+var _hoisted_30 = { class: "secret-field" };
+var _hoisted_31 = { class: "secret-field" };
+var _hoisted_32 = {
 	key: 0,
 	class: "cred-hint err"
 };
-var _hoisted_25 = ["title"];
-var _hoisted_26 = ["title"];
-var _hoisted_27 = { class: "publishing-fields" };
-var _hoisted_28 = { class: "form-label" };
-var _hoisted_29 = ["onUpdate:modelValue", "placeholder"];
-var _hoisted_30 = {
+var _hoisted_33 = { class: "publishing-actions" };
+var _hoisted_34 = ["disabled"];
+var _hoisted_35 = { class: "publishing-route" };
+var _hoisted_36 = { class: "setting-group install-row" };
+var _hoisted_37 = { class: "setting-toggle" };
+var _hoisted_38 = ["checked", "disabled"];
+var _hoisted_39 = {
 	key: 0,
 	class: "cred-hint err"
 };
-var _hoisted_31 = ["disabled"];
-var _hoisted_32 = { class: "secret-form" };
-var _hoisted_33 = { class: "secret-field" };
-var _hoisted_34 = {
+var _hoisted_40 = ["title"];
+var _hoisted_41 = ["title"];
+var _hoisted_42 = { class: "publishing-fields" };
+var _hoisted_43 = { class: "form-label" };
+var _hoisted_44 = ["onUpdate:modelValue", "placeholder"];
+var _hoisted_45 = {
 	key: 0,
 	class: "cred-hint err"
 };
-var _hoisted_35 = { class: "publishing-actions" };
-var _hoisted_36 = ["disabled"];
+var _hoisted_46 = ["disabled"];
+var _hoisted_47 = { class: "secret-form" };
+var _hoisted_48 = { class: "secret-field" };
+var _hoisted_49 = {
+	key: 0,
+	class: "cred-hint err"
+};
+var _hoisted_50 = { class: "publishing-actions" };
+var _hoisted_51 = ["disabled"];
 //#endregion
 //#region src/features/PublishingPanel.vue
 var PublishingPanel_default = /* @__PURE__ */ defineComponent({
@@ -24567,9 +25098,12 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 	setup(__props) {
 		/**
 		* Admin → Publishing, mounted into <div id="publishing-panel"> (publishing.ts).
-		* Per route: a switch, its settings (only while on), Connect and a status line
-		* that reads Connected or names the one thing missing. Secrets typed here are
-		* sent once and cleared; nothing reads them back.
+		* First Workloads (and, while on, Confined builds): a switch, a status line that
+		* reads Ready or names the one thing missing on this host, and the command that
+		* fixes it with a copy button. Then per route: a switch, its settings (only
+		* while on), Connect and a status line that reads Connected or names the one
+		* thing missing. Secrets typed here are sent once and cleared; nothing reads
+		* them back.
 		*/
 		const view = computed(() => publishingView.value);
 		const tsDomain = ref("");
@@ -24650,6 +25184,32 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 			}
 			await run(`${kind}-switch`, `${kind}.`, () => saveRoute(kind, { on }));
 		}
+		async function toggleHost(kind, e) {
+			const el = e.target;
+			const on = el.checked;
+			el.checked = !on;
+			if (kind === "workloads" && !on) {
+				if (!await showConfirmModal({
+					title: "Turn off workloads?",
+					body: "Published apps stop opening, and agents can’t start apps.",
+					confirmLabel: "Turn off",
+					destructive: true
+				})) return;
+			}
+			await run(`${kind}-switch`, `${kind}.`, () => saveWorkloads(kind === "workloads" ? { on } : { confinedBuilds: on }));
+		}
+		let recheck;
+		let tries = 0;
+		watch(view, (v) => {
+			clearTimeout(recheck);
+			if (!anyChecking(v)) {
+				tries = 0;
+				return;
+			}
+			if (tries++ >= 40) return;
+			recheck = setTimeout(() => void refreshPublishing().catch(() => void 0), RECHECK_MS);
+		}, { immediate: true });
+		onUnmounted(() => clearTimeout(recheck));
 		const tsDirty = computed(() => !!view.value && tsDomain.value.trim() !== view.value.tailnet.domain);
 		const cfChanged = computed(() => view.value ? changedFields(view.value.cloudflare, cf) : {});
 		const cfDirty = computed(() => Object.keys(cfChanged.value).length > 0);
@@ -24689,37 +25249,75 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 		}
 		return (_ctx, _cache) => {
 			return view.value ? (openBlock(), createElementBlock("div", _hoisted_1$6, [
+				createElementVNode("div", _hoisted_2$5, [
+					createElementVNode("div", _hoisted_3$5, [_cache[12] || (_cache[12] = createElementVNode("span", { class: "setting-label" }, "Workloads", -1)), createElementVNode("label", _hoisted_4$4, [createElementVNode("input", {
+						type: "checkbox",
+						"aria-label": "Workloads",
+						checked: view.value.workloads.on,
+						disabled: busy.value === "workloads-switch" || void 0,
+						onChange: _cache[0] || (_cache[0] = ($event) => toggleHost("workloads", $event))
+					}, null, 40, _hoisted_5$3)])]),
+					errors["workloads.on"] || errors["workloads.form"] ? (openBlock(), createElementBlock("p", _hoisted_6$3, toDisplayString(errors["workloads.on"] || errors["workloads.form"]), 1)) : createCommentVNode("", true),
+					view.value.workloads.on ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [
+						createElementVNode("p", {
+							class: normalizeClass(["publishing-status", { ok: view.value.workloads.status.ok }]),
+							title: view.value.workloads.status.detail || void 0
+						}, [view.value.workloads.status.checking ? (openBlock(), createElementBlock("span", _hoisted_8$2)) : (openBlock(), createElementBlock("span", _hoisted_9$2)), createTextVNode(toDisplayString(view.value.workloads.status.text), 1)], 10, _hoisted_7$3),
+						view.value.workloads.status.fix ? (openBlock(), createElementBlock("p", _hoisted_10$2, [createElementVNode("code", null, toDisplayString(view.value.workloads.status.fix), 1), createVNode(CopyIconButton_default, {
+							text: view.value.workloads.status.fix,
+							label: "Copy command"
+						}, null, 8, ["text"])])) : createCommentVNode("", true),
+						createElementVNode("div", _hoisted_11$2, [_cache[13] || (_cache[13] = createElementVNode("span", { class: "setting-label" }, "Confined builds", -1)), createElementVNode("label", _hoisted_12$2, [createElementVNode("input", {
+							type: "checkbox",
+							"aria-label": "Confined builds",
+							checked: view.value.builds.on,
+							disabled: busy.value === "builds-switch" || void 0,
+							onChange: _cache[1] || (_cache[1] = ($event) => toggleHost("builds", $event))
+						}, null, 40, _hoisted_13$2)])]),
+						errors["builds.confinedBuilds"] || errors["builds.form"] ? (openBlock(), createElementBlock("p", _hoisted_14$2, toDisplayString(errors["builds.confinedBuilds"] || errors["builds.form"]), 1)) : createCommentVNode("", true),
+						view.value.builds.on ? (openBlock(), createElementBlock(Fragment, { key: 2 }, [createElementVNode("p", {
+							class: normalizeClass(["publishing-status", { ok: view.value.builds.status.ok }]),
+							title: view.value.builds.status.detail || void 0
+						}, [_cache[14] || (_cache[14] = createElementVNode("span", {
+							class: "publishing-dot",
+							"aria-hidden": "true"
+						}, null, -1)), createTextVNode(toDisplayString(view.value.builds.status.text), 1)], 10, _hoisted_15$2), view.value.builds.status.fix ? (openBlock(), createElementBlock("p", _hoisted_16$2, [createElementVNode("code", null, toDisplayString(view.value.builds.status.fix), 1), createVNode(CopyIconButton_default, {
+							text: view.value.builds.status.fix,
+							label: "Copy command"
+						}, null, 8, ["text"])])) : createCommentVNode("", true)], 64)) : createCommentVNode("", true)
+					], 64)) : createCommentVNode("", true)
+				]),
 				view.value.gate ? (openBlock(), createElementBlock("p", {
 					key: 0,
 					class: "cred-hint err publishing-gate",
 					title: view.value.gate.detail || void 0
-				}, toDisplayString(view.value.gate.text), 9, _hoisted_2$5)) : createCommentVNode("", true),
-				createElementVNode("div", _hoisted_3$5, [
-					createElementVNode("div", _hoisted_4$4, [_cache[10] || (_cache[10] = createElementVNode("span", { class: "setting-label" }, "Tailnet", -1)), createElementVNode("label", _hoisted_5$3, [createElementVNode("input", {
+				}, toDisplayString(view.value.gate.text), 9, _hoisted_17$2)) : createCommentVNode("", true),
+				createElementVNode("div", _hoisted_18$2, [
+					createElementVNode("div", _hoisted_19$2, [_cache[15] || (_cache[15] = createElementVNode("span", { class: "setting-label" }, "Tailnet", -1)), createElementVNode("label", _hoisted_20$2, [createElementVNode("input", {
 						type: "checkbox",
 						"aria-label": "Tailnet",
 						checked: view.value.tailnet.on,
 						disabled: busy.value === "tailnet-switch" || void 0,
-						onChange: _cache[0] || (_cache[0] = ($event) => toggle("tailnet", $event))
-					}, null, 40, _hoisted_6$3)])]),
-					errors["tailnet.on"] || errors["tailnet.form"] ? (openBlock(), createElementBlock("p", _hoisted_7$3, toDisplayString(errors["tailnet.on"] || errors["tailnet.form"]), 1)) : createCommentVNode("", true),
+						onChange: _cache[2] || (_cache[2] = ($event) => toggle("tailnet", $event))
+					}, null, 40, _hoisted_21$1)])]),
+					errors["tailnet.on"] || errors["tailnet.form"] ? (openBlock(), createElementBlock("p", _hoisted_22$1, toDisplayString(errors["tailnet.on"] || errors["tailnet.form"]), 1)) : createCommentVNode("", true),
 					view.value.tailnet.on ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [
 						createElementVNode("p", {
 							class: normalizeClass(["publishing-status", { ok: view.value.tailnet.status.ok }]),
 							title: view.value.tailnet.status.detail || void 0
-						}, [_cache[11] || (_cache[11] = createElementVNode("span", {
+						}, [_cache[16] || (_cache[16] = createElementVNode("span", {
 							class: "publishing-dot",
 							"aria-hidden": "true"
-						}, null, -1)), createTextVNode(toDisplayString(view.value.tailnet.status.text), 1)], 10, _hoisted_8$2),
+						}, null, -1)), createTextVNode(toDisplayString(view.value.tailnet.status.text), 1)], 10, _hoisted_23),
 						(openBlock(true), createElementBlock(Fragment, null, renderList(view.value.tailnet.status.warnings, (w) => {
 							return openBlock(), createElementBlock("p", {
 								key: w.detail,
 								class: "cred-hint",
 								title: w.detail
-							}, toDisplayString(w.text), 9, _hoisted_9$2);
+							}, toDisplayString(w.text), 9, _hoisted_24);
 						}), 128)),
-						createElementVNode("div", _hoisted_10$2, [createElementVNode("label", _hoisted_11$2, [_cache[12] || (_cache[12] = createElementVNode("span", { class: "form-label" }, "Tailnet name", -1)), withDirectives(createElementVNode("input", {
-							"onUpdate:modelValue": _cache[1] || (_cache[1] = ($event) => tsDomain.value = $event),
+						createElementVNode("div", _hoisted_25, [createElementVNode("label", _hoisted_26, [_cache[17] || (_cache[17] = createElementVNode("span", { class: "form-label" }, "Tailnet name", -1)), withDirectives(createElementVNode("input", {
+							"onUpdate:modelValue": _cache[3] || (_cache[3] = ($event) => tsDomain.value = $event),
 							type: "text",
 							placeholder: "tail1234.ts.net",
 							autocomplete: "off",
@@ -24734,39 +25332,39 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 							busy: busy.value === "tailnet-save",
 							label: "Save",
 							"busy-label": "Saving…"
-						}, null, 8, ["busy"])], 8, _hoisted_12$2)]),
-						errors["tailnet.domain"] ? (openBlock(), createElementBlock("p", _hoisted_13$2, toDisplayString(errors["tailnet.domain"]), 1)) : createCommentVNode("", true),
+						}, null, 8, ["busy"])], 8, _hoisted_27)]),
+						errors["tailnet.domain"] ? (openBlock(), createElementBlock("p", _hoisted_28, toDisplayString(errors["tailnet.domain"]), 1)) : createCommentVNode("", true),
 						connecting.value !== "tailnet" ? (openBlock(), createElementBlock("button", {
 							key: 1,
 							class: "btn btn-secondary publishing-connect",
 							type: "button",
-							onClick: _cache[2] || (_cache[2] = ($event) => openConnect("tailnet"))
+							onClick: _cache[4] || (_cache[4] = ($event) => openConnect("tailnet"))
 						}, toDisplayString(unref(connectLabel)(view.value.tailnet.status)), 1)) : (openBlock(), createElementBlock(Fragment, { key: 2 }, [
-							createElementVNode("div", _hoisted_14$2, [createElementVNode("label", _hoisted_15$2, [_cache[13] || (_cache[13] = createElementVNode("span", { class: "form-label" }, "Client ID", -1)), withDirectives(createElementVNode("input", {
-								"onUpdate:modelValue": _cache[3] || (_cache[3] = ($event) => secret.clientId = $event),
+							createElementVNode("div", _hoisted_29, [createElementVNode("label", _hoisted_30, [_cache[18] || (_cache[18] = createElementVNode("span", { class: "form-label" }, "Client ID", -1)), withDirectives(createElementVNode("input", {
+								"onUpdate:modelValue": _cache[5] || (_cache[5] = ($event) => secret.clientId = $event),
 								type: "text",
 								autocomplete: "off",
 								autocapitalize: "none",
 								spellcheck: "false"
-							}, null, 512), [[vModelText, secret.clientId]])]), createElementVNode("label", _hoisted_16$2, [_cache[14] || (_cache[14] = createElementVNode("span", { class: "form-label" }, "Client secret", -1)), withDirectives(createElementVNode("input", {
-								"onUpdate:modelValue": _cache[4] || (_cache[4] = ($event) => secret.clientSecret = $event),
+							}, null, 512), [[vModelText, secret.clientId]])]), createElementVNode("label", _hoisted_31, [_cache[19] || (_cache[19] = createElementVNode("span", { class: "form-label" }, "Client secret", -1)), withDirectives(createElementVNode("input", {
+								"onUpdate:modelValue": _cache[6] || (_cache[6] = ($event) => secret.clientSecret = $event),
 								type: "password",
 								placeholder: "tskey-client-…",
 								autocomplete: "new-password",
 								spellcheck: "false"
 							}, null, 512), [[vModelText, secret.clientSecret]])])]),
-							errors["tailnet.clientId"] || errors["tailnet.clientSecret"] ? (openBlock(), createElementBlock("p", _hoisted_17$2, toDisplayString(errors["tailnet.clientId"] || errors["tailnet.clientSecret"]), 1)) : createCommentVNode("", true),
-							_cache[15] || (_cache[15] = createElementVNode("p", { class: "cred-hint" }, "Never shown again", -1)),
-							createElementVNode("div", _hoisted_18$2, [createElementVNode("button", {
+							errors["tailnet.clientId"] || errors["tailnet.clientSecret"] ? (openBlock(), createElementBlock("p", _hoisted_32, toDisplayString(errors["tailnet.clientId"] || errors["tailnet.clientSecret"]), 1)) : createCommentVNode("", true),
+							_cache[20] || (_cache[20] = createElementVNode("p", { class: "cred-hint" }, "Never shown again", -1)),
+							createElementVNode("div", _hoisted_33, [createElementVNode("button", {
 								class: "btn btn-primary",
 								type: "button",
 								disabled: !secret.clientId || !secret.clientSecret || busy.value === "tailnet-connect" || void 0,
-								onClick: _cache[5] || (_cache[5] = ($event) => connect("tailnet"))
+								onClick: _cache[7] || (_cache[7] = ($event) => connect("tailnet"))
 							}, [createVNode(BusyLabel_default, {
 								busy: busy.value === "tailnet-connect",
 								label: "Connect",
 								"busy-label": "Connecting…"
-							}, null, 8, ["busy"])], 8, _hoisted_19$2), createElementVNode("button", {
+							}, null, 8, ["busy"])], 8, _hoisted_34), createElementVNode("button", {
 								class: "btn btn-secondary",
 								type: "button",
 								onClick: cancelConnect
@@ -24774,36 +25372,36 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 						], 64))
 					], 64)) : createCommentVNode("", true)
 				]),
-				createElementVNode("div", _hoisted_20$2, [
-					createElementVNode("div", _hoisted_21$1, [_cache[16] || (_cache[16] = createElementVNode("span", { class: "setting-label" }, "Cloudflare", -1)), createElementVNode("label", _hoisted_22, [createElementVNode("input", {
+				createElementVNode("div", _hoisted_35, [
+					createElementVNode("div", _hoisted_36, [_cache[21] || (_cache[21] = createElementVNode("span", { class: "setting-label" }, "Cloudflare", -1)), createElementVNode("label", _hoisted_37, [createElementVNode("input", {
 						type: "checkbox",
 						"aria-label": "Cloudflare",
 						checked: view.value.cloudflare.on,
 						disabled: busy.value === "cloudflare-switch" || void 0,
-						onChange: _cache[6] || (_cache[6] = ($event) => toggle("cloudflare", $event))
-					}, null, 40, _hoisted_23)])]),
-					errors["cloudflare.on"] || errors["cloudflare.form"] ? (openBlock(), createElementBlock("p", _hoisted_24, toDisplayString(errors["cloudflare.on"] || errors["cloudflare.form"]), 1)) : createCommentVNode("", true),
+						onChange: _cache[8] || (_cache[8] = ($event) => toggle("cloudflare", $event))
+					}, null, 40, _hoisted_38)])]),
+					errors["cloudflare.on"] || errors["cloudflare.form"] ? (openBlock(), createElementBlock("p", _hoisted_39, toDisplayString(errors["cloudflare.on"] || errors["cloudflare.form"]), 1)) : createCommentVNode("", true),
 					view.value.cloudflare.on ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [
 						createElementVNode("p", {
 							class: normalizeClass(["publishing-status", { ok: view.value.cloudflare.status.ok }]),
 							title: view.value.cloudflare.status.detail || void 0
-						}, [_cache[17] || (_cache[17] = createElementVNode("span", {
+						}, [_cache[22] || (_cache[22] = createElementVNode("span", {
 							class: "publishing-dot",
 							"aria-hidden": "true"
-						}, null, -1)), createTextVNode(toDisplayString(view.value.cloudflare.status.text), 1)], 10, _hoisted_25),
+						}, null, -1)), createTextVNode(toDisplayString(view.value.cloudflare.status.text), 1)], 10, _hoisted_40),
 						(openBlock(true), createElementBlock(Fragment, null, renderList(view.value.cloudflare.status.warnings, (w) => {
 							return openBlock(), createElementBlock("p", {
 								key: w.detail,
 								class: "cred-hint",
 								title: w.detail
-							}, toDisplayString(w.text), 9, _hoisted_26);
+							}, toDisplayString(w.text), 9, _hoisted_41);
 						}), 128)),
-						createElementVNode("div", _hoisted_27, [(openBlock(), createElementBlock(Fragment, null, renderList(CF_FIELDS, (f) => {
+						createElementVNode("div", _hoisted_42, [(openBlock(), createElementBlock(Fragment, null, renderList(CF_FIELDS, (f) => {
 							return createElementVNode("label", {
 								key: f.key,
 								class: "publishing-field"
 							}, [
-								createElementVNode("span", _hoisted_28, toDisplayString(f.label), 1),
+								createElementVNode("span", _hoisted_43, toDisplayString(f.label), 1),
 								withDirectives(createElementVNode("input", {
 									"onUpdate:modelValue": ($event) => cf[f.key] = $event,
 									type: "text",
@@ -24811,8 +25409,8 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 									autocomplete: "off",
 									autocapitalize: "none",
 									spellcheck: "false"
-								}, null, 8, _hoisted_29), [[vModelText, cf[f.key]]]),
-								errors[`cloudflare.${f.key}`] ? (openBlock(), createElementBlock("span", _hoisted_30, toDisplayString(errors[`cloudflare.${f.key}`]), 1)) : createCommentVNode("", true)
+								}, null, 8, _hoisted_44), [[vModelText, cf[f.key]]]),
+								errors[`cloudflare.${f.key}`] ? (openBlock(), createElementBlock("span", _hoisted_45, toDisplayString(errors[`cloudflare.${f.key}`]), 1)) : createCommentVNode("", true)
 							]);
 						}), 64)), createElementVNode("button", {
 							class: "btn btn-secondary publishing-save",
@@ -24823,31 +25421,31 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 							busy: busy.value === "cloudflare-save",
 							label: "Save",
 							"busy-label": "Saving…"
-						}, null, 8, ["busy"])], 8, _hoisted_31)]),
+						}, null, 8, ["busy"])], 8, _hoisted_46)]),
 						connecting.value !== "cloudflare" ? (openBlock(), createElementBlock("button", {
 							key: 0,
 							class: "btn btn-secondary publishing-connect",
 							type: "button",
-							onClick: _cache[7] || (_cache[7] = ($event) => openConnect("cloudflare"))
+							onClick: _cache[9] || (_cache[9] = ($event) => openConnect("cloudflare"))
 						}, toDisplayString(unref(connectLabel)(view.value.cloudflare.status)), 1)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [
-							createElementVNode("div", _hoisted_32, [createElementVNode("label", _hoisted_33, [_cache[18] || (_cache[18] = createElementVNode("span", { class: "form-label" }, "API token", -1)), withDirectives(createElementVNode("input", {
-								"onUpdate:modelValue": _cache[8] || (_cache[8] = ($event) => secret.token = $event),
+							createElementVNode("div", _hoisted_47, [createElementVNode("label", _hoisted_48, [_cache[23] || (_cache[23] = createElementVNode("span", { class: "form-label" }, "API token", -1)), withDirectives(createElementVNode("input", {
+								"onUpdate:modelValue": _cache[10] || (_cache[10] = ($event) => secret.token = $event),
 								type: "password",
 								autocomplete: "new-password",
 								spellcheck: "false"
 							}, null, 512), [[vModelText, secret.token]])])]),
-							errors["cloudflare.token"] ? (openBlock(), createElementBlock("p", _hoisted_34, toDisplayString(errors["cloudflare.token"]), 1)) : createCommentVNode("", true),
-							_cache[19] || (_cache[19] = createElementVNode("p", { class: "cred-hint" }, "Never shown again", -1)),
-							createElementVNode("div", _hoisted_35, [createElementVNode("button", {
+							errors["cloudflare.token"] ? (openBlock(), createElementBlock("p", _hoisted_49, toDisplayString(errors["cloudflare.token"]), 1)) : createCommentVNode("", true),
+							_cache[24] || (_cache[24] = createElementVNode("p", { class: "cred-hint" }, "Never shown again", -1)),
+							createElementVNode("div", _hoisted_50, [createElementVNode("button", {
 								class: "btn btn-primary",
 								type: "button",
 								disabled: !secret.token || busy.value === "cloudflare-connect" || void 0,
-								onClick: _cache[9] || (_cache[9] = ($event) => connect("cloudflare"))
+								onClick: _cache[11] || (_cache[11] = ($event) => connect("cloudflare"))
 							}, [createVNode(BusyLabel_default, {
 								busy: busy.value === "cloudflare-connect",
 								label: "Connect",
 								"busy-label": "Connecting…"
-							}, null, 8, ["busy"])], 8, _hoisted_36), createElementVNode("button", {
+							}, null, 8, ["busy"])], 8, _hoisted_51), createElementVNode("button", {
 								class: "btn btn-secondary",
 								type: "button",
 								onClick: cancelConnect
@@ -24873,7 +25471,7 @@ async function renderPublishingSettings() {
 	} catch {
 		view = null;
 	}
-	if (!view?.tailnet || !view.cloudflare) {
+	if (!view?.tailnet || !view.cloudflare || !view.workloads) {
 		section.hidden = true;
 		return;
 	}
@@ -25767,6 +26365,23 @@ function wireCloudModels() {
 	});
 }
 //#endregion
+//#region src/features/ollama-names.ts
+/**
+* An Ollama model tag as the server spells it (ollama-manage.ts
+* normalizeOllamaModelName): trimmed, lowercase, no whitespace. The UI must
+* compare in the same spelling, or a pull of "Llama3.2" reports as "llama3.2"
+* and the wait for it never ends.
+*/
+function normalizeOllamaModelName(raw) {
+	return raw.trim().toLowerCase().replace(/\s+/g, "");
+}
+/** The same model, allowing Ollama's implicit `:latest`. */
+function sameOllamaModel(a, b) {
+	const x = normalizeOllamaModelName(a);
+	const y = normalizeOllamaModelName(b);
+	return x === y || x === `${y}:latest` || `${x}:latest` === y;
+}
+//#endregion
 //#region src/features/InstallProgress.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$3 = {
 	key: 0,
@@ -26060,8 +26675,8 @@ var AddModel_default = /* @__PURE__ */ defineComponent({
 			} catch {}
 		}
 		watch(host, () => void loadInstalled());
-		const has = (tag) => installed.value.has(tag) || installed.value.has(`${tag}:latest`);
-		const same = (a, b) => a === b || a === `${b}:latest`;
+		const has = (tag) => [...installed.value].some((name) => sameOllamaModel(name, tag));
+		const same = sameOllamaModel;
 		/** The pull through the shared poller, so its line is the host cards' own; resolves on its outcome. */
 		function waitForPull(url, tag) {
 			pollOllamaPulls();
@@ -26078,7 +26693,7 @@ var AddModel_default = /* @__PURE__ */ defineComponent({
 			});
 		}
 		async function addLocal(rawTag) {
-			const tag = rawTag.trim();
+			const tag = normalizeOllamaModelName(rawTag);
 			const url = serverUrl();
 			if (!tag || !url) return;
 			busy.value = true;
@@ -26263,7 +26878,7 @@ var AddModel_default = /* @__PURE__ */ defineComponent({
 						disabled: busy.value || !otherTag.value.trim(),
 						onClick: _cache[8] || (_cache[8] = ($event) => addLocal(otherTag.value))
 					}, [createVNode(BusyLabel_default, {
-						busy: doing.value === `local:${otherTag.value.trim()}`,
+						busy: doing.value === `local:${unref(normalizeOllamaModelName)(otherTag.value)}`,
 						label: has(otherTag.value.trim()) ? "Add" : "Install",
 						"busy-label": has(otherTag.value.trim()) ? "Adding…" : "Installing…"
 					}, null, 8, [
@@ -26381,6 +26996,12 @@ var JsonNode_default = /* @__PURE__ */ defineComponent({
 });
 /** Longest text a page may put in the composer; anything past it is cut. */
 var COMPOSE_MAX = 4e3;
+/** A fresh nonce for one open of a page: 128 random bits as hex. */
+function newComposeNonce() {
+	const b = /* @__PURE__ */ new Uint8Array(16);
+	crypto.getRandomValues(b);
+	return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}
 /**
 * Control characters out, except newline and tab; CRLF/CR become LF. Also the
 * bidirectional overrides and isolates, which can make text read differently
@@ -26391,17 +27012,18 @@ function cleanComposeText(text) {
 }
 /**
 * The text a message asks to pre-fill, or null when the message is not one to
-* act on: from anywhere but `frame` (the drawer's iframe window), or not
-* exactly `{ type: 'nanoclaw:compose', text: string }`.
+* act on: from anywhere but `frame` (the drawer's iframe window), without this
+* open's `nonce`, or not exactly `{ type: 'nanoclaw:compose', text: string,
+* nonce: string }`.
 */
-function composeTextFrom(event, frame) {
-	if (!frame || event.source !== frame) return null;
+function composeTextFrom(event, frame, nonce) {
+	if (!frame || event.source !== frame || !nonce) return null;
 	const data = event.data;
 	if (!data || typeof data !== "object" || Array.isArray(data)) return null;
 	const keys = Object.keys(data).sort();
-	if (keys.length !== 2 || keys[0] !== "text" || keys[1] !== "type") return null;
-	const { type, text } = data;
-	if (type !== "nanoclaw:compose" || typeof text !== "string") return null;
+	if (keys.length !== 3 || keys[0] !== "nonce" || keys[1] !== "text" || keys[2] !== "type") return null;
+	const { type, text, nonce: got } = data;
+	if (type !== "nanoclaw:compose" || typeof text !== "string" || got !== nonce) return null;
 	const clean = cleanComposeText(text).slice(0, COMPOSE_MAX);
 	return clean.trim() ? clean : null;
 }
@@ -26433,30 +27055,34 @@ var _hoisted_9 = {
 	key: 2,
 	class: "attachment-drawer-status"
 };
-var _hoisted_10 = ["src", "title"];
+var _hoisted_10 = {
+	key: 3,
+	class: "attachment-drawer-status"
+};
 var _hoisted_11 = ["src", "title"];
-var _hoisted_12 = {
+var _hoisted_12 = ["src", "title"];
+var _hoisted_13 = {
 	key: 0,
 	class: "attachment-drawer-status"
 };
-var _hoisted_13 = ["src"];
-var _hoisted_14 = {
+var _hoisted_14 = ["src"];
+var _hoisted_15 = {
 	key: 0,
 	class: "attachment-drawer-status"
 };
-var _hoisted_15 = ["src"];
-var _hoisted_16 = ["innerHTML"];
-var _hoisted_17 = {
+var _hoisted_16 = ["src"];
+var _hoisted_17 = ["innerHTML"];
+var _hoisted_18 = {
 	key: 1,
 	class: "attachment-drawer-json"
 };
-var _hoisted_18 = ["aria-label"];
-var _hoisted_19 = {
+var _hoisted_19 = ["aria-label"];
+var _hoisted_20 = {
 	key: 0,
 	class: "attachment-drawer-status"
 };
-var _hoisted_20 = ["aria-label"];
-var _hoisted_21 = ["innerHTML"];
+var _hoisted_21 = ["aria-label"];
+var _hoisted_22 = ["innerHTML"];
 //#endregion
 //#region src/features/AttachmentDrawer.vue
 var AttachmentDrawer_default = /* @__PURE__ */ defineComponent({
@@ -26470,9 +27096,10 @@ var AttachmentDrawer_default = /* @__PURE__ */ defineComponent({
 		* phone. Images keep the lightbox; everything else previewable opens here.
 		*
 		* Text is fetched and rendered by us (highlighted code, CSV table, JSON tree,
-		* sanitized Markdown). PDFs load from the file URL itself in a frame: the server
-		* serves every attachment with `CSP: sandbox`, so the framed document runs in an
-		* opaque origin with the browser's own viewer.
+		* sanitized Markdown). PDFs load from the file URL itself in a frame, in the
+		* browser's own viewer: the server sends PDFs without the `CSP: sandbox` every
+		* other attachment gets, because Chromium refuses its viewer in a sandboxed
+		* document (files.ts handleFileServe says why that is safe).
 		*/
 		function storage() {
 			try {
@@ -26485,7 +27112,7 @@ var AttachmentDrawer_default = /* @__PURE__ */ defineComponent({
 		const width = ref(0);
 		const maxWidth = computed(() => drawerMax(viewport.value));
 		const file = drawerFile;
-		const kind = computed(() => file.value ? previewKind(file.value.filename, file.value.mime) : null);
+		const kind = computed(() => file.value ? previewKind(file.value.filename, file.value.mime, !!file.value.fromAgent) : null);
 		const tooLarge = computed(() => !!file.value && ([
 			"markdown",
 			"csv",
@@ -26647,17 +27274,21 @@ var AttachmentDrawer_default = /* @__PURE__ */ defineComponent({
 			closeAttachmentDrawer();
 		}
 		const htmlFrame = ref(null);
+		const frameNonce = ref("");
+		const frameLeft = ref(false);
 		let htmlLoads = 0;
 		function onHtmlLoad() {
-			htmlLoads++;
+			if (++htmlLoads > 1) frameLeft.value = true;
 		}
 		watch(() => file.value?.url, () => {
 			htmlLoads = 0;
-		});
+			frameLeft.value = false;
+			frameNonce.value = newComposeNonce();
+		}, { immediate: true });
 		function onFrameMessage(e) {
 			const f = file.value;
-			if (!f || kind.value !== "html" || htmlLoads > 1) return;
-			const text = composeTextFrom(e, htmlFrame.value?.contentWindow);
+			if (!f || kind.value !== "html" || frameLeft.value) return;
+			const text = composeTextFrom(e, htmlFrame.value?.contentWindow, frameNonce.value);
 			if (text !== null) prefillComposer(text, f.filename);
 		}
 		let attached = false;
@@ -26747,22 +27378,22 @@ var AttachmentDrawer_default = /* @__PURE__ */ defineComponent({
 				createElementVNode("div", { class: normalizeClass(["attachment-drawer-body", `attachment-drawer-${kind.value}`]) }, [tooLarge.value ? (openBlock(), createElementBlock("p", _hoisted_7, "Too large to preview")) : loading.value ? (openBlock(), createElementBlock("p", _hoisted_8, [..._cache[6] || (_cache[6] = [createElementVNode("span", {
 					class: "btn-spinner",
 					"aria-hidden": "true"
-				}, null, -1), createTextVNode("Loading… ", -1)])])) : failed.value ? (openBlock(), createElementBlock("p", _hoisted_9, "Couldn't load this file")) : kind.value === "html" ? (openBlock(), createElementBlock("iframe", {
+				}, null, -1), createTextVNode("Loading… ", -1)])])) : failed.value ? (openBlock(), createElementBlock("p", _hoisted_9, "Can't load")) : kind.value === "html" && frameLeft.value ? (openBlock(), createElementBlock("p", _hoisted_10, "Left preview")) : kind.value === "html" ? (openBlock(), createElementBlock("iframe", {
 					ref_key: "htmlFrame",
 					ref: htmlFrame,
 					key: unref(file).url,
 					class: "attachment-drawer-frame attachment-drawer-page",
-					src: unref(htmlFrameUrl)(unref(file).url),
+					src: unref(htmlFrameUrl)(unref(file).url, frameNonce.value),
 					sandbox: "allow-scripts",
 					referrerpolicy: "no-referrer",
 					title: unref(file).filename,
 					onLoad: onHtmlLoad
-				}, null, 40, _hoisted_10)) : kind.value === "pdf" ? (openBlock(), createElementBlock("iframe", {
-					key: 4,
+				}, null, 40, _hoisted_11)) : kind.value === "pdf" ? (openBlock(), createElementBlock("iframe", {
+					key: 5,
 					class: "attachment-drawer-frame",
 					src: unref(file).url,
 					title: unref(file).filename
-				}, null, 8, _hoisted_11)) : kind.value === "video" ? (openBlock(), createElementBlock(Fragment, { key: 5 }, [mediaFailed.value ? (openBlock(), createElementBlock("p", _hoisted_12, "Can't play this file here")) : (openBlock(), createElementBlock("video", {
+				}, null, 8, _hoisted_12)) : kind.value === "video" ? (openBlock(), createElementBlock(Fragment, { key: 6 }, [mediaFailed.value ? (openBlock(), createElementBlock("p", _hoisted_13, "Can't play")) : (openBlock(), createElementBlock("video", {
 					key: 1,
 					class: "attachment-drawer-video",
 					src: unref(file).url,
@@ -26770,20 +27401,20 @@ var AttachmentDrawer_default = /* @__PURE__ */ defineComponent({
 					playsinline: "",
 					preload: "metadata",
 					onError: _cache[1] || (_cache[1] = ($event) => mediaFailed.value = true)
-				}, null, 40, _hoisted_13))], 64)) : kind.value === "audio" ? (openBlock(), createElementBlock(Fragment, { key: 6 }, [mediaFailed.value ? (openBlock(), createElementBlock("p", _hoisted_14, "Can't play this file here")) : (openBlock(), createElementBlock("audio", {
+				}, null, 40, _hoisted_14))], 64)) : kind.value === "audio" ? (openBlock(), createElementBlock(Fragment, { key: 7 }, [mediaFailed.value ? (openBlock(), createElementBlock("p", _hoisted_15, "Can't play")) : (openBlock(), createElementBlock("audio", {
 					key: 1,
 					class: "attachment-drawer-audio",
 					src: unref(file).url,
 					controls: "",
 					preload: "metadata",
 					onError: _cache[2] || (_cache[2] = ($event) => mediaFailed.value = true)
-				}, null, 40, _hoisted_15))], 64)) : text.value !== null ? (openBlock(), createElementBlock(Fragment, { key: 7 }, [kind.value === "markdown" ? (openBlock(), createElementBlock("div", {
+				}, null, 40, _hoisted_16))], 64)) : text.value !== null ? (openBlock(), createElementBlock(Fragment, { key: 8 }, [kind.value === "markdown" ? (openBlock(), createElementBlock("div", {
 					key: 0,
 					ref_key: "markdownEl",
 					ref: markdownEl,
 					class: "attachment-drawer-md",
 					innerHTML: markdownHtml.value
-				}, null, 8, _hoisted_16)) : kind.value === "json" && json.value.ok ? (openBlock(), createElementBlock("div", _hoisted_17, [createVNode(JsonNode_default, {
+				}, null, 8, _hoisted_17)) : kind.value === "json" && json.value.ok ? (openBlock(), createElementBlock("div", _hoisted_18, [createVNode(JsonNode_default, {
 					value: json.value.value,
 					depth: 0
 				}, null, 8, ["value"])])) : kind.value === "csv" && csv.value ? (openBlock(), createElementBlock("div", {
@@ -26800,12 +27431,12 @@ var AttachmentDrawer_default = /* @__PURE__ */ defineComponent({
 					return openBlock(), createElementBlock("tr", { key: ri }, [(openBlock(true), createElementBlock(Fragment, null, renderList(r, (c, ci) => {
 						return openBlock(), createElementBlock("td", { key: ci }, toDisplayString(c), 1);
 					}), 128))]);
-				}), 128))])]), csv.value.truncated ? (openBlock(), createElementBlock("p", _hoisted_19, "First " + toDisplayString(unref(CSV_ROW_LIMIT)) + " rows", 1)) : createCommentVNode("", true)], 8, _hoisted_18)) : (openBlock(), createElementBlock("pre", {
+				}), 128))])]), csv.value.truncated ? (openBlock(), createElementBlock("p", _hoisted_20, "First " + toDisplayString(unref(CSV_ROW_LIMIT)) + " rows", 1)) : createCommentVNode("", true)], 8, _hoisted_19)) : (openBlock(), createElementBlock("pre", {
 					key: 3,
 					class: "attachment-drawer-code",
 					tabindex: "0",
 					"aria-label": unref(file).filename
-				}, [createElementVNode("code", { innerHTML: codeHtml.value }, null, 8, _hoisted_21)], 8, _hoisted_20))], 64)) : createCommentVNode("", true)], 2)
+				}, [createElementVNode("code", { innerHTML: codeHtml.value }, null, 8, _hoisted_22)], 8, _hoisted_21))], 64)) : createCommentVNode("", true)], 2)
 			], 2)) : createCommentVNode("", true);
 		};
 	}
@@ -26885,8 +27516,18 @@ document.addEventListener("click", (e) => {
 	const menu = $("#overflow-menu");
 	if (menu && !menu.hidden && !menu.contains(e.target) && e.target !== $("#overflow-btn")) closeOverflowMenu();
 });
+var closeRowMenus = () => {
+	openMenuRoomId.value = null;
+	openThreadMenuId.value = null;
+};
+document.addEventListener("click", (e) => {
+	if (!e.target?.closest?.(".room-menu, .thread-menu")) closeRowMenus();
+});
 document.addEventListener("keydown", (e) => {
-	if (e.key === "Escape") closeOverflowMenu();
+	if (e.key === "Escape") {
+		closeOverflowMenu();
+		closeRowMenus();
+	}
 });
 $("#settings-close").addEventListener("click", closeSettings);
 wireSettingsPanel1();

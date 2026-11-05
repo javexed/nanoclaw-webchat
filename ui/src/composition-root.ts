@@ -9,7 +9,7 @@ import { attachPickerCfg, pendingFiles } from './features/attach-picker-state.js
 import { viewStack } from './features/views-state.js';
 import './features/model-list-state.js';
 import { routingCurrentRouter } from './features/routing-state.js';
-import { roomSortAz, selectedRoomId } from './features/room-list-state.js';
+import { openMenuRoomId, openThreadMenuId, roomSortAz, selectedRoomId } from './features/room-list-state.js';
 import { selectedAgentId } from './features/agent-list-state.js';
 import { membersFilter, usersSortAz } from './features/members-list-state.js';
 import '/dompurify.min.js';
@@ -384,8 +384,20 @@ document.addEventListener('click', (e) => {
   if (menu && !menu.hidden && !menu.contains(e.target as Element) && (e.target as Element) !== $('#overflow-btn'))
     closeOverflowMenu();
 });
+// Sidebar room/thread kebab menus: any click outside the open menu, or Esc,
+// closes it (their own buttons stop propagation, so they never reach here).
+const closeRowMenus = () => {
+  openMenuRoomId.value = null;
+  openThreadMenuId.value = null;
+};
+document.addEventListener('click', (e) => {
+  if (!(e.target as Element)?.closest?.('.room-menu, .thread-menu')) closeRowMenus();
+});
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeOverflowMenu();
+  if (e.key === 'Escape') {
+    closeOverflowMenu();
+    closeRowMenus();
+  }
 });
 $('#settings-close')!.addEventListener('click', closeSettings);
 wireSettingsPanel1();

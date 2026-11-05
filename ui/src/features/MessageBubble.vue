@@ -34,12 +34,14 @@ const fileSize = (n: number) =>
   n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
 
 // Images have the inline preview + lightbox; other files open the drawer when it
-// can render them, and stay a plain name + download when it cannot.
-const previewable = (m: any) => !m.mime?.startsWith('image/') && previewKind(m.filename, m.mime) !== null;
+// can render them, and stay a plain name + download when it cannot. HTML renders
+// only when an agent sent it.
+const previewable = (m: any) =>
+  !m.mime?.startsWith('image/') && previewKind(m.filename, m.mime, !!props.row.isAgent) !== null;
 function openPreview(e: MouseEvent): void {
   const f = props.row.file;
   openAttachmentDrawer(
-    { url: f.url, filename: f.filename, mime: f.mime, size: f.size },
+    { url: f.url, filename: f.filename, mime: f.mime, size: f.size, fromAgent: !!props.row.isAgent },
     e.currentTarget as HTMLElement,
   );
 }

@@ -10,11 +10,16 @@ const cards = vi.hoisted(() => ({
   handler: null as
     | null
     | ((ctx: { payload: Record<string, unknown>; outcome: string; userId: string }) => Promise<void>),
+  /** Docker Hub for builds' handler (BUILD_REGISTRIES_ACTION). */
+  registries: null as
+    | null
+    | ((ctx: { payload: Record<string, unknown>; outcome: string; userId: string }) => Promise<void>),
   answer: 'appr-1' as string | null,
 }));
 vi.mock('../approvals/sessionless.js', () => ({
-  registerSessionlessApprovalHandler: (_a: string, h: typeof cards.handler) => {
-    cards.handler = h;
+  registerSessionlessApprovalHandler: (a: string, h: typeof cards.handler) => {
+    if (a === 'workloads_build_registries') cards.registries = h;
+    else cards.handler = h;
   },
   requestSessionlessApproval: async (req: (typeof cards.requests)[number]) => {
     cards.requests.push(req);
@@ -27,7 +32,7 @@ const { runMigrations } = await import('../../db/migrations/index.js');
 const { createPendingApproval } = await import('../../db/sessions.js');
 const gui = await import('./gui.js');
 const { registerPublishingRoute, __clearPublishingRoutesForTest } = await import('./gateway/publishing.js');
-const { insertWorkload, updateWorkload } = await import('./store.js');
+const { buildRegistries, insertWorkload, setBuildRegistries, updateWorkload } = await import('./store.js');
 const { findRouteByApp, insertRoute } = await import('./routes.js');
 
 let routesOn: Array<'tailnet' | 'cloudflare'> = ['tailnet', 'cloudflare'];
@@ -383,5 +388,118 @@ describe('the list', () => {
       [null, 'blog', 'off', 'needs-approval', false, false],
     ]);
     expect((await gui.appsOf('ag-2')).apps).toEqual([]);
+  });
+
+  it('each deployed row carries its expiry', async () => {
+    const w = await workload('notes');
+    await updateWorkload(w.id, { expiresAt: Date.UTC(2026, 11, 1) });
+    const v = await gui.appsOf('ag-1');
+    expect(v.apps[0].expiresAt).toBe(Date.UTC(2026, 11, 1));
+    // Not published: it is not renewed while used.
+    expect(v.apps[0].renewsWhileUsed).toBe(false);
+  });
+
+  it('a published app with an expiry renews while used', async () => {
+    const r = await published('notes', 'tailnet', 'only-me');
+    await updateWorkload(r.workloadId, { expiresAt: Date.UTC(2026, 11, 1) });
+    expect((await gui.appsOf('ag-1')).apps[0]).toMatchObject({ app: 'notes', renewsWhileUsed: true });
+  });
+
+  it('a deploy-and-publish card waiting shows its app as Needs approval', async () => {
+    await createPendingApproval({
+      approval_id: 'appr-launch',
+      session_id: null,
+      request_id: 'appr-launch',
+      action: 'cli_command',
+      payload: JSON.stringify({
+        frame: { command: 'workloads-up', args: { name: 'board', publish: 'tailnet', app: 'homeboard' } },
+        callerContext: { caller: 'agent', agentGroupId: 'ag-1' },
+      }),
+      created_at: new Date().toISOString(),
+      instance: null,
+      title: 't',
+      question: 'q',
+      options_json: '[]',
+      approver_user_id: null,
+    } as never);
+    const p = await gui.pendingFor('ag-1');
+    expect([...p.workloads]).toEqual(['board']);
+    expect([...p.apps]).toEqual(['homeboard']);
+  });
+});
+
+describe('Allow Docker Hub for builds', () => {
+  const pendingCard = (agentGroupId: string) =>
+    createPendingApproval({
+      approval_id: 'appr-reg',
+      session_id: null,
+      request_id: 'appr-reg',
+      action: gui.BUILD_REGISTRIES_ACTION,
+      payload: JSON.stringify({ agentGroupId, hosts: gui.DOCKER_HUB, requestedBy: 'webchat:admin' }),
+      created_at: new Date().toISOString(),
+      instance: null,
+      title: 't',
+      question: 'q',
+      options_json: '[]',
+      approver_user_id: null,
+    } as never);
+
+  it('is refused while confined builds are off on this host', async () => {
+    await expect(gui.setDockerHub('ag-1', 'webchat:admin', true)).rejects.toThrow(/Builds are off/);
+    expect(cards.requests).toEqual([]);
+    expect((await gui.appsOf('ag-1')).builds).toEqual({ on: false, dockerHub: false, pending: false });
+  });
+
+  it('on widens what builds reach: a card, whoever asks, and nothing changes yet', async () => {
+    vi.stubEnv('NANOCLAW_WORKLOAD_CONFINED_BUILDS', '1');
+    const r = await gui.setDockerHub('ag-1', 'webchat:owner', true);
+    expect(r).toEqual({ change: 'widen', applied: false, pending: true });
+    expect(cards.requests).toHaveLength(1);
+    expect(cards.requests[0]).toMatchObject({
+      action: gui.BUILD_REGISTRIES_ACTION,
+      payload: { agentGroupId: 'ag-1', hosts: [...gui.DOCKER_HUB], requestedBy: 'webchat:owner' },
+    });
+    expect(cards.requests[0].question).toContain('registry-1.docker.io');
+    expect(await buildRegistries('ag-1')).toEqual([]);
+  });
+
+  it('a card already waiting shows on the switch and is not asked twice', async () => {
+    vi.stubEnv('NANOCLAW_WORKLOAD_CONFINED_BUILDS', '1');
+    await pendingCard('ag-1');
+    expect((await gui.appsOf('ag-1')).builds).toEqual({ on: true, dockerHub: false, pending: true });
+    await expect(gui.setDockerHub('ag-1', 'webchat:admin', true)).rejects.toMatchObject({ status: 409 });
+    expect((await gui.appsOf('ag-2')).builds.pending).toBe(false);
+  });
+
+  it('approve adds Docker Hub to what was there; not when the asker lost the agent or the hosts changed', async () => {
+    vi.stubEnv('NANOCLAW_WORKLOAD_CONFINED_BUILDS', '1');
+    await setBuildRegistries('ag-1', ['ghcr.io']);
+    await gui.setDockerHub('ag-1', 'webchat:admin', true);
+    const payload = cards.requests[0].payload;
+    admins.delete('webchat:admin');
+    await cards.registries!({ payload, outcome: 'approve', userId: 'webchat:owner' });
+    expect(await buildRegistries('ag-1')).toEqual(['ghcr.io']);
+    admins.add('webchat:admin');
+    await expect(
+      gui.applyApprovedBuildRegistries({ ...payload, hosts: ['evil.example', ...gui.DOCKER_HUB.slice(1)] }),
+    ).rejects.toThrow(/malformed/);
+    await cards.registries!({ payload, outcome: 'reject', userId: 'webchat:owner' });
+    expect(await buildRegistries('ag-1')).toEqual(['ghcr.io']);
+    await cards.registries!({ payload, outcome: 'approve', userId: 'webchat:owner' });
+    expect(await buildRegistries('ag-1')).toEqual(['ghcr.io', ...gui.DOCKER_HUB]);
+    expect((await gui.appsOf('ag-1')).builds.dockerHub).toBe(true);
+  });
+
+  it('off narrows: applied at once, no card, even with builds off', async () => {
+    await setBuildRegistries('ag-1', [...gui.DOCKER_HUB]);
+    expect(await gui.setDockerHub('ag-1', 'webchat:admin', false)).toEqual({
+      change: 'narrow',
+      applied: true,
+      pending: false,
+    });
+    expect(await buildRegistries('ag-1')).toEqual([]);
+    expect(cards.requests).toEqual([]);
+    expect((await gui.setDockerHub('ag-1', 'webchat:admin', false)).change).toBe('none');
+    await expect(gui.setDockerHub('ag-1', 'webchat:admin', 'yes')).rejects.toThrow(/true or false/);
   });
 });

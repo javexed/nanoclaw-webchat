@@ -5,6 +5,7 @@
 // Keep the export surface narrow: the steps and helpers are the flow's own.
 import { $, esc } from '../core/dom.js';
 import { mountIsland } from '../core/island.js';
+import { latestOnly } from '../core/latest.js';
 import { applyMarketplaceNav } from './thinking.js';
 import {
   cloudflaredInstallActive,
@@ -488,8 +489,12 @@ async function wizardProbeOllama() {
 // the same endpoint+model so repeated selection never spawns duplicates (the
 // roster has no uniqueness constraint). Other probed models stay unregistered —
 // Manage → Models covers the rest.
+/** Picks and clears of the workspace default: the latest wins (core/latest.ts). */
+const wizardDefaultTurn = latestOnly();
+
 export async function wizardSelectOllamaModel(modelId?: any, control?: HTMLElement | null) {
   if (!wizardOllamaProbe || !modelId) return;
+  const turn = wizardDefaultTurn.start();
   const endpoint = String(wizardOllamaProbe.endpoint || '').replace(/\/+$/, '');
   const host = (() => {
     try {
@@ -535,6 +540,7 @@ export async function wizardSelectOllamaModel(modelId?: any, control?: HTMLEleme
       }
       id = created.id;
     }
+    if (!wizardDefaultTurn.current(turn)) return; // a later pick (or a clear) owns the default now
     const dr = await authFetch('/api/workspace-model', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -559,6 +565,7 @@ export async function wizardSelectOllamaModel(modelId?: any, control?: HTMLEleme
 // keep inheriting the local model as their fallback and never run on the engine
 // just chosen. No-op unless an Ollama default is actually set.
 async function wizardClearOllamaDefault() {
+  wizardDefaultTurn.start(); // an Ollama pick still in flight must not set a default after this
   if (wizardCred?.defaultModelKind !== 'ollama' || !wizardCred?.defaultModelId) return;
   try {
     await authFetch('/api/workspace-model', {
@@ -1541,9 +1548,9 @@ function wireWizard() {
               ? wizardCred?.copilot?.available
                 ? 'connect GitHub Copilot'
                 : 'install then connect GitHub Copilot'
-            : wizardEngine === 'codex' && !wizardCodexAvailable
-              ? 'install then connect Codex'
-              : `connect ${wizardEngine === 'codex' ? 'Codex' : 'Claude'}`;
+              : wizardEngine === 'codex' && !wizardCodexAvailable
+                ? 'install then connect Codex'
+                : `connect ${wizardEngine === 'codex' ? 'Codex' : 'Claude'}`;
       showToast(`Finish this engine first — ${how} above.`, { kind: 'info', timeout: 6000 });
       return;
     }
@@ -1764,19 +1771,20 @@ async function wizardCreateAndFinish() {
   // Arm the one-shot "first Tailscale login becomes owner" if the operator opted
   // in — so their real (tailnet) identity gets owner, not just the bearer boot id.
   // It grants owner, so only an owner may arm it.
-  if (state.isOwnerView) try {
-    await apiJson('/api/webchat/tailscale-owner', {
-      method: 'PUT',
-      headers: { 'X-Webchat-CSRF': '1' },
-      body: {
-        armed:
-          (document.querySelector('input[name="wizard-access"]:checked') as HTMLInputElement | null)?.value ===
-          'tailscale',
-      },
-    });
-  } catch {
-    /* non-fatal */
-  }
+  if (state.isOwnerView)
+    try {
+      await apiJson('/api/webchat/tailscale-owner', {
+        method: 'PUT',
+        headers: { 'X-Webchat-CSRF': '1' },
+        body: {
+          armed:
+            (document.querySelector('input[name="wizard-access"]:checked') as HTMLInputElement | null)?.value ===
+            'tailscale',
+        },
+      });
+    } catch {
+      /* non-fatal */
+    }
   const btn = $('#wizard-next');
   const done = wizardBusy(btn, 'Creating…');
   {
@@ -1969,9 +1977,11 @@ function renderCopilotLogin(p: any) {
   const device = $('#wizard-copilot-device');
   const row = $('#wizard-copilot-login-row');
   if (!device || !row) return;
-  device.hidden = !p?.running;
+  // Another admin's sign-in: no code here (the server withholds it), just who.
+  const mine = p?.mine !== false;
+  device.hidden = !p?.running || !mine;
   row.hidden = !!p?.running;
-  if (p?.running) {
+  if (p?.running && mine) {
     const url = $('#wizard-copilot-url') as HTMLAnchorElement | null;
     if (url && p.verificationUrl) {
       url.textContent = p.verificationUrl;
@@ -2030,7 +2040,8 @@ function wireCopilotLogin() {
     const r = await authFetch('/api/workspace-credential/copilot/disconnect', { method: 'POST' });
     if (!r.ok) {
       const err = await r.json().catch(() => ({}));
-      showToast('Failed to disconnect: ' + (err.error || r.statusText), { kind: 'error' });
+      showToast(err.error || 'Disconnect failed', { kind: 'error', timeout: 9000 });
+      await refreshWizardCredState();
       return;
     }
     await refreshWizardCredState();

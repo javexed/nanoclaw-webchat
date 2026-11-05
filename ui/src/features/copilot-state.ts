@@ -11,6 +11,9 @@ export interface CopilotStatusView {
 
 export interface CopilotProgressView {
   running?: boolean;
+  /** False when another admin started the flow; the code is theirs only. */
+  mine?: boolean;
+  startedBy?: string | null;
   outcome?: string | null;
   message?: string | null;
   error?: string | null;
@@ -31,6 +34,7 @@ export function copilotConnectedText(s: CopilotStatusView): string {
 /** The status line under the card: progress while it runs, the reason when it did not complete, else nothing. */
 export function copilotStatusLine(p: CopilotProgressView | null | undefined): string | null {
   if (!p) return null;
+  if (p.running && p.mine === false) return `In progress by ${p.startedBy || 'another admin'}`;
   if (p.running) return p.message ?? null;
   if (p.outcome && p.outcome !== 'complete') return p.error || 'The sign-in did not complete.';
   return null;

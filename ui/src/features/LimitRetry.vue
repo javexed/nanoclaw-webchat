@@ -53,7 +53,7 @@ async function schedule(): Promise<void> {
       target.limitRetryAt = pending.retryAt;
       target.limitRetryBy = pending.by;
     } else {
-      showToast('Could not schedule the retry: ' + (err?.message || err), { kind: 'error' });
+      showToast('Retry failed: ' + (err?.message || err), { kind: 'error' });
     }
   } finally {
     busy.value = false;
@@ -68,7 +68,7 @@ async function cancel(): Promise<void> {
     props.row.limitRetryAt = null;
     props.row.limitRetryBy = null;
   } catch (err: any) {
-    showToast('Could not cancel the retry: ' + (err?.message || err), { kind: 'error' });
+    showToast('Cancel failed: ' + (err?.message || err), { kind: 'error' });
   } finally {
     busy.value = false;
   }

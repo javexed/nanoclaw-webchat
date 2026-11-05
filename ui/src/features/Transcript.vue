@@ -16,11 +16,13 @@ import TurnThoughts from './TurnThoughts.vue';
 import LimitRetry from './LimitRetry.vue';
 import { servedModelShown } from './served-model.js';
 import { state } from '../core/state.js';
+import { approvalBusy, approvalErrors } from './approvals-state.js';
+import { resendApproval } from './approvals.js';
 
 const props = defineProps<{
   decorate: (bubble: HTMLElement) => void;
   clampA2a: (bubble: HTMLElement, container: HTMLElement) => void;
-  onApprovalRespond: (questionId: string, value: string) => void;
+  onApprovalRespond: (questionId: string, value: string, reason?: string) => void;
   onOpenLightbox: (url: string, filename: string) => void;
   onStopAgent: (name: string) => void;
   onToggleTurn: (name: string) => void;
@@ -41,13 +43,40 @@ const props = defineProps<{
       <div v-else-if="row.kind === 'divider'" class="context-divider" :class="row.cls"><span>{{ row.text }}</span></div>
 
       <div v-else-if="row.kind === 'approval'" class="msg approval-msg" :data-question-id="row.id || ''">
-        <div v-if="row.approvalState === 'resolved'" class="approval-inroom-note resolved">{{ row.note }}</div>
         <ApprovalCard
-          v-else-if="row.approvalState === 'eligible'"
+          v-if="row.approvalState === 'eligible'"
           :approval="row.payload"
           :on-respond="props.onApprovalRespond"
         />
-        <div v-else class="approval-inroom-note">{{ row.note }}</div>
+        <div
+          v-else
+          class="approval-inroom-note"
+          :class="{ resolved: row.approvalState !== 'awaiting', failed: row.approvalResult?.failed }"
+        >
+          <div>{{ row.note }}</div>
+          <div v-if="row.approvalResult" class="approval-result">{{ row.approvalResult.line }}</div>
+          <details v-if="row.approvalResult?.details" class="approval-details">
+            <summary>Details</summary>
+            <pre class="approval-payload">{{ row.approvalResult.details }}</pre>
+          </details>
+        </div>
+      </div>
+
+      <div v-else-if="row.kind === 'approval-notice' && row.notice" class="msg approval-msg" :data-message-id="row.id || ''">
+        <div class="approval-inroom-note approval-notice" :class="row.notice.kind">
+          <span>{{ row.notice.text }}</span>
+          <span v-if="row.notice.resentByName" class="approval-notice-done">Sent again by {{ row.notice.resentByName }}</span>
+          <button
+            v-else-if="row.notice.kind === 'expired'"
+            type="button"
+            class="btn btn-secondary"
+            :disabled="approvalBusy.has(`resend:${row.notice.questionId}`) || undefined"
+            @click="resendApproval(row.notice.questionId)"
+          >Send again</button>
+          <span v-if="approvalErrors[`resend:${row.notice.questionId}`]" class="approval-error">{{
+            approvalErrors[`resend:${row.notice.questionId}`]
+          }}</span>
+        </div>
       </div>
 
       <!--

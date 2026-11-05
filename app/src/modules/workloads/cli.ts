@@ -1,8 +1,9 @@
 /**
  * `ncl workloads …` — an agent's own Compose stacks. Group-scoped: inside a
  * container the agent group always comes from the caller. `up` (a first
- * deploy, a new shape, or more resources), `delete` (removes data) and
- * `restore` (replaces data) wait for an owner's card; `redeploy` within the
+ * deploy, a new shape, or more resources), `delete` (removes data),
+ * `restore` (replaces data) and `extend` (keeps it running longer) wait for
+ * an owner's card; `redeploy` within the
  * approved size and shape, and everything that only looks or restarts, runs
  * at once.
  *
@@ -11,6 +12,12 @@
  * the values it showed (Compose hash, digests, Dockerfile and build-arg
  * hashes) are pinned into the approved arguments, so the handler refuses if
  * anything changed before the owner said yes.
+ *
+ * `up --publish <route>` deploys AND publishes on one card: the card shows
+ * what runs and where people open it, and pins both (the deploy's hashes, and
+ * the route, rule, app name, address and ticket expose pins). On approve the
+ * publish is planned again before anything runs, then the stack is deployed,
+ * then published through exposeApp, exactly as `expose` would.
  */
 import { randomUUID } from 'crypto';
 
@@ -24,8 +31,10 @@ import {
   backupsOf,
   checkWorkload,
   deleteWorkload,
+  DEFAULT_DAYS,
   downWorkload,
   execWorkload,
+  extendWorkload,
   logsWorkload,
   psWorkload,
   redeployWorkload,
@@ -36,15 +45,22 @@ import {
 } from './control.js';
 import { diskUsed, gb } from './disk.js';
 import {
+  accessCardLines,
+  accessPin,
   exposeApp,
   openLine,
+  pickRoute,
+  planAccess,
   planExpose,
+  publishTarget,
   routesOf,
   routeView,
   unexposeApp,
-  WHO_WORDS,
+  whoText,
   type ExposeInput,
 } from './publish.js';
+import { dayText } from './notify.js';
+import { isRouteKind } from './gateway/publishing.js';
 import { describeShape, decodeApproved } from './shape.js';
 import {
   buildRegistries,
@@ -108,7 +124,44 @@ function exposeInput(args: Record<string, unknown>): ExposeInput {
     route: args.route === undefined ? undefined : String(args.route),
     who: args.who === undefined ? undefined : String(args.who),
     emails: args.emails === undefined ? undefined : String(args.emails),
+    hostname: args.hostname === undefined ? undefined : String(args.hostname),
   };
+}
+
+/** The publish half of `up --publish`, from its args; null without --publish. */
+function upPublishInput(args: Record<string, unknown>):
+  | (Omit<ExposeInput, 'service' | 'port'> & {
+      service?: string;
+      port?: number;
+    })
+  | null {
+  if (args.publish === undefined) return null;
+  const route = str(args.publish, 'publish');
+  return {
+    name: str(args.name, 'name'),
+    route,
+    service: args.service === undefined ? undefined : str(args.service, 'service'),
+    port: args.port === undefined ? undefined : Number(args.port),
+    app: args.app === undefined ? undefined : String(args.app),
+    who: args.who === undefined ? undefined : String(args.who),
+    emails: args.emails === undefined ? undefined : String(args.emails),
+    hostname: args.hostname === undefined ? undefined : String(args.hostname),
+  };
+}
+
+/** Publish flags without --publish are a mistake, not a deploy-only: say so before any card. */
+const PUBLISH_ONLY = ['who', 'emails', 'service', 'port', 'app'] as const;
+
+/** When --publish names a route that is off: the refusal points to the owner's switch and to deploying only. */
+const deployOnly = (err: unknown): Error =>
+  new Error(
+    `${(err as Error).message}. Or deploy without --publish now, and publish later with \`ncl workloads expose\`.`,
+  );
+
+/** A published app as a deploy that published it reports it: where, for whom, and whether it is live. */
+async function publishedView(r: Awaited<ReturnType<typeof exposeApp>>): Promise<Record<string, unknown>> {
+  const v = await routeView(r);
+  return { ...v, open_for: whoText({ who: r.who, emails: r.emails }) };
 }
 
 const HOST_RE = /^(\*\.)?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+(:\d{1,5})?$/;
@@ -198,7 +251,7 @@ registerResource({
     up: {
       access: 'approval',
       description:
-        'Deploy a stack for the first time, or with new images, Dockerfiles or more memory/CPU than approved (needs an owner approval). Run `ncl workloads check` first.',
+        'Deploy a stack for the first time, or with new images, Dockerfiles or more memory/CPU than approved (needs an owner approval). Run `ncl workloads check` first. With --publish, the same card also publishes it for people (see `expose`): prefer this for an app people will open.',
       args: [
         GROUP,
         NAME,
@@ -209,37 +262,127 @@ registerResource({
           description: 'What it is for, in one line — shown on the approval card.',
           required: true,
         },
+        {
+          name: 'publish',
+          type: 'string',
+          description: 'Also publish it for people, on this route: tailnet or cloudflare (one card for both).',
+        },
+        {
+          name: 'who',
+          type: 'string',
+          description:
+            'With --publish: who can open it, only-me (default), agent-members, signed-in, or specific (cloudflare only, with --emails).',
+        },
+        {
+          name: 'emails',
+          type: 'string',
+          description: 'With --who specific: the email addresses of the people who may open it, comma-separated.',
+        },
+        {
+          name: 'service',
+          type: 'string',
+          description: 'With --publish: the service people open (default: the one that declares an `expose:` port).',
+        },
+        {
+          name: 'port',
+          type: 'number',
+          description: 'With --publish: the port it listens on (default: its first `expose:` port).',
+        },
+        {
+          name: 'app',
+          type: 'string',
+          description: 'With --publish: the app’s name in its address (default: the workload’s name).',
+        },
         { name: 'approved', type: 'string', description: 'Set by NanoClaw on the approval card; leave out.' },
+        { name: 'hostname', type: 'string', description: 'Set by NanoClaw on the approval card; leave out.' },
+        { name: 'ticket', type: 'string', description: 'Set by NanoClaw on the approval card; leave out.' },
       ],
       precheck: async (args, ctx) => {
         const name = str(args.name, 'name');
         str(args.reason, 'reason');
-        const c = await checkWorkload(groupOf(args, ctx), name, str(args.file, 'file'));
+        const pub = upPublishInput(args);
+        if (!pub) {
+          const stray = PUBLISH_ONLY.filter((k) => args[k] !== undefined);
+          if (stray.length)
+            throw new Error(`--${stray.join(', --')} go${stray.length === 1 ? 'es' : ''} with --publish`);
+        }
+        const g = groupOf(args, ctx);
+        if (pub && !isRouteKind(pub.route)) throw new Error('--publish must be tailnet or cloudflare');
+        // The route first: with it off there is nothing to card, and the agent hears how to deploy only.
+        const route = pub ? await pickRoute(pub.route).catch((err: unknown) => Promise.reject(deployOnly(err))) : null;
+        const c = await checkWorkload(g, name, str(args.file, 'file'));
         const size = (mb: number, cpus: number): string => `${gbText(mb)} memory, ${cpus} CPU`;
         const now = size(c.stack.total.memoryMb, c.stack.total.cpus);
         const was = c.existing ? size(c.existing.approvedMemoryMb, c.existing.approvedCpus) : null;
+        const runs = [
+          'Runs:',
+          ...describeShape(c.shape, decodeApproved(c.existing?.approvedShape ?? null)),
+          `Size: ${was && was !== now ? `${was} → ${now}` : now}`,
+        ];
+        const verb = c.existing ? 'update' : 'deploy';
+        if (!pub || !route)
+          return {
+            title: `${c.existing ? 'Update' : 'Deploy'} workload ${name}`,
+            summary: `{agent} wants to ${verb} the workload ${quoteForCard(name)}.\nWhy: ${cardReason(args.reason)}`,
+            detail: runs.join('\n'),
+            pin: { approved: approvalPin(c) },
+          };
+        const target = publishTarget(c.stack.compose.services, pub.service, pub.port);
+        const p = await planAccess(route, name, c.existing?.id ?? null, pub);
+        const access = accessPin(p, randomUUID());
+        // up names the route --publish; the rest is what expose pins.
+        delete access.route;
         return {
-          title: `${c.existing ? 'Update' : 'Deploy'} workload ${name}`,
-          summary: `{agent} wants to ${c.existing ? 'update' : 'deploy'} the workload ${quoteForCard(name)}.\nWhy: ${cardReason(args.reason)}`,
-          detail: [
-            'Runs:',
-            ...describeShape(c.shape, decodeApproved(c.existing?.approvedShape ?? null)),
-            `Size: ${was && was !== now ? `${was} → ${now}` : now}`,
-          ].join('\n'),
-          pin: { approved: approvalPin(c) },
+          title: `${c.existing ? 'Update' : 'Deploy'} and publish ${p.app}`,
+          summary: `{agent} wants to ${verb} the workload ${quoteForCard(name)} and publish it on ${p.route.label} for ${whoText(p)}.\nWhy: ${cardReason(args.reason)}`,
+          detail: [...runs, ...accessCardLines(p, `service ${quoteForCard(target.service)}, port ${target.port}`)].join(
+            '\n',
+          ),
+          pin: {
+            approved: approvalPin(c),
+            publish: p.route.kind,
+            service: target.service,
+            port: target.port,
+            ...access,
+          },
         };
       },
-      handler: async (args, ctx) =>
-        view(
-          await upWorkload(
-            groupOf(args, ctx),
-            str(args.name, 'name'),
-            str(args.file, 'file'),
-            ctx.caller === 'agent' ? `agent:${ctx.agentGroupId}` : 'host',
-            // An agent's up only runs from a card, which always pins.
-            ctx.caller === 'agent' ? String(args.approved ?? '') : (args.approved as string | undefined),
-          ),
-        ),
+      handler: async (args, ctx) => {
+        const g = groupOf(args, ctx);
+        const name = str(args.name, 'name');
+        const agent = ctx.caller === 'agent';
+        const pub = upPublishInput(args);
+        // An agent's publish only runs from a card, which pins all of it.
+        if (pub && agent && (!/^[0-9a-f-]{36}$/.test(String(args.ticket ?? '')) || !pub.hostname || !pub.service))
+          throw new Error('up --publish runs from an approval card');
+        if (pub) {
+          // Planned again BEFORE the deploy: a route switched off, a name taken or a new address since the card
+          // refuses the whole of it, and nothing runs.
+          const existing = await findWorkload(g, name);
+          await planAccess(await pickRoute(pub.route), name, existing?.id ?? null, pub);
+        }
+        const w = await upWorkload(
+          g,
+          name,
+          str(args.file, 'file'),
+          agent ? `agent:${ctx.agentGroupId}` : 'host',
+          // An agent's up only runs from a card, which always pins.
+          agent ? String(args.approved ?? '') : (args.approved as string | undefined),
+        );
+        if (!pub || w.state !== 'running') return view(w);
+        // The stack is the one the card pinned (upWorkload refused any other), so is its service.
+        const input: ExposeInput = { ...pub, ...publishTarget(w.stack.compose.services, pub.service, pub.port) };
+        try {
+          const r = await exposeApp(g, input, {
+            userId: null,
+            ticket: agent ? String(args.ticket) : null,
+            createdBy: agent ? `agent:${ctx.agentGroupId}` : 'host',
+          });
+          return { ...view(w), published: await publishedView(r) };
+        } catch (err) {
+          return { ...view(w), published: { error: String((err as Error).message ?? err) } };
+        }
+      },
     },
     redeploy: {
       access: 'open',
@@ -319,6 +462,32 @@ registerResource({
       },
       handler: async (args, ctx) => view(await deleteWorkload(groupOf(args, ctx), str(args.name, 'name'))),
     },
+    extend: {
+      access: 'approval',
+      description: `Keep a workload running for ${DEFAULT_DAYS} days from today, past its expiry (needs an owner approval; an admin can also extend it in Agent → Apps).`,
+      args: [GROUP, NAME],
+      precheck: async (args, ctx) => {
+        const w = await findWorkload(groupOf(args, ctx), str(args.name, 'name'));
+        if (!w) throw new Error(`you have no workload named "${String(args.name)}"`);
+        if (w.expiresAt === null) throw new Error(`${w.name} does not expire`);
+        const to = Math.max(w.expiresAt, Date.now() + DEFAULT_DAYS * 86_400_000);
+        // Less than a day to gain is not worth a card.
+        if (to - w.expiresAt < 86_400_000) throw new Error(`${w.name} already runs until ${dayText(w.expiresAt)}`);
+        return {
+          title: `Extend workload ${w.name}`,
+          summary: `{agent} wants to keep the workload ${quoteForCard(w.name)} running for ${DEFAULT_DAYS} more days.`,
+          detail: `Expires: ${dayText(w.expiresAt)} → ${dayText(to)}. Nothing else changes.`,
+        };
+      },
+      handler: async (args, ctx) =>
+        view(
+          await extendWorkload(
+            groupOf(args, ctx),
+            str(args.name, 'name'),
+            ctx.caller === 'agent' ? `agent:${ctx.agentGroupId}` : 'host',
+          ),
+        ),
+    },
     expose: {
       access: 'approval',
       description:
@@ -347,38 +516,21 @@ registerResource({
           description: 'What people will use it for, in one line — shown on the approval card.',
           required: true,
         },
+        { name: 'hostname', type: 'string', description: 'Set by NanoClaw on the approval card; leave out.' },
         { name: 'ticket', type: 'string', description: 'Set by NanoClaw on the approval card; leave out.' },
       ],
       precheck: async (args, ctx) => {
         str(args.reason, 'reason');
         const p = await planExpose(groupOf(args, ctx), exposeInput(args));
-        const where = p.route.label;
-        const whom =
-          p.who === 'specific'
-            ? `${p.emails.length} named ${p.emails.length === 1 ? 'person' : 'people'}`
-            : WHO_WORDS[p.who];
-        const was = p.existing
-          ? p.existing.who === 'specific'
-            ? `${p.existing.emails.length} named`
-            : WHO_WORDS[p.existing.who]
-          : '';
         return {
           title: `Publish ${p.app}`,
-          summary: `{agent} wants to publish ${quoteForCard(p.app)} on ${where} for ${whom}.\nWhy: ${cardReason(args.reason)}`,
-          detail: [
-            `Address: https://${p.hostname}/`,
-            `Serves: ${quoteForCard(p.workload.name)} service ${quoteForCard(String(args.service))}, port ${p.target.split(':')[1]}`,
-            `Who can open: ${whom}${p.existing ? ` (was: ${was}${p.existing.kind !== p.route.kind ? `, on ${p.existing.kind}` : ''})` : ''}`,
-            ...(p.who === 'specific' ? [`People: ${p.emails.map((e) => quoteForCard(e)).join(', ')}`] : []),
-          ].join('\n'),
-          // The route and rule the card shows, and the ticket that makes the approver its "only me".
-          pin: {
-            route: p.route.kind,
-            who: p.who,
-            app: p.app,
-            ...(p.who === 'specific' ? { emails: p.emails.join(',') } : {}),
-            ticket: randomUUID(),
-          },
+          summary: `{agent} wants to publish ${quoteForCard(p.app)} on ${p.route.label} for ${whoText(p)}.\nWhy: ${cardReason(args.reason)}`,
+          detail: accessCardLines(
+            p,
+            `${quoteForCard(p.workload.name)} service ${quoteForCard(String(args.service))}, port ${p.target.split(':')[1]}`,
+          ).join('\n'),
+          // The route, rule and address the card shows, and the ticket that makes the approver its "only me".
+          pin: accessPin(p, randomUUID()),
         };
       },
       handler: async (args, ctx) => {
@@ -477,7 +629,7 @@ registerResource({
           name: 'hosts',
           type: 'json',
           description:
-            'Host patterns as a JSON array, e.g. ["registry-1.docker.io","auth.docker.io","production.cloudflare.docker.com"].',
+            'Host patterns as a JSON array, e.g. ["registry-1.docker.io","auth.docker.io","production.cloudflare.docker.com","production.cloudfront.docker.com"].',
           required: true,
         },
       ],

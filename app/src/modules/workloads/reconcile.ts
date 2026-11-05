@@ -7,7 +7,11 @@
  *   - agents stay joined to their own networks (a new agent container starts
  *     without them; watch.ts joins most of them at start already);
  *   - every two minutes: a running stack whose containers have gone is
- *     recorded as failed, and expired stacks are stopped and their agent told;
+ *     recorded as failed, expired stacks are stopped and their agent told,
+ *     and an agent is reminded once, a few days before, that a stack expires
+ *     (so it can tell its room: an admin extends it in Agent → Apps); a
+ *     stack whose published app people opened in the last week is renewed
+ *     instead (opened.ts), the same as an Extend;
  *   - every ten minutes disk use is measured against each agent's quota
  *     (disk.ts);
  *   - once a night each stack's volumes are backed up (backup.ts), and the
@@ -17,10 +21,11 @@ import fs from 'fs';
 
 import { log } from '../../log.js';
 import { backupRoot, backupWorkload, listBackups, removeBackups, stampTime } from './backup.js';
-import { parsePs, serviceImages, stopWorkload } from './control.js';
+import { extendWorkload, parsePs, serviceImages, stopWorkload } from './control.js';
 import { diskLevel, gb, measureDisk, recordUsage, type DiskLevel } from './disk.js';
 import { compose, joinAgentContainers } from './docker.js';
-import { notifyWorkloadAgent } from './notify.js';
+import { dayText, notifyWorkloadAgent } from './notify.js';
+import { lastOpened, USED_WITHIN_MS } from './opened.js';
 import { preflightDue, runPreflight, type PreflightResult } from './preflight.js';
 import { allNetworks, listWorkloads, quotaFor, updateWorkload, type Workload } from './store.js';
 
@@ -28,6 +33,8 @@ const EVERY_MS = 2 * 60_000;
 const DISK_EVERY_MS = 10 * 60_000;
 const BACKUP_AGE_MS = 20 * 3_600_000;
 const KEEP_DELETED_MS = 7 * 86_400_000;
+/** How long before its expiry an agent hears that a stack is about to stop. */
+export const EXPIRY_NOTICE_MS = 3 * 86_400_000;
 let last = 0;
 let lastDisk = 0;
 let backingUp = false;
@@ -142,16 +149,25 @@ export async function reconcileWorkloads(now = Date.now(), deps: ReconcileDeps =
   }
   if (now - last < EVERY_MS) return;
   last = now;
-  for (const w of await listWorkloads()) {
+  for (let w of await listWorkloads()) {
     if (w.state !== 'running') continue;
     try {
+      w = await renewIfUsed(w, now);
       if (w.expiresAt !== null && w.expiresAt <= now) {
         await deps.stop(w.agentGroupId, w.name, 'expired');
         await deps.notify(
           w.agentGroupId,
-          `[System] Your workload "${w.name}" passed its expiry date and was stopped. Ask an owner to extend it, or remove it with \`ncl workloads delete --name ${w.name}\`.`,
+          `[System] Your workload "${w.name}" passed its expiry date and was stopped. Tell the people here: an admin of this agent can extend it in Agent → Apps and start it again. Or ask with \`ncl workloads extend --name ${w.name}\` (an approval card), or remove it with \`ncl workloads delete --name ${w.name}\`.`,
         );
         continue;
+      }
+      if (w.expiresAt !== null && w.expiresAt - now <= EXPIRY_NOTICE_MS && w.expiryNoticeFor !== w.expiresAt) {
+        // Once per expiry: recorded first, so a failed notice is not repeated every two minutes.
+        await updateWorkload(w.id, { expiryNoticeFor: w.expiresAt });
+        await deps.notify(
+          w.agentGroupId,
+          `[System] Your workload "${w.name}" expires on ${dayText(w.expiresAt)} and stops then. Tell the people here: an admin of this agent can extend it in Agent → Apps. You can also ask with \`ncl workloads extend --name ${w.name}\` (an approval card).`,
+        );
       }
       if (!parsePs(await deps.ps(w)).length)
         await updateWorkload(w.id, { state: 'failed', lastError: 'its containers are gone' });
@@ -159,6 +175,18 @@ export async function reconcileWorkloads(now = Date.now(), deps: ReconcileDeps =
       log.warn('Workload reconcile failed', { workloadId: w.id, err: String(err).slice(0, 200) });
     }
   }
+}
+
+/**
+ * Near its expiry (when the reminder would go out), a workload whose
+ * published app was opened in the last week is kept for DEFAULT_DAYS more,
+ * as an Extend would. Unpublished or unused ones are left to the reminder.
+ */
+export async function renewIfUsed(w: Workload, now = Date.now()): Promise<Workload> {
+  if (w.expiresAt === null || w.expiresAt - now > EXPIRY_NOTICE_MS) return w;
+  const opened = await lastOpened(w.id);
+  if (opened === null || now - opened > USED_WITHIN_MS) return w;
+  return extendWorkload(w.agentGroupId, w.name, 'system:renew-while-used', now);
 }
 
 export function __resetWorkloadReconcileForTest(): void {
