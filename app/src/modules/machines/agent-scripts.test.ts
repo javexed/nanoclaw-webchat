@@ -9,7 +9,9 @@ import { describe, expect, it } from 'vitest';
 import {
   installCommand,
   installScript,
+  installScriptHash,
   reportScript,
+  sshInstallCommand,
   WORKER_HOST_RULES,
   workerHostRulesCommand,
   workerInstallScript,
@@ -46,17 +48,120 @@ describe('the machine scripts', () => {
     expect(shOk(c).ok).toBe(true);
   });
 
-  it('quotes the token, so nothing in it runs', () => {
+  it('quotes the token, so nothing in it runs, and keeps it out of every argv', () => {
     const c = installCommand('h', 1, 'p', "a'; rm -rf /; '");
-    expect(c).toContain(`NC_TOKEN='a'\\''; rm -rf /; '\\'''`);
+    expect(c).toContain(String.raw`printf '%s' 'a'\''; rm -rf /; '\''' > "$D/token"`);
+    expect(c).toContain('sudo NC_TOKEN_FILE="$D/token" sh "$D/install.sh"');
+    expect(c).not.toMatch(/NC_TOKEN=/);
   });
 
-  it('the installer checks reachability first, installs Docker if missing, and keeps the token out of the script', () => {
+  it('downloads into a private folder and runs the installer only if it is the one NanoClaw serves', () => {
+    const c = installCommand('10.0.0.4', 7443, 'PIN', 'tok');
+    expect(c).toMatch(/^umask 077 && D=\$\(mktemp -d\)/);
+    expect(c).not.toContain('/tmp/nanoclaw-machine.sh');
+    expect(c).toContain(
+      `echo ${installScriptHash('10.0.0.4', 7443, 'PIN')}'  '"$D/install.sh" | sha256sum -c --status`,
+    );
+    expect(c.indexOf('sha256sum')).toBeLessThan(c.indexOf('sudo'));
+    expect(c).toContain('rm -rf "$D"');
+    const ssh = sshInstallCommand('10.0.0.4', 7443, 'PIN', 'password');
+    expect(ssh).toMatch(/^IFS= read -r T; umask 077 && D=\$\(mktemp -d\)/);
+    expect(ssh).toContain('sha256sum -c --status');
+    expect(shOk(ssh).ok).toBe(true);
+  });
+
+  it('the command really runs only an intact installer, with the token from the private file', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cmd-'));
+    try {
+      const served = installScript('10.0.0.4', 7443, 'PIN');
+      // Stand-ins: curl writes the served (or a tampered) installer; sudo runs its command as is.
+      const run = (body: string) => {
+        fs.writeFileSync(path.join(dir, 'served'), body);
+        const c = installCommand('10.0.0.4', 7443, 'PIN', 'tok-123').replace(
+          'sudo NC_TOKEN_FILE="$D/token" sh "$D/install.sh"',
+          `{ cp "$D/token" ${dir}/seen-token && cp "$D/install.sh" ${dir}/ran; }`,
+        );
+        return spawnSync(
+          'sh',
+          [
+            '-c',
+            `curl() { while [ "$1" != -o ]; do shift; done; cp ${dir}/served "$2"; }\nmktemp() { m=${dir}/d.$$; mkdir -m 700 "$m"; echo "$m"; }\n${c}`,
+          ],
+          {
+            encoding: 'utf8',
+          },
+        );
+      };
+      const bad = run(`${served}\nrm -rf /\n`);
+      expect(bad.status).not.toBe(0);
+      expect(bad.stdout).toContain('did not arrive intact');
+      expect(fs.existsSync(path.join(dir, 'ran'))).toBe(false);
+      const ok = run(served);
+      expect(ok.status).toBe(0);
+      expect(fs.readFileSync(path.join(dir, 'ran'), 'utf8')).toBe(served);
+      expect(fs.readFileSync(path.join(dir, 'seen-token'), 'utf8')).toBe('tok-123');
+      // The private folder is gone afterwards.
+      expect(fs.readdirSync(dir).filter((n) => n.startsWith('d.'))).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('the installer reads the token from its file, sends it on stdin, locks, and installs nothing from elsewhere', () => {
     const s = installScript('10.0.0.4', 7443, 'PIN');
-    expect(s.indexOf('/healthz')).toBeLessThan(s.indexOf('command -v docker'));
-    expect(s).toContain('Docker not found: installing it with get.docker.com.');
-    expect(s).toContain('TOKEN="${NC_TOKEN:-}"');
+    expect(s).toContain('TOKEN=$(cat "$NC_TOKEN_FILE"); rm -f "$NC_TOKEN_FILE"');
+    expect(s).not.toContain('NC_TOKEN:-');
+    const enroll = s.slice(s.indexOf('REPLY=$('), s.indexOf('/enroll'));
+    expect(enroll).toContain('--data-binary @-');
+    expect(enroll).toMatch(/"\$DISK" \\\n {2}\| curl/);
+    expect(s).not.toContain('get.docker.com');
+    expect(s).not.toMatch(/\/tmp\//);
+    expect(s).toContain('umask 077');
+    expect(s.indexOf('umask 077')).toBeLessThan(s.indexOf('mkdir -p "$DIR"'));
+    expect(s).toContain('mkdir "$LOCK"');
+    expect(s.indexOf('mkdir "$LOCK"')).toBeLessThan(s.indexOf('/enroll'));
+    expect(s).toContain('put "$DIR/cert.pem" 600');
+    expect(s).toContain('put /etc/systemd/system/nanoclaw-machine.timer 644');
     expect(s).toContain('source $(hostname -I');
+    const w = workerInstallScript('10.0.0.4', 7443, 'PIN');
+    expect(w).toContain('umask 077');
+    expect(w).toContain('mkdir "$LOCK"');
+    expect(w).toContain('docker compose version');
+  });
+
+  it('put writes a file whole, with its mode set first', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-put-'));
+    try {
+      const s = installScript('h', 1, 'p');
+      const put = s.slice(s.indexOf('put() {'), s.indexOf('\n', s.indexOf('put() {')));
+      const f = path.join(dir, 'unit');
+      const r = spawnSync('sh', ['-c', `umask 022\n${put}\nprintf 'a\\nb\\n' | put ${f} 640`], { encoding: 'utf8' });
+      expect(r.status).toBe(0);
+      expect(fs.readFileSync(f, 'utf8')).toBe('a\nb\n');
+      expect(fs.statSync(f).mode & 0o777).toBe(0o640);
+      expect(fs.readdirSync(dir)).toEqual(['unit']);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('two installs at once: the second one stops', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-lock-'));
+    try {
+      const s = installScript('h', 1, 'p');
+      const lock = s.slice(s.indexOf('LOCK='), s.indexOf('URL="https'));
+      const script = lock.replace('/run/nanoclaw-machine-install.lock', `${dir}/lock`);
+      fs.mkdirSync(path.join(dir, 'lock'));
+      const r = spawnSync('sh', ['-c', `set -eu\n${script}echo got-it`], { encoding: 'utf8' });
+      expect(r.status).not.toBe(0);
+      expect(r.stdout).toContain('Another NanoClaw install is running');
+      fs.rmdirSync(path.join(dir, 'lock'));
+      const r2 = spawnSync('sh', ['-c', `set -eu\n${script}echo got-it`], { encoding: 'utf8' });
+      expect(r2.stdout).toContain('got-it');
+      expect(fs.existsSync(path.join(dir, 'lock'))).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("reports NanoClaw's own use from its slices, so other software can be told apart", () => {

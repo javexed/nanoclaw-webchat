@@ -246,7 +246,8 @@ export async function joinHost(
       void mint().then(
         (m) => {
           if (settled) return;
-          const cmd = sshInstallCommand(m.host, m.port, m.pin, m.token, password ? 'password' : 'none');
+          const cmd = sshInstallCommand(m.host, m.port, m.pin, password ? 'password' : 'none');
+          secrets.push(m.token);
           c.exec(cmd, (err, stream) => {
             if (err || !stream) return settle(false, 'Could not run the installer');
             installTimer = setTimeout(() => settle(false, 'Timed out'), deps.installTimeoutMs ?? INSTALL_TIMEOUT_MS);
@@ -263,6 +264,8 @@ export async function joinHost(
               else
                 settle(false, sudoNeedsPassword ? 'sudo needs a password' : `Installer failed (exit ${code ?? '?'})`);
             });
+            // The token first: the command reads it before anything else runs (never argv).
+            stream.write(`${m.token}\n`);
             // sudo reads this line only if it asks; the installer's stdin is /dev/null.
             if (password) stream.write(`${password}\n`);
             stream.end();

@@ -163,9 +163,11 @@ describe('step 2: join', () => {
     expect(r.ok).toBe(true);
     expect(f.runs[0].cmd).toContain("sudo -S -p ''");
     expect(f.runs[0].cmd).toContain('exec </dev/null');
-    expect(f.runs[0].cmd).toContain('TOKEN-1');
+    // The token is the first line of stdin, read by the shell builtin: never in any argv.
+    expect(f.runs[0].cmd).not.toContain('TOKEN-1');
+    expect(f.runs[0].cmd).toMatch(/^IFS= read -r T;/);
     expect(f.runs[0].cmd).not.toContain('s3cret-pw');
-    expect(f.runs[0].stdin).toEqual(['s3cret-pw\n']);
+    expect(f.runs[0].stdin).toEqual(['TOKEN-1\n', 's3cret-pw\n']);
     expect(f.runs[0].ended).toBe(true);
     expect(events.at(-1)).toEqual({ t: 'done', ok: true });
     expect(JSON.stringify(events)).not.toContain('s3cret-pw');
@@ -258,7 +260,7 @@ describe('step 2: join', () => {
       { client: f.factory },
     );
     expect(f.runs[0].cmd).toContain('sudo -n sh -c');
-    expect(f.runs[0].stdin).toEqual([]);
+    expect(f.runs[0].stdin).toEqual(['TOKEN-1\n']);
     expect(f.configs[0]).toMatchObject({ privateKey: 'KEY-MATERIAL', passphrase: 'phrase-1' });
     expect(r).toMatchObject({ ok: false, error: 'sudo needs a password' });
   });
