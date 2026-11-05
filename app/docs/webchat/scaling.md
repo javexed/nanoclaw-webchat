@@ -21,6 +21,42 @@ NANOCLAW_MACHINE_ADDRESS=10.0.0.4   # what machines use to reach it
 Admin → Scaling → Machines then offers **Add machine** (a one-line install
 command, valid an hour, once) and **Join over SSH**.
 
+## Joining
+
+The install command downloads the installer into a fresh private folder
+(`mktemp -d`), checks it against the sha256 of the installer central serves,
+and runs it with sudo; the folder is removed afterwards. The join token is
+written to a file in that folder and sent to central on curl's stdin, so it
+never appears in a process list. Join over SSH sends the token as the first
+line of the session's stdin. The installer runs one at a time (a lock in
+`/run`), writes every file whole with its mode set first, and installs nothing
+it did not get from central: a worker needs Docker with the Compose plugin
+already installed, and says so when it is missing.
+
+## What a worker checks itself
+
+Central checks every stack before it is sent, but a worker does not rely on
+that. It refuses, whatever central sends:
+
+- Compose files that are not a checked stack plus NanoClaw's override: no
+  privileged mode, no host paths or bind mounts (only the stack's named
+  volumes and tmpfs), no host network or PID namespace, no devices, no
+  capability beyond the short list central allows, no reserved
+  (`nanoclaw.*`, `com.docker.*`) labels, no builds, and only images central
+  sent for that stack; the override must drop every capability, set
+  `no-new-privileges`, use the workloads slice and give each service an
+  address on its internal network (never the gateway). Central sends both
+  files as JSON, so the worker parses them with Node's built-ins;
+- `compose up` without `--pull never`;
+- `network create` in any shape but an internal workload network;
+- an image archive that would load under any name but the one central named,
+  and names that are not NanoClaw's (`nc-…:pulled`, `nc-…:built`, the
+  helper), so a load can never re-tag another program's image;
+- a stream to any address but a workload service's own.
+
+Health reports are clamped to what the machine said when it joined: a report
+can never make a worker look bigger than it was.
+
 ## Host rules on a worker
 
 Workload networks are Docker `--internal` networks, and Docker does not filter
