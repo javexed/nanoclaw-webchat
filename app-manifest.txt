@@ -164,6 +164,8 @@ src/modules/task-health
 src/db/migrations/module-task-health.ts
 container/agent-runner/src/task-run-marks.ts
 container/agent-runner/src/task-run-marks.test.ts
+container/agent-runner/src/instruction-guard.ts
+container/agent-runner/src/instruction-guard.test.ts
 src/reconcile-session.task-policy.test.ts
 container/agent-runner/src/served-model.ts
 container/agent-runner/src/served-model.test.ts
@@ -177,3 +179,4 @@ src/modules/approvals/words.ts
 src/modules/approvals/words.test.ts
 src/modules/approvals/resend.ts
 src/modules/approvals/resend.test.ts
+container/agent-runner/src/learning-loop.test.ts

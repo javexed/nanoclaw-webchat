@@ -30,6 +30,13 @@ describe('copilotStatusLine', () => {
     expect(copilotStatusLine({ running: true })).toBeNull();
   });
 
+  it("names who holds another admin's sign-in instead of its progress", () => {
+    expect(copilotStatusLine({ running: true, mine: false, startedBy: 'Ann', message: 'x' })).toBe(
+      'In progress by Ann',
+    );
+    expect(copilotStatusLine({ running: true, mine: false })).toBe('In progress by another admin');
+  });
+
   it('says why a finished sign-in did not complete, and nothing after success', () => {
     expect(copilotStatusLine({ running: false, outcome: 'expired', error: 'The device code expired.' })).toBe(
       'The device code expired.',

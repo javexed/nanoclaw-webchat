@@ -4,7 +4,7 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { Writable } from 'stream';
+import { Readable, Writable } from 'stream';
 import type { ServerResponse } from 'http';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -166,6 +166,32 @@ describe('handleFileServe — byte ranges', () => {
       expect(out.headers['X-Frame-Options']).toBe('SAMEORIGIN');
       expect(out.headers['X-Content-Type-Options']).toBe('nosniff');
       expect(out.headers['Content-Type']).toBe('video/mp4');
+    }
+  });
+});
+
+describe('handleFileServe — failures stay in the response', () => {
+  it('answers a directory with 404, never a stream', async () => {
+    fs.mkdirSync(path.join(uploadsDir(ROOM), 'a-dir.mp4'), { recursive: true });
+    const { res, out } = capture();
+    handleFileServe(res, ROOM, 'a-dir.mp4');
+    await out.done;
+    expect(out.status).toBe(404);
+  });
+
+  it('destroys the response when the read fails, instead of throwing', async () => {
+    for (const range of [undefined, 'bytes=0-1']) {
+      const spy = vi.spyOn(fs, 'createReadStream').mockImplementation(() => {
+        const s = new Readable({ read() {} });
+        setImmediate(() => s.destroy(new Error('EIO')));
+        return s as unknown as fs.ReadStream;
+      });
+      const { res } = capture();
+      const destroyed = new Promise<void>((r) => res.on('close', () => r()));
+      handleFileServe(res, ROOM, FILE, range);
+      await destroyed;
+      expect(res.destroyed).toBe(true);
+      spy.mockRestore();
     }
   });
 });

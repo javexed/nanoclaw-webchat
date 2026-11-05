@@ -100,8 +100,12 @@ implementation notes that matter here:
   in native players. Text previews stop at 2 MB (download instead). Files are
   served with `CSP: sandbox` (an opaque origin, even when framed) and
   `frame-ancestors 'self'`, and answer single `Range` requests with `206` so
-  media can seek — iOS Safari will not play an mp4 without that.
-  **HTML attachments** render interactively in the drawer, in an iframe with
+  media can seek — iOS Safari will not play an mp4 without that. PDFs alone
+  skip the `sandbox` (Chromium refuses its PDF viewer in a sandboxed
+  document); their type comes from the `.pdf` extension and `nosniff` holds
+  it, so the bytes go to the browser's PDF viewer or nowhere.
+  **HTML attachments** from an agent (never a member's: a member's `.html` is a
+  download, and the server refuses to frame it) render interactively in the drawer, in an iframe with
   `sandbox="allow-scripts"` only (no `allow-same-origin`, no popups), loaded
   from `?view=frame` — a response with its own CSP (`sandbox allow-scripts`,
   inline script/style only, `connect-src 'none'`, nothing from the network,
@@ -110,9 +114,12 @@ implementation notes that matter here:
   frame is not used because it would inherit the app's CSP and its
   `script-src 'self'` would block the page's inline scripts. Opened as a file,
   an `.html` attachment is a download. The page can pre-fill the composer —
-  never send — with `parent.postMessage({ type: 'nanoclaw:compose', text }, '*')`:
-  accepted only from the drawer's own frame (and not after the page navigates
-  away), only in exactly that shape, control and bidi characters stripped,
+  never send — with
+  `parent.postMessage({ type: 'nanoclaw:compose', text, nonce: location.hash.slice(1) }, '*')`:
+  accepted only from the drawer's own frame carrying the per-open nonce the
+  drawer puts in the frame URL's fragment (a page the frame navigates to never
+  sees it; a second load replaces the frame with "Left preview"), only in
+  exactly that shape, control and bidi characters stripped,
   cut at 4,000 characters. A "From page.html" note shows above the composer
   until the text is sent or cleared.
 - **Live agent activity** — redacted `status` frames stream a per-turn thinking

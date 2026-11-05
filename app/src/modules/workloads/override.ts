@@ -29,6 +29,36 @@ export function subnetFor(index: number): { subnet: string; ipRange: string; pre
   return { subnet: `${prefix}.0/24`, ipRange: `${prefix}.128/25`, prefix, gateway: `${prefix}.1` };
 }
 
+const ipv4ToInt = (ip: string): number | null => {
+  const m = ip.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (!m) return null;
+  const o = m.slice(1).map(Number);
+  return o.some((x) => x > 255) ? null : ((o[0] << 24) >>> 0) + (o[1] << 16) + (o[2] << 8) + o[3];
+};
+
+/**
+ * Network indexes whose /24 overlaps any of these subnets (CIDR strings; IPv6
+ * and junk are ignored). Another install on the same host numbers its networks
+ * from 0 too, so its subnets must be skipped, not collided with.
+ */
+export function overlappingIndexes(subnets: Iterable<string>): Set<number> {
+  const base = ((SUBNET_BASE[0] << 24) >>> 0) + (SUBNET_BASE[1] << 16);
+  const out = new Set<number>();
+  for (const cidr of subnets) {
+    const [ip, bits] = cidr.split('/');
+    const start = ipv4ToInt(ip ?? '');
+    const len = Number(bits);
+    if (start === null || !Number.isInteger(len) || len < 0 || len > 32) continue;
+    const size = 2 ** (32 - len);
+    const lo = start - (start % size);
+    const hi = lo + size - 1;
+    const first = Math.max(0, Math.floor((lo - base) / 256));
+    const last = Math.min(MAX_NETWORKS - 1, Math.floor((hi - base) / 256));
+    for (let i = first; i <= last; i++) if (hi >= base + i * 256 && lo <= base + i * 256 + 255) out.add(i);
+  }
+  return out;
+}
+
 /**
  * A fixed address per service. Services keep what they had (`keep`), so a
  * redeploy that adds one does not move the others; new services take the

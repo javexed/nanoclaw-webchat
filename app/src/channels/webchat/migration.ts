@@ -1465,3 +1465,16 @@ export const moduleWebchatWorkloadAppRouteOpened: Migration = {
     await db.exec(`ALTER TABLE workload_app_routes ADD COLUMN last_opened_at INTEGER;`);
   },
 };
+
+/**
+ * Who started a topic thread, so its creator can delete it as well as an
+ * owner. NULL for threads made before this (and for main/agent lanes): those
+ * stay owner-only.
+ */
+export const moduleWebchatThreadCreator: Migration = {
+  version: 235,
+  name: 'webchat-thread-creator',
+  async up(db) {
+    await db.exec(`ALTER TABLE webchat_threads ADD COLUMN created_by TEXT;`);
+  },
+};

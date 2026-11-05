@@ -220,15 +220,21 @@ export async function rRoomCredModeGet(ctx: RouteCtx, m: RegExpMatchArray): Prom
   });
 }
 
+/**
+ * Room credential settings: the owner, or an admin of an agent wired to the
+ * room who can also access the room (every agent in it).
+ */
+async function canSetRoomCreds(userId: string, roomId: string): Promise<boolean> {
+  if (await isOwner(userId)) return true;
+  if (!(await canAccessRoom(userId, roomId))) return false;
+  return someAsync(await getAgentsForWebchatRoom(roomId), (a) => hasAdminPrivilege(userId, a.id));
+}
+
 export async function rRoomCredModePut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
   if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-  // Owner, or an admin over ANY agent wired to this room.
-  const allowed =
-    (await isOwner(userId)) ||
-    (await someAsync(await getAgentsForWebchatRoom(roomId), (a) => hasAdminPrivilege(userId, a.id)));
-  if (!allowed) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await canSetRoomCreds(userId, roomId))) return json(res, 403, { error: 'Admin privilege required' });
   const body = await readJsonObject<{ mode?: unknown }>(req, res);
   if (body === undefined) return;
   if (body.mode !== 'inherit' && body.mode !== 'disabled' && body.mode !== 'optional' && body.mode !== 'required') {
@@ -251,10 +257,7 @@ export async function rRoomOauthPut(ctx: RouteCtx, m: RegExpMatchArray): Promise
   const { req, res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
   if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-  const allowed =
-    (await isOwner(userId)) ||
-    (await someAsync(await getAgentsForWebchatRoom(roomId), (a) => hasAdminPrivilege(userId, a.id)));
-  if (!allowed) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await canSetRoomCreds(userId, roomId))) return json(res, 403, { error: 'Admin privilege required' });
   const body = await readJsonObject<{ allowed?: unknown }>(req, res);
   if (body === undefined) return;
   if (typeof body.allowed !== 'boolean') return json(res, 400, { error: 'allowed must be a boolean' });
@@ -426,6 +429,7 @@ export async function rRoomThreadsGet(ctx: RouteCtx, m: RegExpMatchArray): Promi
   if (roomId === undefined) return;
   await ensureMainThread(roomId); // every room has a main thread once listed
   const unread = await getUnreadThreadCountsForRoom(userId, roomId);
+  const owner = await isOwner(userId);
   return json(
     res,
     200,
@@ -433,21 +437,22 @@ export async function rRoomThreadsGet(ctx: RouteCtx, m: RegExpMatchArray): Promi
       ...t,
       unread: unread.has(t.thread_id),
       unread_count: unread.get(t.thread_id) ?? 0,
+      can_delete: t.thread_id !== MAIN_THREAD && (owner || (!!t.created_by && t.created_by === userId)),
     })),
   );
 }
 
 export async function rRoomThreadsPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { req, res } = ctx;
+  const { req, res, userId } = ctx;
   const roomId = await requireRoomAccess(ctx, m);
   if (roomId === undefined) return;
   const body = await readJsonObject<{ title?: unknown }>(req, res);
   if (body === undefined) return;
   const title = sanitizeThreadTitle(body.title);
   if (title === null) return json(res, 400, { error: 'title must be 1–80 characters' });
-  const thread = await createWebchatThread(roomId, title);
+  const thread = await createWebchatThread(roomId, title, userId);
   await broadcastRooms(); // refresh each client's sidebar thread-count chevron
-  return json(res, 200, thread);
+  return json(res, 200, { ...thread, can_delete: true });
 }
 
 export async function rRoomThreadPatch(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
@@ -464,13 +469,19 @@ export async function rRoomThreadPatch(ctx: RouteCtx, m: RegExpMatchArray): Prom
   return json(res, 200, { ok: true, title });
 }
 
+/** Owners can delete any topic thread; anyone else only one they started. */
 export async function rRoomThreadDelete(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
+  const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
   const threadId = decodeURIComponent(m[2]);
   if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (threadId === 'main') return json(res, 400, { error: 'The main thread cannot be deleted' });
-  if (!(await getWebchatThread(roomId, threadId))) return json(res, 404, { error: 'Thread not found' });
+  const owner = await isOwner(userId);
+  if (!owner && !(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+  const thread = await getWebchatThread(roomId, threadId);
+  if (!thread) return json(res, 404, { error: 'Thread not found' });
+  if (!owner && (!thread.created_by || thread.created_by !== userId))
+    return json(res, 403, { error: 'Only its creator or an owner can delete this thread' });
   return deleteThreadHandler(res, roomId, threadId);
 }
 

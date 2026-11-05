@@ -30,8 +30,6 @@ describe('previewKind', () => {
     expect(previewKind('data.tsv')).toBe('csv');
     expect(previewKind('config.json')).toBe('json');
     expect(previewKind('main.ts')).toBe('code');
-    expect(previewKind('page.html')).toBe('html');
-    expect(previewKind('page.HTM', 'application/octet-stream')).toBe('html');
     expect(previewKind('icon.svg')).toBe('code');
     expect(previewKind('run.log')).toBe('text');
     expect(previewKind('README')).toBe('text');
@@ -46,6 +44,19 @@ describe('previewKind', () => {
   it('has no preview for binaries it cannot render', () => {
     expect(previewKind('archive.zip', 'application/zip')).toBeNull();
     expect(previewKind('model.bin')).toBeNull();
+  });
+
+  it("renders HTML only when an agent sent it; a member's stays a download", () => {
+    expect(previewKind('page.html', 'text/html', true)).toBe('html');
+    expect(previewKind('page.HTM', 'application/octet-stream', true)).toBe('html');
+    expect(previewKind('page.html', 'text/html')).toBeNull();
+    expect(previewKind('page.htm', 'text/html', false)).toBeNull();
+  });
+
+  it('decides HTML by extension only (the frame route serves .html/.htm alone)', () => {
+    expect(previewKind('page.txt', 'text/html', true)).toBe('text');
+    expect(previewKind('page', 'text/html', true)).not.toBe('html');
+    expect(previewKind('page.bin', 'text/html', true)).not.toBe('html');
   });
 });
 
@@ -215,5 +226,9 @@ describe('htmlFrameUrl', () => {
   it('asks the server for the framed rendering of the same file', () => {
     expect(htmlFrameUrl('/api/files/r/a.html')).toBe('/api/files/r/a.html?view=frame');
     expect(htmlFrameUrl('/api/files/r/a.html?x=1')).toBe('/api/files/r/a.html?x=1&view=frame');
+  });
+
+  it("carries the open's nonce in the fragment", () => {
+    expect(htmlFrameUrl('/api/files/r/a.html', 'ab12')).toBe('/api/files/r/a.html?view=frame#ab12');
   });
 });

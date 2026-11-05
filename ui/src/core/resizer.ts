@@ -76,6 +76,25 @@ export function nextPreset(current: number, presets: number[]): number {
   return sorted.find((p) => p > current) ?? sorted[0];
 }
 
+/**
+ * One press on a handle. It becomes a drag once it travels the slop and stays
+ * one, even if it ends back where it started: only a press that never moved is
+ * a click.
+ */
+export function startPress(x: number): { move: (x: number) => boolean; isClick: (x: number) => boolean } {
+  let moved = false;
+  return {
+    /** Whether the press is a drag now. */
+    move(nx: number): boolean {
+      if (!moved && Math.abs(nx - x) >= CLICK_SLOP_PX) moved = true;
+      return moved;
+    },
+    isClick(nx: number): boolean {
+      return !moved && Math.abs(nx - x) < CLICK_SLOP_PX;
+    },
+  };
+}
+
 /** What a screen reader announces for a size. */
 export function sizeText(px: number): string {
   return `${px} pixels`;
@@ -130,19 +149,19 @@ export function wireResizer(opts: ResizerOptions): () => void {
     save();
   };
 
-  let dragFrom: { x: number; size: number } | null = null;
+  let dragFrom: { x: number; size: number; press: ReturnType<typeof startPress> } | null = null;
   const onDown = (e: PointerEvent) => {
     if (e.button !== 0) return;
     e.preventDefault(); // no text selection while dragging
-    dragFrom = { x: e.clientX, size };
+    dragFrom = { x: e.clientX, size, press: startPress(e.clientX) };
     handle.setPointerCapture(e.pointerId);
     handle.classList.add('dragging');
   };
   // Movement under the slop is a click in progress and must not nudge the size.
   const onMove = (e: PointerEvent) => {
     if (!dragFrom) return;
-    const dx = e.clientX - dragFrom.x;
-    if (Math.abs(dx) >= CLICK_SLOP_PX) apply(sizeForDrag(dragFrom.size, dx, { min, max, growsToward }));
+    if (dragFrom.press.move(e.clientX))
+      apply(sizeForDrag(dragFrom.size, e.clientX - dragFrom.x, { min, max, growsToward }));
   };
   const onUp = (e: PointerEvent) => {
     if (!dragFrom) return;
@@ -150,7 +169,7 @@ export function wireResizer(opts: ResizerOptions): () => void {
     dragFrom = null;
     if (handle.hasPointerCapture(e.pointerId)) handle.releasePointerCapture(e.pointerId);
     handle.classList.remove('dragging');
-    if (e.type === 'pointerup' && Math.abs(e.clientX - from.x) < CLICK_SLOP_PX) apply(nextPreset(from.size, presets));
+    if (e.type === 'pointerup' && from.press.isClick(e.clientX)) apply(nextPreset(from.size, presets));
     save();
   };
 

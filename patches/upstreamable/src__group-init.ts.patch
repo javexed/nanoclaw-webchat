@@ -1,5 +1,5 @@
 diff --git a/src/group-init.ts b/src/group-init.ts
-index 7ef9cc3d..f4a43917 100644
+index 7ef9cc3d..f9e8b72f 100644
 --- a/src/group-init.ts
 +++ b/src/group-init.ts
 @@ -9,6 +9,8 @@ import { prepareClaudeMemorySettings } from './migrate-claude-memory-settings.js
@@ -40,7 +40,7 @@ index 7ef9cc3d..f4a43917 100644
    if (initialized.length > 0) {
      log.info('Initialized group filesystem', {
        group: group.name,
-@@ -103,3 +120,51 @@ export async function initGroupFilesystem(
+@@ -103,3 +120,56 @@ export async function initGroupFilesystem(
      });
    }
  }
@@ -70,7 +70,12 @@ index 7ef9cc3d..f4a43917 100644
 +): void {
 +  let dir: AnchoredDir | null = null;
 +  try {
-+    dir = AnchoredDir.open(path.dirname(settingsFile), [], true);
++    // Anchored at the group's state root, which no container mounts: the
++    // settings directory is itself agent-writable, so it is opened as a
++    // segment (a real directory, never a link), as the instruction guard
++    // opens it, rather than trusted as a root.
++    const settingsDir = path.dirname(settingsFile);
++    dir = AnchoredDir.open(path.dirname(settingsDir), [path.basename(settingsDir)], true);
 +    if (!dir) return;
 +    const name = path.basename(settingsFile);
 +    const settings = JSON.parse(dir.readFile(name).toString('utf-8'));
@@ -87,7 +92,7 @@ index 7ef9cc3d..f4a43917 100644
 +    dir.replaceFile(name, JSON.stringify(settings, null, 2) + '\n');
 +    initialized.push(`settings.json (added ${label})`);
 +  } catch {
-+    // Malformed, missing, or not a regular file — leave it as it is.
++    // Malformed, missing, not a regular file, or its directory a link — leave it as it is.
 +  } finally {
 +    dir?.close();
 +  }

@@ -200,4 +200,52 @@ describe('the MCP relay forward', () => {
       other.server.close();
     }
   });
+
+  it('an upstream that dies mid-stream ends the response instead of throwing', async () => {
+    const thrown: unknown[] = [];
+    const onErr = (e: unknown) => thrown.push(e);
+    process.on('uncaughtException', onErr);
+    const mcp = await listen((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('data: one\n\n');
+      setTimeout(() => res.socket?.destroy(), 30);
+    });
+    try {
+      assign(`${mcp.base}/mcp`);
+      const relay = await startRelay();
+      const r = await fetch(`${relay}/relay/srv1`, { headers: { 'x-nanoclaw-relay': 'tok' } });
+      expect(r.status).toBe(200);
+      await r.text().catch(() => '');
+      await new Promise((r) => setTimeout(r, 100));
+      expect(thrown).toEqual([]);
+      // Still serving.
+      const again = await fetch(`${relay}/relay/srv1`, { headers: { 'x-nanoclaw-relay': 'tok' } });
+      expect(again.status).toBe(200);
+      await again.text().catch(() => '');
+    } finally {
+      process.off('uncaughtException', onErr);
+      mcp.server.close();
+    }
+  });
+
+  it('a client that leaves ends the upstream call', async () => {
+    let upstreamClosed = false;
+    const mcp = await listen((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('data: one\n\n');
+      req.socket.on('close', () => (upstreamClosed = true));
+    });
+    try {
+      assign(`${mcp.base}/mcp`);
+      const relay = await startRelay();
+      const ac = new AbortController();
+      const r = await fetch(`${relay}/relay/srv1`, { headers: { 'x-nanoclaw-relay': 'tok' }, signal: ac.signal });
+      await r.body!.getReader().read();
+      ac.abort();
+      for (let i = 0; i < 50 && !upstreamClosed; i++) await new Promise((r) => setTimeout(r, 20));
+      expect(upstreamClosed).toBe(true);
+    } finally {
+      mcp.server.close();
+    }
+  });
 });

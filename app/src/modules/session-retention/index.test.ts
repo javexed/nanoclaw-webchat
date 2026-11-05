@@ -92,4 +92,26 @@ describe('ncl sessions prune', () => {
     expect(() => cmd.parseArgs({ force: true })).toThrow(/unknown flag --force/);
     await expect(cmd.handler(cmd.parseArgs({ days: '1.5' }), ctx)).rejects.toThrow(/whole number/);
   });
+
+  it('never overlaps the periodic prune', async () => {
+    registerSessionsPrune();
+    const cmd = lookup('sessions-prune')!;
+    const ctx = { caller: 'host' } as never;
+    process.env.NANOCLAW_SESSION_KEEP_DAYS = '90';
+    let release!: () => void;
+    prune.mockImplementationOnce(() => new Promise((resolve) => (release = () => resolve(report()))));
+    const manual = cmd.handler(cmd.parseArgs({}), ctx);
+    expect(await retentionTick()).toBeNull();
+    // A dry run changes nothing, so it may run alongside.
+    await cmd.handler(cmd.parseArgs({ 'dry-run': true }), ctx);
+    release();
+    await manual;
+
+    prune.mockImplementationOnce(() => new Promise((resolve) => (release = () => resolve(report()))));
+    const tick = retentionTick();
+    await expect(cmd.handler(cmd.parseArgs({}), ctx)).rejects.toThrow(/already running/);
+    release();
+    expect(await tick).not.toBeNull();
+    expect(prune).toHaveBeenCalledTimes(3);
+  });
 });

@@ -1205,6 +1205,35 @@ export async function storeWebchatFileMessage(
   return msg;
 }
 
+/**
+ * Whether the file at `url` in this room came in on an agent's message. Only
+ * agents' HTML renders in the drawer's frame (files.ts handleHtmlFrame); a
+ * member's .html stays a download. False when no message carries the file.
+ */
+export async function isAgentFileInRoom(roomId: string, url: string): Promise<boolean> {
+  const like = '%' + url.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
+  const rows = (await getDb().all(
+    `SELECT sender_type, file_meta FROM webchat_messages
+       WHERE room_id = ? AND message_type = 'file' AND file_meta LIKE ? ESCAPE '\\'`,
+    roomId,
+    like,
+  )) as { sender_type: string; file_meta: string | null }[];
+  let found = false;
+  for (const r of rows) {
+    let meta: FileMeta | null = null;
+    try {
+      meta = r.file_meta ? (JSON.parse(r.file_meta) as FileMeta) : null;
+    } catch {
+      meta = null;
+    }
+    if (meta?.url !== url) continue;
+    // Any member's message carrying the same file makes it not an agent's.
+    if (r.sender_type !== 'agent') return false;
+    found = true;
+  }
+  return found;
+}
+
 export async function getWebchatMessages(roomId: string, limit = 200, threadId?: string): Promise<WebchatMessage[]> {
   const rows = (
     threadId === undefined
@@ -1420,6 +1449,8 @@ export interface WebchatThread {
   kind: 'main' | 'agent' | 'topic';
   created_at: number;
   updated_at: number;
+  /** Who started a topic thread; null for main/agent lanes and older threads. */
+  created_by?: string | null;
 }
 
 /** Ensure a thread row exists; idempotent (never clobbers an existing title).
@@ -1468,7 +1499,11 @@ export function sanitizeThreadTitle(raw: unknown): string | null {
 }
 
 /** Create a manual topic thread (uuid). Returns the new thread. */
-export async function createWebchatThread(roomId: string, title: string): Promise<WebchatThread> {
+export async function createWebchatThread(
+  roomId: string,
+  title: string,
+  createdBy: string | null = null,
+): Promise<WebchatThread> {
   const now = Date.now();
   const thread: WebchatThread = {
     room_id: roomId,
@@ -1477,10 +1512,11 @@ export async function createWebchatThread(roomId: string, title: string): Promis
     kind: 'topic',
     created_at: now,
     updated_at: now,
+    created_by: createdBy,
   };
   await getDb().run(
-    `INSERT INTO webchat_threads (room_id, thread_id, title, kind, created_at, updated_at)
-       VALUES (@room_id, @thread_id, @title, @kind, @created_at, @updated_at)`,
+    `INSERT INTO webchat_threads (room_id, thread_id, title, kind, created_at, updated_at, created_by)
+       VALUES (@room_id, @thread_id, @title, @kind, @created_at, @updated_at, @created_by)`,
     thread,
   );
   return thread;

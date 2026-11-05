@@ -94,7 +94,11 @@ export function unlockAudio(): void {
   }
   ttsQueue.resume();
 }
-/** The first tap or key anywhere unlocks audio, so auto-read can start on its own. */
+/**
+ * The first tap or key anywhere unlocks audio, so auto-read can start on its
+ * own. Re-armed whenever playback is blocked again (the queue reports
+ * 'blocked'), or a sentence would wait on a tap nothing is listening for.
+ */
 function armAudioUnlock() {
   if (unlockArmed || typeof document === 'undefined') return;
   unlockArmed = true;
@@ -104,6 +108,7 @@ function armAudioUnlock() {
     if (audioUnlocked && ttsQueue.current.phase !== 'blocked') {
       document.removeEventListener('pointerdown', onGesture, true);
       document.removeEventListener('keydown', onGesture, true);
+      unlockArmed = false;
     }
   };
   document.addEventListener('pointerdown', onGesture, true);
@@ -194,6 +199,7 @@ const ttsQueue = new ReadAloudQueue<Clip>(
     ttsActiveKey.value = s.key;
     // 'blocked' (waiting on a tap to unlock audio) reads as still loading.
     ttsPhase.value = s.phase === 'blocked' ? 'loading' : s.phase;
+    if (s.phase === 'blocked') armAudioUnlock();
   },
   (err) => {
     console.error('Read aloud failed', err);

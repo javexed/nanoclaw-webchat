@@ -135,7 +135,7 @@ function stopUndoClick(e: MouseEvent): void {
         >{{ PLUS }}</button>
         <div v-if="active && openThreadMenuId === t.thread_id" class="thread-menu">
             <button @click.stop="onStartRename(t.thread_id)">{{ RENAME }}</button>
-            <button v-if="state.isOwnerView" class="danger" @click.stop="onDelete(t.thread_id)">{{ DELETE }}</button>
+            <button v-if="t.can_delete ?? state.isOwnerView" class="danger" @click.stop="onDelete(t.thread_id)">{{ DELETE }}</button>
           </div>
         </template>
       </div>

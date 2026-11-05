@@ -298,6 +298,21 @@ describe('connectCopilot', () => {
     expect(saved).toEqual([]);
   });
 
+  it('a cancel during the save records nothing and says the credential is stored', async () => {
+    const controller = new AbortController();
+    const { d, saved, env } = deps('ok', {
+      saveTokens: async (apiUrl, token) => {
+        saved.push({ apiUrl, token });
+        controller.abort();
+      },
+    });
+    await expect(connectCopilot(d, controller.signal)).rejects.toMatchObject({ code: 'saved-cancelled' });
+    expect(saved).toHaveLength(1);
+    expect(env).toEqual({});
+    expect(fs.existsSync(accountRecordPath(d.root))).toBe(false);
+    expect(events.some((e) => e.event === 'connected')).toBe(false);
+  });
+
   it('a network failure does not surface the transport error', async () => {
     const { d } = deps('ok', {
       fetch: (async () => {

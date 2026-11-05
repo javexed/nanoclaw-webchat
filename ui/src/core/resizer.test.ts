@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { clampSize, nextPreset, readStoredSize, sizeForDrag, sizeForKey, sizeText } from './resizer.js';
+import { CLICK_SLOP_PX, clampSize, nextPreset, readStoredSize, sizeForDrag, sizeForKey, sizeText, startPress } from './resizer.js';
 
 const limits = { min: 180, max: 480, step: 20 };
 
@@ -77,5 +77,24 @@ describe('click to cycle (resizing without dragging)', () => {
 
   it('announces the size in words, not a bare number', () => {
     expect(sizeText(220)).toBe('220 pixels');
+  });
+});
+
+describe('a press: click or drag', () => {
+  it('is a click when it never moves past the slop', () => {
+    const p = startPress(100);
+    expect(p.move(102)).toBe(false);
+    expect(p.isClick(101)).toBe(true);
+  });
+
+  it('is a drag once past the slop, even if it ends where it started', () => {
+    const p = startPress(100);
+    expect(p.move(100 + CLICK_SLOP_PX)).toBe(true);
+    expect(p.move(100)).toBe(true);
+    expect(p.isClick(100)).toBe(false);
+  });
+
+  it('is not a click when released past the slop without a move event', () => {
+    expect(startPress(100).isClick(100 - CLICK_SLOP_PX)).toBe(false);
   });
 });

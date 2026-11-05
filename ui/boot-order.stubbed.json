@@ -27,6 +27,7 @@
  "on:overflow-btn:click",
  "on:overflow-menu:click",
  "on:document:click",
+ "on:document:click",
  "on:document:keydown",
  "on:settings-close:click",
  "on:settings-overlay:click",

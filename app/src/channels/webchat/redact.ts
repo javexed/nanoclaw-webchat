@@ -71,6 +71,23 @@ const PATTERNS: RedactPattern[] = [
   },
 ];
 
+/**
+ * A value that names a secret rather than holding one: a shell or PowerShell
+ * variable, command substitution, %VAR%, {{template}} or <placeholder>. The
+ * key=value rules leave these alone (`dbPassword="$DB_PASSWORD"`).
+ */
+const REFERENCE =
+  /^(?:\$\{?[A-Za-z_]\w*\}?|\$\(.*|\$env:[A-Za-z_]\w*|%[A-Za-z_]\w*%|\{\{.*\}\}|<[^<>]*>?)['"]?[,;)]?$/i;
+
+/**
+ * "the password is blank": after "is", a common descriptive word is prose,
+ * not a password. Any other word ("password is letmein") is still masked:
+ * a short list plus English adjective/participle endings, never "any
+ * lowercase word".
+ */
+const PROSE_WORD =
+  /^(?:a|an|the|not|now|still|also|only|just|too|in|on|off|set|unset|blank|empty|gone|real|wrong|right|null|none|nil|ok|okay|fine|same|new|old|short|long|weak|strong|known|unknown|valid|invalid|correct|incorrect|stale|bad|good|true|false|safe|unsafe|current|default|plain|optional|mandatory|private|there|here|what|which|where|this|that|it|[a-z]+(?:ed|ing|ly|able|ible|less|ous|ive|ent|ant))[^\w\s]*$/;
+
 function maskValue(value: string, label: string, keep?: { prefix?: number; suffix?: number }): string {
   const prefix = keep?.prefix ?? 0;
   const suffix = keep?.suffix ?? 0;
@@ -88,7 +105,8 @@ export function redactSensitiveData(text: string): string {
   let result = text;
   for (const { pattern, label, keep } of PATTERNS) {
     pattern.lastIndex = 0;
-    result = result.replace(pattern, (match) => {
+    result = result.replace(pattern, (match, value?: unknown) => {
+      if (typeof value === 'string' && REFERENCE.test(value)) return match;
       if (label === 'CONN_PASSWORD') {
         const colonAt = match.indexOf(':', 3);
         const atSign = match.lastIndexOf('@');
@@ -107,10 +125,40 @@ export function redactSensitiveData(text: string): string {
       }
       if (label === 'PASSWORD' || label === 'SECRET') {
         const sep = match.match(/^(.+?(?::|is|=)\s*['"]?)(.+?)(['"]?)$/i);
+        if (sep && /\bis\s*['"]?$/i.test(sep[1]) && PROSE_WORD.test(sep[2])) return match;
         if (sep) return sep[1] + maskValue(sep[2], label, { prefix: 0, suffix: 0 }) + sep[3];
       }
       return maskValue(match, label, keep);
     });
   }
   return result;
+}
+
+/**
+ * Redact a message's content. Structured messages (approval and skill-draft
+ * cards, a2a copies) store JSON: run the redaction over each string inside it,
+ * never over the raw JSON, where a masked value could swallow an escaped quote
+ * ("password is required\"" became "password is [PASSWORD:****]"") and leave
+ * the client unable to parse the card. Anything else is redacted as text.
+ */
+export function redactMessageContent(content: string): string {
+  const t = content.trimStart();
+  if (t.startsWith('{') || t.startsWith('[')) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      return redactSensitiveData(content);
+    }
+    const walk = (v: unknown): unknown =>
+      typeof v === 'string'
+        ? redactSensitiveData(v)
+        : Array.isArray(v)
+          ? v.map(walk)
+          : v && typeof v === 'object'
+            ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]))
+            : v;
+    return JSON.stringify(walk(parsed));
+  }
+  return redactSensitiveData(content);
 }

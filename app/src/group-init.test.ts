@@ -85,4 +85,19 @@ describe('ensureRtkHook (backfill for pre-existing groups)', () => {
     expect(fs.lstatSync(f).isFIFO()).toBe(true);
     expect(initialized).toEqual([]);
   });
+
+  // The settings directory is container-writable too: opened as a segment of
+  // the group's state root, so a link in its place is never followed.
+  it('never writes through a symlink planted as the settings directory', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncl-ginit-'));
+    tmpFiles.push(root);
+    const hostDir = path.join(root, 'host');
+    fs.mkdirSync(hostDir);
+    fs.writeFileSync(path.join(hostDir, 'settings.json'), '{}');
+    fs.symlinkSync(hostDir, path.join(root, '.claude-shared'));
+    const initialized: string[] = [];
+    ensureRtkHook(path.join(root, '.claude-shared', 'settings.json'), initialized);
+    expect(fs.readFileSync(path.join(hostDir, 'settings.json'), 'utf-8')).toBe('{}');
+    expect(initialized).toEqual([]);
+  });
 });
