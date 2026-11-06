@@ -1,11 +1,11 @@
 {
   "nanoclaw": {
     "upstreamRepo": "https://github.com/nanocoai/nanoclaw.git",
-    "upstreamRef": "6ea946b7c74d694eb7d20f8e11cad49e3274028f",
+    "upstreamRef": "79deb70779f1ed3f09235ad9d1b17b68a0c4554d",
     "seamRepo": "https://github.com/javexed/nanoclaw.git",
     "seamBranch": "pub/module-hooks",
-    "seamRef": "24aee966cd8edbc78d629dc902a9511c285a0dc5",
-    "seamH5Ref": "24aee966cd8edbc78d629dc902a9511c285a0dc5",
+    "seamRef": "2b1e89fa53ae25d22323fb3cf96708d4478b050b",
+    "seamH5Ref": "2b1e89fa53ae25d22323fb3cf96708d4478b050b",
     "seamNote": "pub/module-hooks: 13 upstream files, +192 -0 (insertions only). Hook registries live in src/seam/ and container/agent-runner/src/seam/; SEAM.md in the seam is the ledger."
   },
   "seamApiVersion": 4,
