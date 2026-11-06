@@ -79,11 +79,15 @@ function clampCodeBlock(block: HTMLElement, lines: number) {
   const more = document.createElement('button');
   more.type = 'button';
   more.className = 'code-more';
-  const label = () => (block.classList.contains('collapsed') ? `Show all (${lines} lines)` : 'Show less');
-  more.textContent = label();
+  const label = () => {
+    const collapsed = block.classList.contains('collapsed');
+    more.textContent = collapsed ? `Show all (${lines} lines)` : 'Show less';
+    more.setAttribute('aria-expanded', String(!collapsed));
+  };
+  label();
   more.addEventListener('click', () => {
     const collapsed = block.classList.toggle('collapsed');
-    more.textContent = label();
+    label();
     if (collapsed) block.scrollIntoView({ block: 'nearest' });
   });
   block.appendChild(more);

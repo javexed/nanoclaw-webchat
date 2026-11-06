@@ -219,6 +219,7 @@
  "on:messages:dragleave",
  "on:messages:drop",
  "on:document:paste",
+ "on:message-input:keydown",
  "on:message-input:paste",
  "on:file-picker:click",
  "on:camera-btn:click",

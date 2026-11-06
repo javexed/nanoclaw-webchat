@@ -2484,8 +2484,8 @@ a.lightbox-btn {
 }
 /* Long blocks start collapsed with a "Show all (N lines)" button under them. */
 .msg .bubble .code-block.clamped.collapsed pre {
-  max-height: 20em;
-  overflow: hidden;
+  max-height: 15em;
+  overflow-y: hidden; /* sideways scrolling stays (overflow-x from the base rule) */
   -webkit-mask-image: linear-gradient(to bottom, #000 75%, transparent);
   mask-image: linear-gradient(to bottom, #000 75%, transparent);
 }

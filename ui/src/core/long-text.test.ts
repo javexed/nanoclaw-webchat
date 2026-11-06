@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { CODE_CLAMP_LINES, LONG_PASTE_CHARS, LONG_PASTE_LINES, lineCount, pasteKind } from './long-text.js';
+import {
+  CODE_CLAMP_LINES,
+  LONG_PASTE_CHARS,
+  LONG_PASTE_LINES,
+  isPlainPasteKey,
+  lineCount,
+  pasteKind,
+} from './long-text.js';
 
 describe('long text', () => {
   it('turns a long paste into an attachment, by lines or by size', () => {
@@ -18,5 +25,19 @@ describe('long text', () => {
     expect(lineCount('a\nb\n')).toBe(2);
     expect(lineCount('a')).toBe(1);
     expect(lineCount('x\n'.repeat(CODE_CLAMP_LINES + 1))).toBe(CODE_CLAMP_LINES + 1);
+  });
+
+  it('knows the plain-paste shortcut', () => {
+    const key = (k: string, mods: Partial<Record<'shiftKey' | 'ctrlKey' | 'metaKey', boolean>>) => ({
+      key: k,
+      shiftKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      ...mods,
+    });
+    expect(isPlainPasteKey(key('V', { shiftKey: true, ctrlKey: true }))).toBe(true);
+    expect(isPlainPasteKey(key('v', { shiftKey: true, metaKey: true }))).toBe(true);
+    expect(isPlainPasteKey(key('v', { ctrlKey: true }))).toBe(false);
+    expect(isPlainPasteKey(key('v', { shiftKey: true }))).toBe(false);
   });
 });

@@ -3,8 +3,8 @@
  * The Wrap / Copy strip on a fenced code block, mounted INTO the .code-toolbar div, one
  * app per <pre>, so the opaque v-html markdown subtree is otherwise untouched. Button
  * feedback is component state, so the copy timer is cleared on unmount. Wrap toggles a
- * class on the <pre> (on from the start when `wrap` is set) (the CSS rule is `.msg .bubble pre.wrap code`) — the one
- * element it touches outside its own tree.
+ * class on the <pre> (the CSS rule is `.msg .bubble pre.wrap code`), on from the start
+ * when `wrap` is set — the one element it touches outside its own tree.
  */
 import { onMounted, onUnmounted, ref } from 'vue';
 import { copyTextToClipboard } from '../boot.js';

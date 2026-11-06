@@ -5,7 +5,7 @@
 // merging them reorders listener registration (docs/webchat/boot-order-guard.md).
 
 import { $ } from './core/dom.js';
-import { pasteKind } from './core/long-text.js';
+import { isPlainPasteKey, pasteKind } from './core/long-text.js';
 import { state } from './core/state.js';
 import { connect, diagnoseConnection } from './core/ws.js';
 import { fetchApprovals } from './features/approvals.js';
@@ -210,9 +210,18 @@ export function wireMobileBack(): void {
 
 /** Composer paste: multi-line text is wrapped in a ```text fence so it renders verbatim
  * and wrapped (no Markdown or mention decoration); a long paste goes to `onLongPaste`
- * as a .txt file instead; files fall through to the document listener. */
+ * as a .txt file instead; Ctrl/Cmd+Shift+V pastes as typed, with neither; files fall
+ * through to the document listener. */
 export function wireComposerPaste(onLongPaste?: (file: File) => void): void {
+  // The paste event cannot see modifier keys, so the shortcut's keydown leaves a flag.
+  let plainPaste = false;
+  $('#message-input')?.addEventListener('keydown', (e: KeyboardEvent) => {
+    plainPaste = isPlainPasteKey(e);
+  });
   $('#message-input')?.addEventListener('paste', (e: any) => {
+    const plain = plainPaste;
+    plainPaste = false;
+    if (plain) return; // native plain-text paste
     if (e.clipboardData?.files?.length) return; // images/files handled by the document listener
     const text = e.clipboardData?.getData('text/plain') ?? '';
     if (onLongPaste && pasteKind(text) === 'attach') {
