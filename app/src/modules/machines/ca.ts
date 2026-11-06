@@ -2,7 +2,7 @@
  * NanoClaw's own certificate authority for machines (joining and identity).
  * Kept in DATA_DIR/machines-ca, 0700, keys 0600:
  *
- *   ca.key / ca.crt          — signs machine certificates (10 years)
+ *   ca.key / ca.crt          — signs machine certificates (10 years; pathlen:0)
  *   server.key / server.crt  — the machine listener's TLS certificate
  *
  * Machines pin the server key (`pin`: sha256 of its public key, base64, the
@@ -76,8 +76,9 @@ export function ensureCa(p: CaPaths = caPaths(), serverNames: string[] = []): vo
       '3650',
       '-subj',
       '/CN=NanoClaw machines CA',
+      // pathlen:0: the CA signs machine and listener certificates only, never another CA.
       '-addext',
-      'basicConstraints=critical,CA:TRUE',
+      'basicConstraints=critical,CA:TRUE,pathlen:0',
       '-addext',
       'keyUsage=critical,keyCertSign,cRLSign',
       '-out',
@@ -94,7 +95,11 @@ export function ensureCa(p: CaPaths = caPaths(), serverNames: string[] = []): vo
       const sans = [...new Set(['127.0.0.1', ...serverNames])]
         .map((n) => (/^[\d.]+$|:/.test(n) ? `IP:${n}` : `DNS:${n}`))
         .join(',');
-      fs.writeFileSync(ext, `basicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\nsubjectAltName=${sans}\n`);
+      // A server certificate only: it cannot sign, and cannot pass as a machine's client certificate.
+      fs.writeFileSync(
+        ext,
+        `basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\nsubjectAltName=${sans}\n`,
+      );
       openssl([
         'x509',
         '-req',
@@ -116,6 +121,17 @@ export function ensureCa(p: CaPaths = caPaths(), serverNames: string[] = []): vo
       ]);
     });
   }
+}
+
+const CLIENT_AUTH = '1.3.6.1.5.5.7.3.2';
+
+/**
+ * Is a TLS peer's certificate a machine's: not a CA, and for client
+ * authentication? The listener knows machines by fingerprint already; this
+ * keeps the listener's own certificate (or a CA's) from ever passing as one.
+ */
+export function isMachineLeaf(peer: { ca?: boolean; ext_key_usage?: string[] } | null | undefined): boolean {
+  return !!peer && peer.ca === false && Array.isArray(peer.ext_key_usage) && peer.ext_key_usage.includes(CLIENT_AUTH);
 }
 
 /** sha256 of a certificate's public key, base64 — curl's --pinnedpubkey form. */
@@ -152,9 +168,10 @@ export function issueMachineCert(csrPem: string, p: CaPaths = caPaths()): Issued
     if (check.status !== 0 || !/verify OK/i.test(`${check.stdout}${check.stderr}`)) {
       throw new Error('invalid certificate request');
     }
+    // A client certificate only: it cannot sign, and cannot pass as the listener.
     fs.writeFileSync(
       ext,
-      'basicConstraints=CA:FALSE\nextendedKeyUsage=clientAuth\nkeyUsage=critical,digitalSignature\n',
+      'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=clientAuth\n',
     );
     let cert: string;
     try {

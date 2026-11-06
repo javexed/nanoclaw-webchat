@@ -26,7 +26,15 @@ import type { TLSSocket } from 'tls';
 import { audit } from '../../audit.js';
 import { log } from '../../log.js';
 import { installScript, WORKER_FETCHED, workerInstallScript, type WorkerHashes } from './agent-scripts.js';
-import { caPaths, ensureCa, issueMachineCert, publicKeyPin, RENEW_BEFORE_MS, type CaPaths } from './ca.js';
+import {
+  caPaths,
+  ensureCa,
+  isMachineLeaf,
+  issueMachineCert,
+  publicKeyPin,
+  RENEW_BEFORE_MS,
+  type CaPaths,
+} from './ca.js';
 import { attachLink } from './links.js';
 import {
   addMember,
@@ -95,7 +103,9 @@ async function caller(req: IncomingMessage): Promise<Member | null> {
 
 async function callerOf(socket: TLSSocket): Promise<Member | null> {
   if (!socket.authorized) return null;
-  const fp = socket.getPeerCertificate()?.fingerprint256;
+  const peer = socket.getPeerCertificate();
+  if (!isMachineLeaf(peer as never)) return null;
+  const fp = peer?.fingerprint256;
   const m = fp ? await memberByCert(fp) : null;
   return m && m.state !== 'revoked' ? m : null;
 }

@@ -3,7 +3,7 @@
  * database. A machine joins with a one-time token, reports with its client
  * certificate, renews, and is cut off when revoked.
  */
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
 import https from 'https';
@@ -15,7 +15,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { getDb, initTestDb } from '../../db/connection.js';
 import { moduleWebchatMachineIsolation, moduleWebchatMachineMembers } from '../../channels/webchat/migration.js';
-import { caPaths, certFingerprint, ensureCa, issueMachineCert, publicKeyPin } from './ca.js';
+import { caPaths, certFingerprint, ensureCa, isMachineLeaf, issueMachineCert, publicKeyPin } from './ca.js';
 import { machineHandler, workerHashes } from './listener.js';
 import {
   addMember,
@@ -142,6 +142,61 @@ describe('the CA', () => {
     expect(() => issueMachineCert('not a csr', paths)).toThrow(/invalid/);
     const tampered = csr.replace(/[A-Za-z](?=[^\n]*\n-----END)/, (ch) => (ch === 'A' ? 'B' : 'A'));
     expect(() => issueMachineCert(tampered, paths)).toThrow(/invalid/);
+  });
+});
+
+describe('the CA constraints', () => {
+  const text = (file: string) =>
+    execFileSync('openssl', ['x509', '-in', file, '-noout', '-text'], { encoding: 'utf8' });
+
+  it('the CA signs leaves only (pathlen:0); every leaf is critical CA:FALSE with one purpose', () => {
+    expect(text(paths.caCert)).toMatch(/Basic Constraints: critical\s+CA:TRUE, pathlen:0/);
+    const server = text(paths.serverCert);
+    expect(server).toMatch(/Basic Constraints: critical\s+CA:FALSE/);
+    expect(server).toMatch(/Key Usage: critical\s+Digital Signature\n/);
+    expect(server).toMatch(/Extended Key Usage:\s+TLS Web Server Authentication\n/);
+    expect(server).not.toContain('TLS Web Client Authentication');
+    const c = issueMachineCert(machineKey('purpose').csr, paths);
+    const file = path.join(tmp, 'purpose.crt');
+    fs.writeFileSync(file, c.cert);
+    const client = text(file);
+    expect(client).toMatch(/Basic Constraints: critical\s+CA:FALSE/);
+    expect(client).toMatch(/Extended Key Usage:\s+TLS Web Client Authentication\n/);
+    expect(client).not.toContain('TLS Web Server Authentication');
+  });
+
+  it('a certificate signed by a machine leaf does not verify', () => {
+    const { key: leafKey, csr } = machineKey('signer');
+    const leaf = path.join(tmp, 'signer.crt');
+    fs.writeFileSync(leaf, issueMachineCert(csr, paths).cert);
+    const leafKeyFile = path.join(tmp, 'signer.key.pem');
+    fs.writeFileSync(leafKeyFile, leafKey);
+    const victimCsr = path.join(tmp, 'victim.csr');
+    fs.writeFileSync(victimCsr, machineKey('victim').csr);
+    const forged = path.join(tmp, 'victim.crt');
+    openssl(['x509', '-req', '-in', victimCsr, '-CA', leaf, '-CAkey', leafKeyFile, '-days', '1', '-out', forged]);
+    const chain = path.join(tmp, 'chain.pem');
+    fs.writeFileSync(chain, fs.readFileSync(leaf));
+    const r = spawnSync('openssl', ['verify', '-CAfile', paths.caCert, '-untrusted', chain, forged], {
+      encoding: 'utf8',
+    });
+    expect(r.status).not.toBe(0);
+  });
+
+  it("only a machine's client certificate passes as a machine", () => {
+    expect(isMachineLeaf({ ca: false, ext_key_usage: ['1.3.6.1.5.5.7.3.2'] })).toBe(true);
+    expect(isMachineLeaf({ ca: false, ext_key_usage: ['1.3.6.1.5.5.7.3.1'] })).toBe(false);
+    expect(isMachineLeaf({ ca: true, ext_key_usage: ['1.3.6.1.5.5.7.3.2'] })).toBe(false);
+    expect(isMachineLeaf({ ca: false })).toBe(false);
+    expect(isMachineLeaf(null)).toBe(false);
+  });
+
+  it("the listener's own certificate is refused as a client", async () => {
+    const r = await call('POST', '/report', '{}', {
+      key: fs.readFileSync(paths.serverKey, 'utf8'),
+      cert: fs.readFileSync(paths.serverCert, 'utf8'),
+    });
+    expect(r.status).toBe(403);
   });
 });
 
