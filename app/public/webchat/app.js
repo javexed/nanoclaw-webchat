@@ -489,11 +489,11 @@ var _hoisted_7$31 = {
 };
 var _hoisted_8$22 = { class: "approval-payload" };
 var _hoisted_9$18 = ["disabled"];
-var _hoisted_10$17 = {
+var _hoisted_10$18 = {
 	key: 4,
 	class: "approval-actions"
 };
-var _hoisted_11$12 = ["disabled", "onClick"];
+var _hoisted_11$13 = ["disabled", "onClick"];
 var _hoisted_12$11 = {
 	key: 5,
 	class: "approval-error"
@@ -614,13 +614,13 @@ var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 						class: "reject",
 						disabled: !reason.value.trim() || unref(approvalBusy).has(__props.approval.questionId) || void 0
 					}, "Reject", 8, _hoisted_9$18)
-				], 32)) : (openBlock(), createElementBlock("div", _hoisted_10$17, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
+				], 32)) : (openBlock(), createElementBlock("div", _hoisted_10$18, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
 					return openBlock(), createElementBlock("button", {
 						key: i,
 						class: normalizeClass(btnClass(o.value)),
 						disabled: unref(approvalBusy).has(__props.approval.questionId) || void 0,
 						onClick: ($event) => pick(o.value)
-					}, toDisplayString(o.label || o.value), 11, _hoisted_11$12);
+					}, toDisplayString(o.label || o.value), 11, _hoisted_11$13);
 				}), 128))])),
 				unref(approvalErrors)[__props.approval.questionId] ? (openBlock(), createElementBlock("div", _hoisted_12$11, toDisplayString(unref(approvalErrors)[__props.approval.questionId]), 1)) : createCommentVNode("", true)
 			], 8, _hoisted_1$82);
@@ -1179,8 +1179,8 @@ var _hoisted_6$38 = { class: "bubble" };
 var _hoisted_7$29 = ["hidden"];
 var _hoisted_8$21 = ["hidden"];
 var _hoisted_9$17 = ["hidden"];
-var _hoisted_10$16 = ["hidden"];
-var _hoisted_11$11 = {
+var _hoisted_10$17 = ["hidden"];
+var _hoisted_11$12 = {
 	ref: "trace",
 	class: "thinking-fulltrace"
 };
@@ -1279,8 +1279,8 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 				createElementVNode("div", {
 					class: "thinking-preview",
 					hidden: !__props.turn.preview
-				}, toDisplayString(__props.turn.preview), 9, _hoisted_10$16),
-				createElementVNode("div", _hoisted_11$11, [createTextVNode(toDisplayString(traceEmpty.value), 1), liveView.value && !traceEmpty.value ? (openBlock(), createBlock(TraceView_default, {
+				}, toDisplayString(__props.turn.preview), 9, _hoisted_10$17),
+				createElementVNode("div", _hoisted_11$12, [createTextVNode(toDisplayString(traceEmpty.value), 1), liveView.value && !traceEmpty.value ? (openBlock(), createBlock(TraceView_default, {
 					key: 0,
 					view: liveView.value
 				}, null, 8, ["view"])) : createCommentVNode("", true)], 512),
@@ -2762,7 +2762,7 @@ var _hoisted_9$16 = {
 	key: 0,
 	class: "file-caption"
 };
-var _hoisted_10$15 = ["innerHTML"];
+var _hoisted_10$16 = ["innerHTML"];
 var DOWNLOAD = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-download\"></use></svg>";
 var IMAGE = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-image\"></use></svg>";
 var FILE_TEXT = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-file-text\"></use></svg>";
@@ -2847,7 +2847,7 @@ var MessageBubble_default = /* @__PURE__ */ defineComponent({
 				ref: bind,
 				class: "bubble",
 				innerHTML: __props.row.html
-			}, null, 8, _hoisted_10$15)) : (openBlock(), createElementBlock("div", {
+			}, null, 8, _hoisted_10$16)) : (openBlock(), createElementBlock("div", {
 				key: 2,
 				ref: bind,
 				class: "bubble"
@@ -3072,11 +3072,11 @@ var _hoisted_9$15 = {
 	key: 3,
 	class: "approval-inroom-note resolved"
 };
-var _hoisted_10$14 = {
+var _hoisted_10$15 = {
 	key: 4,
 	class: "skill-draft-card"
 };
-var _hoisted_11$10 = { class: "skill-head" };
+var _hoisted_11$11 = { class: "skill-head" };
 var _hoisted_12$10 = { class: "skill-name" };
 var _hoisted_13$10 = { class: "skill-desc" };
 var _hoisted_14$10 = { class: "skill-draft-actions" };
@@ -3170,8 +3170,8 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 				busy: undoing.value,
 				label: UNDO$1,
 				"busy-label": UNDOING
-			}, null, 8, ["busy"])], 8, _hoisted_7$27)])) : unref(draftAction)[__props.draftId]?.phase === "undone" ? (openBlock(), createElementBlock("div", _hoisted_8$19, " ↩ " + toDisplayString(unref(draftAction)[__props.draftId].name) + " — undone ", 1)) : __props.resolved ? (openBlock(), createElementBlock("div", _hoisted_9$15, toDisplayString(__props.status === "kept" ? `✅ ${__props.title} — kept` : `🗑 ${__props.title} — discarded`), 1)) : (openBlock(), createElementBlock("div", _hoisted_10$14, [
-				createElementVNode("div", _hoisted_11$10, [createElementVNode("span", _hoisted_12$10, toDisplayString(__props.title), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
+			}, null, 8, ["busy"])], 8, _hoisted_7$27)])) : unref(draftAction)[__props.draftId]?.phase === "undone" ? (openBlock(), createElementBlock("div", _hoisted_8$19, " ↩ " + toDisplayString(unref(draftAction)[__props.draftId].name) + " — undone ", 1)) : __props.resolved ? (openBlock(), createElementBlock("div", _hoisted_9$15, toDisplayString(__props.status === "kept" ? `✅ ${__props.title} — kept` : `🗑 ${__props.title} — discarded`), 1)) : (openBlock(), createElementBlock("div", _hoisted_10$15, [
+				createElementVNode("div", _hoisted_11$11, [createElementVNode("span", _hoisted_12$10, toDisplayString(__props.title), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
 					key: 0,
 					origin: {
 						label: `loads in every ${__props.agentName} session`,
@@ -3508,11 +3508,11 @@ var _hoisted_8$18 = {
 	class: "approval-notice-done"
 };
 var _hoisted_9$14 = ["disabled", "onClick"];
-var _hoisted_10$13 = {
+var _hoisted_10$14 = {
 	key: 2,
 	class: "approval-error"
 };
-var _hoisted_11$9 = ["data-draft-id"];
+var _hoisted_11$10 = ["data-draft-id"];
 var _hoisted_12$9 = {
 	key: 0,
 	class: "msg-body"
@@ -3579,12 +3579,12 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 						disabled: unref(approvalBusy).has(`resend:${row.notice.questionId}`) || void 0,
 						onClick: ($event) => unref(resendApproval)(row.notice.questionId)
 					}, "Send again", 8, _hoisted_9$14)) : createCommentVNode("", true),
-					unref(approvalErrors)[`resend:${row.notice.questionId}`] ? (openBlock(), createElementBlock("span", _hoisted_10$13, toDisplayString(unref(approvalErrors)[`resend:${row.notice.questionId}`]), 1)) : createCommentVNode("", true)
+					unref(approvalErrors)[`resend:${row.notice.questionId}`] ? (openBlock(), createElementBlock("span", _hoisted_10$14, toDisplayString(unref(approvalErrors)[`resend:${row.notice.questionId}`]), 1)) : createCommentVNode("", true)
 				], 2)], 8, _hoisted_7$26)) : row.kind === "draft" ? (openBlock(), createElementBlock("div", {
 					key: 4,
 					class: "msg skill-draft-msg",
 					"data-draft-id": row.id || ""
-				}, [createVNode(SkillDraftCard_default, mergeProps({ ref_for: true }, row.payload), null, 16)], 8, _hoisted_11$9)) : (openBlock(), createElementBlock("div", mergeProps({
+				}, [createVNode(SkillDraftCard_default, mergeProps({ ref_for: true }, row.payload), null, 16)], 8, _hoisted_11$10)) : (openBlock(), createElementBlock("div", mergeProps({
 					key: 5,
 					class: row.cls
 				}, { ref_for: true }, row.id ? { "data-message-id": row.id } : {}, { style: row.isA2a ? { "--a2a-accent": row.a2aAccent } : void 0 }), [
@@ -5113,7 +5113,7 @@ var _hoisted_8$17 = {
 	class: "skill-desc"
 };
 var _hoisted_9$13 = ["onClick"];
-var _hoisted_10$12 = ["onClick"];
+var _hoisted_10$13 = ["onClick"];
 var REMOVE$5 = "Remove";
 var UPDATE$1 = "Update";
 var EMPTY$13 = "No secrets yet";
@@ -5173,7 +5173,7 @@ var AgentSecretList_default = /* @__PURE__ */ defineComponent({
 							class: "btn btn-danger",
 							type: "button",
 							onClick: ($event) => props.onRemove(r)
-						}, toDisplayString(REMOVE$5), 8, _hoisted_10$12)], 64)) : createCommentVNode("", true)]);
+						}, toDisplayString(REMOVE$5), 8, _hoisted_10$13)], 64)) : createCommentVNode("", true)]);
 					}), 128))], 64);
 				}), 128))
 			], 64);
@@ -5264,32 +5264,37 @@ var CopyIconButton_default = /* @__PURE__ */ defineComponent({
 //#region src/features/AgentKeyList.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$61 = { class: "skill-info" };
 var _hoisted_2$53 = { class: "skill-head" };
-var _hoisted_3$49 = ["onSubmit"];
-var _hoisted_4$41 = ["placeholder", "aria-label"];
-var _hoisted_5$34 = {
+var _hoisted_3$49 = ["title"];
+var _hoisted_4$41 = ["onSubmit"];
+var _hoisted_5$34 = ["placeholder", "aria-label"];
+var _hoisted_6$30 = {
 	key: 1,
 	class: "skill-desc"
 };
-var _hoisted_6$30 = { class: "secret-actions" };
-var _hoisted_7$22 = ["disabled", "onClick"];
-var _hoisted_8$16 = ["onClick"];
+var _hoisted_7$22 = { class: "secret-actions" };
+var _hoisted_8$16 = ["disabled", "onClick"];
 var _hoisted_9$12 = ["onClick"];
+var _hoisted_10$12 = ["onClick"];
+var _hoisted_11$9 = ["onClick"];
 //#endregion
 //#region src/features/AgentKeyList.vue
 var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 	__name: "AgentKeyList",
 	props: {
 		onRemove: { type: Function },
-		onSaveTarget: { type: Function }
+		onSaveTarget: { type: Function },
+		onRotate: { type: Function }
 	},
 	setup(__props) {
 		/**
 		* An agent's SSH deploy keys, mounted into <ul id="agent-keys-list">; rows are shaped in
-		* renderAgentKeys, including the one-string meta line (ssh command, or path plus note).
-		* The private key never reaches the client, so copying the public key is the whole
-		* workflow; it uses the .btn-icon copy control (CopyIconButton), paired with Edit and
-		* Remove. Edit changes only the login target (user@host): the key stays the same, so
-		* the far end keeps trusting it — no need to delete and re-add a key to fix its host.
+		* renderAgentKeys, including the one-string meta line (ssh command and target, or what
+		* is missing). The private key is held on the host and never reaches the client, so
+		* copying the public key is the whole workflow; it uses the .btn-icon copy control
+		* (CopyIconButton), paired with Edit and Remove. Edit changes only the login target
+		* (user@host): the key stays the same, so the far end keeps trusting it. A key the
+		* agent could once read is marked Exposed; Rotate replaces it with a new one, whose
+		* public half then goes on the server.
 		*/
 		const props = __props;
 		const T = {
@@ -5297,7 +5302,10 @@ var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 			save: "Save",
 			cancel: "Cancel",
 			remove: "Remove",
-			target: "user@host"
+			rotate: "Rotate",
+			target: "user@host",
+			exposed: "Exposed",
+			exposedTip: "The agent could read this key once. Rotate it, then put the new public key on the server."
 		};
 		/** Name of the row being edited, and its draft target. */
 		const editing = ref(null);
@@ -5322,7 +5330,11 @@ var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("li", {
 					key: r.name,
 					class: "skill-source-row secret-row"
-				}, [createElementVNode("div", _hoisted_1$61, [createElementVNode("div", _hoisted_2$53, toDisplayString(r.name), 1), editing.value === r.name ? (openBlock(), createElementBlock("form", {
+				}, [createElementVNode("div", _hoisted_1$61, [createElementVNode("div", _hoisted_2$53, [createTextVNode(toDisplayString(r.name), 1), r.exposed ? (openBlock(), createElementBlock("span", {
+					key: 0,
+					class: "skill-badge skill-badge-warn",
+					title: T.exposedTip
+				}, toDisplayString(T.exposed), 9, _hoisted_3$49)) : createCommentVNode("", true)]), editing.value === r.name ? (openBlock(), createElementBlock("form", {
 					key: 0,
 					class: "agent-key-edit",
 					onSubmit: withModifiers(($event) => save(r.name), ["prevent"])
@@ -5334,12 +5346,12 @@ var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 					autocomplete: "off",
 					spellcheck: "false",
 					onKeydown: _cache[1] || (_cache[1] = withKeys(($event) => editing.value = null, ["esc"]))
-				}, null, 40, _hoisted_4$41), [[vModelText, draft.value]])], 40, _hoisted_3$49)) : (openBlock(), createElementBlock("span", _hoisted_5$34, toDisplayString(r.meta), 1))]), createElementVNode("div", _hoisted_6$30, [editing.value === r.name ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("button", {
+				}, null, 40, _hoisted_5$34), [[vModelText, draft.value]])], 40, _hoisted_4$41)) : (openBlock(), createElementBlock("span", _hoisted_6$30, toDisplayString(r.meta), 1))]), createElementVNode("div", _hoisted_7$22, [editing.value === r.name ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("button", {
 					class: "btn btn-primary",
 					type: "button",
 					disabled: !draft.value.trim() || saving.value,
 					onClick: ($event) => save(r.name)
-				}, toDisplayString(T.save), 9, _hoisted_7$22), createElementVNode("button", {
+				}, toDisplayString(T.save), 9, _hoisted_8$16), createElementVNode("button", {
 					class: "btn btn-secondary",
 					type: "button",
 					onClick: _cache[2] || (_cache[2] = ($event) => editing.value = null)
@@ -5348,16 +5360,22 @@ var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 						text: r.publicKey,
 						label: "Copy public key"
 					}, null, 8, ["text"]),
+					r.exposed ? (openBlock(), createElementBlock("button", {
+						key: 0,
+						class: "btn btn-secondary",
+						type: "button",
+						onClick: ($event) => props.onRotate(r)
+					}, toDisplayString(T.rotate), 9, _hoisted_9$12)) : createCommentVNode("", true),
 					createElementVNode("button", {
 						class: "btn btn-secondary",
 						type: "button",
 						onClick: ($event) => startEdit(r)
-					}, toDisplayString(T.edit), 9, _hoisted_8$16),
+					}, toDisplayString(T.edit), 9, _hoisted_10$12),
 					createElementVNode("button", {
 						class: "btn btn-danger",
 						type: "button",
 						onClick: ($event) => props.onRemove(r)
-					}, toDisplayString(T.remove), 9, _hoisted_9$12)
+					}, toDisplayString(T.remove), 9, _hoisted_11$9)
 				], 64))])]);
 			}), 128);
 		};
@@ -21653,7 +21671,8 @@ var agentKeysGroupId = null;
 function mountAgentKeyList() {
 	agentKeysApp ??= mountIsland("#agent-keys-list", () => createApp(AgentKeyList_default, {
 		onRemove: (r) => void removeAgentKey(agentKeysGroupId, r.key),
-		onSaveTarget: (name, target) => saveAgentKeyTarget(agentKeysGroupId, name, target)
+		onSaveTarget: (name, target) => saveAgentKeyTarget(agentKeysGroupId, name, target),
+		onRotate: (r) => void rotateAgentKey(agentKeysGroupId, r.name)
 	}));
 }
 async function renderAgentKeys(agentGroupId) {
@@ -21671,9 +21690,10 @@ async function renderAgentKeys(agentGroupId) {
 	agentKeysGroupId = agentGroupId;
 	agentKeyRows.value = keys.map((k) => ({
 		name: k.name,
-		meta: k.target ? `ssh -i ${k.path} ${k.target}` : `${k.path} · no login target set`,
+		meta: !k.target ? "Target needed" : k.command ? `${k.command} · ${k.target}` : `${k.target} · host key not checked yet`,
 		target: k.target || "",
 		publicKey: k.publicKey,
+		exposed: k.exposed === true,
 		key: k
 	}));
 	mountAgentKeyList();
@@ -21733,6 +21753,32 @@ async function saveAgentKeyTarget(agentGroupId, name, target) {
 	} catch (err) {
 		showToast(err?.body?.error || "Could not save", { kind: "error" });
 		return false;
+	}
+}
+/** Replace an exposed key with a new pair; the new public half goes on the server. */
+async function rotateAgentKey(agentGroupId, name) {
+	if (!await deps$3.showConfirmModal({
+		title: "Rotate deploy key",
+		body: `Replace “${name}” with a new key? The old one stops working here at once. Put the new public key on the server.`,
+		confirmLabel: "Rotate"
+	})) return;
+	try {
+		const body = await apiJson(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? "")}`, {
+			method: "POST",
+			body: {
+				name,
+				rotate: true
+			}
+		});
+		try {
+			await navigator.clipboard.writeText(body.key.publicKey);
+			showToast(`Rotated ${name} — new public key copied`);
+		} catch {
+			showToast(`Rotated ${name}`);
+		}
+		await renderAgentKeys(agentGroupId);
+	} catch (err) {
+		showToast(err?.body?.error || "Could not rotate key", { kind: "error" });
 	}
 }
 async function removeAgentKey(agentGroupId, key) {
