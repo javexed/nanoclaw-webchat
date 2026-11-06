@@ -5,7 +5,6 @@
 import { execFile, execFileSync, spawnSync } from 'child_process';
 import fs from 'fs';
 import net from 'net';
-import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
 
