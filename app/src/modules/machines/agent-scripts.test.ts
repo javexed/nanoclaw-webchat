@@ -15,6 +15,7 @@ import {
   WORKER_HOST_RULES,
   workerHostRulesCommand,
   workerInstallScript,
+  workerBundle,
   workerUpgradeCommand,
 } from './agent-scripts.js';
 
@@ -220,12 +221,86 @@ describe('the worker installer and the workload host rules', () => {
       const bad = run('0'.repeat(64));
       expect(bad.status).not.toBe(0);
       expect(bad.stdout).toContain('x.js did not arrive intact.');
-      expect(fs.existsSync(path.join(dir, 'x.js'))).toBe(false);
+      expect(fs.existsSync(path.join(dir, 'x.js.new'))).toBe(false);
       const ok = run(good);
       expect(ok.status).toBe(0);
-      expect(fs.readFileSync(path.join(dir, 'x.js'), 'utf8')).toBe('hello\n');
+      // Staged only: the pin decides whether it replaces what runs.
+      expect(fs.readFileSync(path.join(dir, 'x.js.new'), 'utf8')).toBe('hello\n');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the worker's code pin", () => {
+  const files = { 'mux.js': 'mux v1\n', 'worker-main.js': 'main v1\n', 'workloads-host-rules.sh': 'rules v1\n' };
+  const sha = (t: string) => crypto.createHash('sha256').update(t).digest('hex');
+
+  /** Run the real worker-install.sh against temp paths, with docker, systemd and the network stubbed. */
+  function install(root: string, served: Record<string, string>, args: string[] = []) {
+    const hashes = Object.fromEntries(Object.entries(served).map(([f, t]) => [f, sha(t)]));
+    fs.mkdirSync(path.join(root, 'served'), { recursive: true });
+    for (const [f, t] of Object.entries(served)) fs.writeFileSync(path.join(root, 'served', f), t);
+    const script = workerInstallScript('10.0.0.4', 7443, 'PIN', hashes)
+      .replaceAll('/etc/nanoclaw-machine', `${root}/etc`)
+      .replaceAll('/usr/local/lib/nanoclaw-machine/worker', `${root}/lib`)
+      .replaceAll('/var/lib/nanoclaw-worker', `${root}/var`)
+      .replaceAll('/etc/systemd/system', `${root}/units`)
+      .replaceAll('/run/nanoclaw-machine-install.lock', `${root}/lock`);
+    fs.mkdirSync(path.join(root, 'etc'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'units'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'install.sh'), script);
+    const stubs = [
+      'id() { echo 0; }',
+      'node() { echo 20; }',
+      'docker() { return 0; }',
+      'iptables() { return 0; }',
+      'systemctl() { return 0; }',
+      'bash() { return 0; }',
+      `curl() { o=""; while [ $# -gt 0 ]; do [ "$1" = -o ] && o="$2"; last="$1"; shift; done; cp "${root}/served/\${last##*/}" "$o"; }`,
+    ].join('\n');
+    return spawnSync('sh', ['-c', `${stubs}\n. ${root}/install.sh`, 'sh', ...args], { encoding: 'utf8' });
+  }
+  const read = (root: string, f: string) => fs.readFileSync(path.join(root, 'lib', f), 'utf8');
+
+  it('pins the first install, refuses changed code, and takes it only when accepted', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-pin-'));
+    try {
+      const first = install(root, files);
+      expect(first.status).toBe(0);
+      const pin1 = fs.readFileSync(path.join(root, 'etc', 'worker.pin'), 'utf8').trim();
+      const v1 = workerBundle(Object.fromEntries(Object.entries(files).map(([f, t]) => [f, sha(t)])));
+      expect(pin1).toBe(v1);
+      expect(fs.statSync(path.join(root, 'etc', 'worker.pin')).mode & 0o777).toBe(0o600);
+      // The same code again: fine, nothing to accept.
+      expect(install(root, files).status).toBe(0);
+
+      const v2files = { ...files, 'worker-main.js': 'main v2 (something else)\n' };
+      const v2 = workerBundle(Object.fromEntries(Object.entries(v2files).map(([f, t]) => [f, sha(t)])))!;
+      const refused = install(root, v2files);
+      expect(refused.status).toBe(3);
+      expect(refused.stdout).toContain(`pinned ${v1}, sent ${v2}`);
+      expect(refused.stdout).toContain(`| sh -s -- --accept ${v2}'`);
+      expect(read(root, 'worker-main.js')).toBe('main v1\n');
+      expect(fs.readdirSync(path.join(root, 'lib')).filter((n) => n.endsWith('.new'))).toEqual([]);
+
+      expect(install(root, v2files, ['--accept', '0'.repeat(64)]).status).toBe(3);
+      expect(read(root, 'worker-main.js')).toBe('main v1\n');
+
+      const accepted = install(root, v2files, ['--accept', v2]);
+      expect(accepted.status).toBe(0);
+      expect(read(root, 'worker-main.js')).toBe('main v2 (something else)\n');
+      expect(fs.readFileSync(path.join(root, 'etc', 'worker.pin'), 'utf8').trim()).toBe(v2);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('the bundle hash is the one the script computes, and the accept command takes only a hash', () => {
+    expect(workerBundle({ 'mux.js': 'a'.repeat(64) })).toBeNull();
+    expect(workerUpgradeCommand()).not.toContain('--accept');
+    expect(workerUpgradeCommand('f'.repeat(64))).toContain(`| sh -s -- --accept ${'f'.repeat(64)}'`);
+    expect(() => workerUpgradeCommand("x'; rm -rf /")).toThrow(/bad worker bundle hash/);
+    expect(shOk(workerUpgradeCommand('f'.repeat(64))).ok).toBe(true);
   });
 });

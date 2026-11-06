@@ -46,11 +46,17 @@ function fetchInstaller(host: string, port: number, pin: string): string {
   );
 }
 
-/** For a machine that joined before the worker service existed: run once, as root, on the machine. */
-export function workerUpgradeCommand(): string {
+/**
+ * The worker command, run as root on the machine: installs the worker
+ * service, or refreshes it. With `accept`, the worker takes new worker code
+ * whose bundle hash (workerBundle) is that one: see workerInstallScript.
+ */
+export function workerUpgradeCommand(accept?: string): string {
+  if (accept !== undefined && !/^([0-9a-f]{64}|__NC_NEW__)$/.test(accept)) throw new Error('bad worker bundle hash');
   return (
     `sudo sh -c '. /etc/nanoclaw-machine/config && curl -fsS -k --pinnedpubkey "sha256//$PIN" ` +
-    `--cert /etc/nanoclaw-machine/cert.pem --key /etc/nanoclaw-machine/key.pem "https://$HOST:$PORT/worker/install.sh" | sh'`
+    `--cert /etc/nanoclaw-machine/cert.pem --key /etc/nanoclaw-machine/key.pem "https://$HOST:$PORT/worker/install.sh" | sh` +
+    `${accept ? ` -s -- --accept ${accept}` : ''}'`
   );
 }
 
@@ -152,6 +158,18 @@ WantedBy=multi-user.target
 export const WORKER_FETCHED = ['mux.js', 'worker-main.js', 'workloads-host-rules.sh'] as const;
 export type WorkerHashes = Partial<Record<(typeof WORKER_FETCHED)[number], string>>;
 
+/**
+ * One hash for the worker's code: sha256 of a "<sha256>  <file>" line per
+ * fetched file, in order (what worker-install.sh computes with sha256sum).
+ * Null when a file has no hash.
+ */
+export function workerBundle(hashes: WorkerHashes): string | null {
+  if (!WORKER_FETCHED.every((f) => /^[0-9a-f]{64}$/.test(hashes[f] ?? ''))) return null;
+  return createHash('sha256')
+    .update(WORKER_FETCHED.map((f) => `${hashes[f]}  ${f}\n`).join(''))
+    .digest('hex');
+}
+
 /** Where the host rules land on a worker; the owner runs this to put them back. */
 export const WORKER_HOST_RULES = '/usr/local/lib/nanoclaw-machine/worker/workloads-host-rules.sh';
 export const workerHostRulesCommand = (): string => `sudo bash ${WORKER_HOST_RULES} --install-unit`;
@@ -172,6 +190,13 @@ export function workerInstallScript(host: string, port: number, pin: string, has
 # NanoClaw worker service installer (${host}:${port}).
 set -eu
 umask 077
+ACCEPT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --accept) ACCEPT="\${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    *) shift ;;
+  esac
+done
 [ "$(id -u)" = 0 ] || { echo "Run as root (sudo)."; exit 1; }
 LOCK=/run/nanoclaw-machine-install.lock
 mkdir "$LOCK" 2>/dev/null || { echo "Another NanoClaw install is running on this machine ($LOCK)."; exit 1; }
@@ -201,9 +226,28 @@ fetch() {
   [ "$2" != missing ] || { echo "NanoClaw could not serve $1; update NanoClaw and run this again."; exit 1; }
   curl $TLS -o "$LIB/$1.new" "$URL/worker/$1"
   echo "$2  $LIB/$1.new" | sha256sum -c --status || { rm -f "$LIB/$1.new"; echo "$1 did not arrive intact."; exit 1; }
-  mv "$LIB/$1.new" "$LIB/$1"
 }
 ${fetch}
+# The worker's own pin: the code it runs as root changes only when this
+# machine's admin accepts it. The first install pins what it got; after that
+# a different bundle is refused unless it is the one given with --accept.
+FILES="${WORKER_FETCHED.join(' ')}"
+NEW=$(for f in $FILES; do printf '%s  %s\n' "$(sha256sum < "$LIB/$f.new" | cut -d' ' -f1)" "$f"; done | sha256sum | cut -d' ' -f1)
+PIN_FILE="$DIR/worker.pin"
+if [ -f "$PIN_FILE" ]; then
+  OLD=$(cat "$PIN_FILE")
+  if [ "$NEW" != "$OLD" ] && [ "$NEW" != "$ACCEPT" ]; then
+    for f in $FILES; do rm -f "$LIB/$f.new"; done
+    echo "NanoClaw sent different worker code than this machine runs (pinned $OLD, sent $NEW). Nothing was changed."
+    echo "If you expect it (NanoClaw was updated), accept it by running this on this machine:"
+    sed "s/__NC_NEW__/$NEW/" <<'NC_ACCEPT'
+${workerUpgradeCommand('__NC_NEW__')}
+NC_ACCEPT
+    exit 3
+  fi
+fi
+for f in $FILES; do mv -f "$LIB/$f.new" "$LIB/$f"; done
+printf '%s\n' "$NEW" | put "$PIN_FILE" 600
 printf '{"type":"module"}\n' | put "$LIB/package.json" 600
 # Workload host rules: a workload container must not reach this machine's own
 # services through its network's gateway address. The worker checks they work
