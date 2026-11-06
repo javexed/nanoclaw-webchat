@@ -18,7 +18,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { getDb, initTestDb } from '../../db/connection.js';
 import { moduleWebchatMachineMembers } from '../../channels/webchat/migration.js';
 import { caPaths, ensureCa, issueMachineCert, publicKeyPin } from './ca.js';
-import { __resetLinksForTest, callWorker, dropLink, isLinked } from './links.js';
+import { __resetLinksForTest, callWorker, dropLink, HEALTH_BURST, healthLimiter, isLinked } from './links.js';
 import { machineHandler, upgradeLink } from './listener.js';
 import { addMember, createJoinToken, getMember, revokeMember } from './members.js';
 import { Mux, STREAM_WINDOW } from './mux.js';
@@ -345,6 +345,23 @@ describe("the worker's fixed jobs", () => {
   });
 });
 
+describe('the health rate limit', () => {
+  it('lets a burst through, then one report per interval; logs drops at most once a minute', () => {
+    const l = healthLimiter(4, 15_000);
+    const t0 = 1_000_000;
+    expect([1, 2, 3, 4, 5, 6].map(() => l.take(t0))).toEqual([true, true, true, true, false, false]);
+    expect(l.due(t0)).toBe(2);
+    expect(l.take(t0 + 1_000)).toBe(false);
+    expect(l.due(t0 + 1_000)).toBeNull();
+    expect(l.take(t0 + 16_000)).toBe(true);
+    expect(l.take(t0 + 16_000)).toBe(false);
+    expect(l.due(t0 + 61_000)).toBe(2);
+    // A worker reporting once a minute is never limited.
+    const steady = healthLimiter();
+    for (let i = 0; i < 100; i++) expect(steady.take(t0 + i * 60_000)).toBe(true);
+  });
+});
+
 describe('the link end to end (mutual TLS)', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-link-'));
   const paths = caPaths(path.join(tmp, 'ca'));
@@ -413,6 +430,22 @@ describe('the link end to end (mutual TLS)', () => {
     });
     await until(async () => (await getMember(w.id))?.lastReport != null);
     expect((await getMember(w.id))?.health?.memUsedMb).toBe(1000);
+    mux.close();
+    await until(() => !isLinked(w.id));
+  });
+
+  it('drops health reports past the rate limit instead of writing each one', async () => {
+    const w = await joinWorker();
+    const mux = await connect({ host: '127.0.0.1', port, pin, key: w.key, cert: w.cert });
+    await until(() => isLinked(w.id));
+    for (let i = 1; i <= 20; i++)
+      mux.send({ t: 'health', data: { cpus: 2, memTotalMb: 4096, memUsedMb: i, diskTotalGb: 30, diskFreeGb: 10 } });
+    await until(async () => (await getMember(w.id))?.lastReport != null);
+    // Settle: anything still in flight lands now.
+    await new Promise((r) => setTimeout(r, 200));
+    const used = (await getMember(w.id))?.health?.memUsedMb ?? 0;
+    expect(used).toBeGreaterThanOrEqual(1);
+    expect(used).toBeLessThanOrEqual(HEALTH_BURST);
     mux.close();
     await until(() => !isLinked(w.id));
   });

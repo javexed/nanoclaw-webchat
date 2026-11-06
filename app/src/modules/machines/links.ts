@@ -13,6 +13,44 @@ import { Mux, type Message, type Socketish } from './mux.js';
 
 const links = new Map<string, Mux>();
 
+/**
+ * Health reports a link may send: a worker reports once a minute (and once
+ * more after an isolation check), so a burst of 4 and one more every 15
+ * seconds is plenty. Anything over is dropped, not written: each report is
+ * a database write, and a broken or hostile worker must not be able to
+ * flood central with them. Logged at most once a minute per link.
+ */
+export const HEALTH_BURST = 4;
+export const HEALTH_EVERY_MS = 15_000;
+
+export function healthLimiter(burst = HEALTH_BURST, everyMs = HEALTH_EVERY_MS) {
+  let tokens = burst;
+  let last = 0;
+  let dropped = 0;
+  let loggedAt = -Infinity;
+  return {
+    /** May this report be recorded? */
+    take(now = Date.now()): boolean {
+      if (last) tokens = Math.min(burst, tokens + (now - last) / everyMs);
+      last = now;
+      if (tokens >= 1) {
+        tokens -= 1;
+        return true;
+      }
+      dropped++;
+      return false;
+    },
+    /** Reports dropped since the last log line, when a line is due (else null). */
+    due(now = Date.now()): number | null {
+      if (!dropped || now - loggedAt < 60_000) return null;
+      loggedAt = now;
+      const n = dropped;
+      dropped = 0;
+      return n;
+    },
+  };
+}
+
 /** Streams a worker opens (e.g. a workload's egress), by kind; modules register what they accept. */
 export type WorkerStreamHandler = (
   machineId: string,
@@ -28,8 +66,14 @@ export function attachLink(machineId: string, socket: Socketish): Mux {
   links.get(machineId)?.close(new Error('replaced by a newer link'));
   const mux = new Mux(socket, 'central');
   links.set(machineId, mux);
+  const limit = healthLimiter();
   mux.on('message', (msg: Message) => {
     if (msg.t !== 'health') return;
+    if (!limit.take()) {
+      const n = limit.due();
+      if (n) log.warn('Worker health reports dropped: too many', { machineId, dropped: n });
+      return;
+    }
     void (async () => {
       const m = await getMember(machineId);
       if (!m || m.state === 'revoked') return mux.close(new Error('revoked'));
