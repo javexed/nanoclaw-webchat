@@ -148,6 +148,10 @@ function pasteKind(text) {
 function lineCount(text) {
 	return text.replace(/\n$/, "").split("\n").length;
 }
+/** Ctrl/Cmd+Shift+V: paste as plain text, never as a file or a fenced block. */
+function isPlainPasteKey(e) {
+	return e.shiftKey && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v";
+}
 //#endregion
 //#region src/core/state.ts
 /**
@@ -3692,8 +3696,8 @@ var CodeToolbar_default = /* @__PURE__ */ defineComponent({
 		* The Wrap / Copy strip on a fenced code block, mounted INTO the .code-toolbar div, one
 		* app per <pre>, so the opaque v-html markdown subtree is otherwise untouched. Button
 		* feedback is component state, so the copy timer is cleared on unmount. Wrap toggles a
-		* class on the <pre> (on from the start when `wrap` is set) (the CSS rule is `.msg .bubble pre.wrap code`) — the one
-		* element it touches outside its own tree.
+		* class on the <pre> (the CSS rule is `.msg .bubble pre.wrap code`), on from the start
+		* when `wrap` is set — the one element it touches outside its own tree.
 		*/
 		const props = __props;
 		const copyState = ref("idle");
@@ -3769,7 +3773,7 @@ function decorateCodeBlocks(container) {
 			wrap: lang === "text"
 		}).mount(toolbar);
 		const lines = lineCount((code ?? pre).textContent ?? "");
-		if (lines > 15) clampCodeBlock(block, lines);
+		if (lines > 25) clampCodeBlock(block, lines);
 	});
 }
 function clampCodeBlock(block, lines) {
@@ -3777,11 +3781,15 @@ function clampCodeBlock(block, lines) {
 	const more = document.createElement("button");
 	more.type = "button";
 	more.className = "code-more";
-	const label = () => block.classList.contains("collapsed") ? `Show all (${lines} lines)` : "Show less";
-	more.textContent = label();
+	const label = () => {
+		const collapsed = block.classList.contains("collapsed");
+		more.textContent = collapsed ? `Show all (${lines} lines)` : "Show less";
+		more.setAttribute("aria-expanded", String(!collapsed));
+	};
+	label();
 	more.addEventListener("click", () => {
 		const collapsed = block.classList.toggle("collapsed");
-		more.textContent = label();
+		label();
 		if (collapsed) block.scrollIntoView({ block: "nearest" });
 	});
 	block.appendChild(more);
@@ -24817,9 +24825,17 @@ function wireMobileBack() {
 }
 /** Composer paste: multi-line text is wrapped in a ```text fence so it renders verbatim
 * and wrapped (no Markdown or mention decoration); a long paste goes to `onLongPaste`
-* as a .txt file instead; files fall through to the document listener. */
+* as a .txt file instead; Ctrl/Cmd+Shift+V pastes as typed, with neither; files fall
+* through to the document listener. */
 function wireComposerPaste(onLongPaste) {
+	let plainPaste = false;
+	$("#message-input")?.addEventListener("keydown", (e) => {
+		plainPaste = isPlainPasteKey(e);
+	});
 	$("#message-input")?.addEventListener("paste", (e) => {
+		const plain = plainPaste;
+		plainPaste = false;
+		if (plain) return;
 		if (e.clipboardData?.files?.length) return;
 		const text = e.clipboardData?.getData("text/plain") ?? "";
 		if (onLongPaste && pasteKind(text) === "attach") {
