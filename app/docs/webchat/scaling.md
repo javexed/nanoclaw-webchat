@@ -33,6 +33,31 @@ line of the session's stdin. The installer runs one at a time (a lock in
 it did not get from central: a worker needs Docker with the Compose plugin
 already installed, and says so when it is missing.
 
+## The worker's code
+
+The worker service runs as root, so its code changes only when the worker's
+own admin says so. The first install pins the code it got (one sha256 over
+`mux.js`, `worker-main.js` and `workloads-host-rules.sh`, kept in
+`/etc/nanoclaw-machine/worker.pin`). After that, the worker command refuses
+code that differs from the pin, changes nothing, and prints both hashes and
+the command that accepts the new one:
+
+```bash
+sudo sh -c '… | sh -s -- --accept <new hash>'
+```
+
+Run it after a NanoClaw update that changed the worker. A pin is used rather
+than a signature by central's key: a central that is no longer itself holds
+that key too, so a signature would not stop it; the pin puts every change in
+front of the worker's admin. The worker never updates itself over its link.
+
+## Certificates
+
+NanoClaw's machine CA signs only end certificates (`pathlen:0`). The
+listener's certificate is for server authentication only, a machine's for
+client authentication only, and neither can sign another certificate.
+Central accepts as a machine only a client certificate it issued.
+
 ## What a worker checks itself
 
 Central checks every stack before it is sent, but a worker does not rely on
@@ -55,7 +80,9 @@ that. It refuses, whatever central sends:
 - a stream to any address but a workload service's own.
 
 Health reports are clamped to what the machine said when it joined: a report
-can never make a worker look bigger than it was. A backup a worker streams to
+can never make a worker look bigger than it was. A link may send a burst of 4
+reports and one more every 15 seconds; the rest are dropped (and logged), so a
+worker cannot flood central's database. A backup a worker streams to
 central is capped at 20 GB per volume and stops when central's disk has less
 than 5 GB free; a cut or aborted archive is removed.
 
@@ -149,3 +176,11 @@ Admin → Machines shows one line per worker:
 From the host: `ncl workloads workers` lists each worker with its switch,
 link, isolation result and stacks; `ncl workloads worker-set --id <m-…>
 --workloads on|off` is the switch.
+
+## Published apps of stacks on workers
+
+Caddy reaches an app on a worker through a relay: a unix socket in the
+gateway's run folder (0700, NanoClaw's own user, mounted into the Caddy
+container), whose connections NanoClaw carries over the worker's link. No TCP
+port is opened, so another local process cannot skip the gateway's sign-in
+check. Every request passes that check first.
