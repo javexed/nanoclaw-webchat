@@ -3,7 +3,7 @@
  * service has an address, the route's kind is on and can name the app's
  * address. Everything else is left out of Caddy, so a stopped workload or a
  * switched-off route answers 404 at the gateway rather than reaching anything.
- * A stack on a worker is served through a loopback relay over its link
+ * A stack on a worker is served through a relay socket over its link
  * (relay.ts), and left out while that worker is not linked.
  */
 import { LOCAL_NODE } from '../docker.js';

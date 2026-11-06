@@ -56,7 +56,7 @@ export interface GatewaySite {
 }
 
 export function validSite(s: GatewaySite): boolean {
-  // A stack on a worker is reached through a loopback relay over its link (relay.ts).
+  // A stack on a worker is reached through a relay socket over its link (relay.ts).
   return UUID_RE.test(s.id) && HOSTNAME_RE.test(s.hostname) && (validTarget(s.target) || isRelayTarget(s.target));
 }
 
@@ -115,7 +115,8 @@ const CREDENTIAL_COOKIES =
 
 export const runDir = (): string => path.join(gatewayDir(), 'caddy');
 /** Inside the container. */
-const MOUNT = '/run/gw';
+/** Where the run folder is mounted in the Caddy container. */
+export const MOUNT = '/run/gw';
 export const containerName = (): string => `nanoclaw-workload-gateway-${INSTALL_SLUG}`;
 
 /** The Caddyfile for these sites. Pure: tested on its own. Throws on anything that is not checked. */
