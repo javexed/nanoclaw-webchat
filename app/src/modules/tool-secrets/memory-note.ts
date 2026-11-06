@@ -38,8 +38,16 @@ const INDEX_REL = path.join('memory', 'index.md');
 /** Keep the always-loaded pointer small — the index has a 16k char budget. */
 const INLINE_HOST_CAP = 8;
 
+/** A deploy key as the note shows it: a name and a command, never a key path. */
+export interface NoteKey {
+  name: string;
+  target?: string;
+  /** `ssh <name>` once the key is usable. */
+  command?: string;
+}
+
 /** OKF concept file: frontmatter + the full guidance. */
-function renderConcept(hosts: string[], keys: { name: string; path: string; target?: string }[]): string {
+function renderConcept(hosts: string[], keys: NoteKey[]): string {
   const body = renderBlock(hosts, keys);
   if (!body) return '';
   return [
@@ -59,7 +67,7 @@ function renderConcept(hosts: string[], keys: { name: string; path: string; targ
  * every session prompt under a 16k budget, and a long host list would crowd out
  * the agent's own Core Memory. Enough to stop it concluding it has no access.
  */
-function renderIndexPointer(hosts: string[], keys: { name: string; path: string; target?: string }[]): string {
+function renderIndexPointer(hosts: string[], keys: NoteKey[]): string {
   if (!hosts.length && !keys.length) return '';
   const shown = hosts.slice(0, INLINE_HOST_CAP);
   const rest = hosts.length - shown.length;
@@ -72,13 +80,18 @@ function renderIndexPointer(hosts: string[], keys: { name: string; path: string;
     );
   }
   if (keys.length) {
-    out.push(`${keys.length} SSH key${keys.length === 1 ? '' : 's'} available to you.`);
+    const usable = keys.filter((k) => k.command).map((k) => `\`${k.command}\``);
+    out.push(
+      usable.length
+        ? `SSH: ${usable.join(', ')} (see the deploy-keys skill).`
+        : `${keys.length} SSH key${keys.length === 1 ? '' : 's'} not usable yet (see the deploy-keys skill).`,
+    );
   }
   out.push('', `Detail: [Credential access](system/credential-access.md)`, '', END);
   return out.join('\n');
 }
 
-function renderBlock(hosts: string[], keys: { name: string; path: string; target?: string }[]): string {
+function renderBlock(hosts: string[], keys: NoteKey[]): string {
   if (!hosts.length && !keys.length) return '';
   const out = ['## Credential access', ''];
   if (hosts.length) {
@@ -94,12 +107,15 @@ function renderBlock(hosts: string[], keys: { name: string; path: string; target
   }
   if (keys.length) {
     out.push(
-      'SSH keys available to you. Use the exact command shown — the login user is',
-      'part of it, so do not guess usernames. Never print a private key, never paste',
-      'one into a message, and never ask anyone for one.',
+      'SSH keys available to you. Run the command shown: the login user and host are',
+      'already set, and `git` works with the name as the host (`git clone <name>:repo`).',
+      'You never see or need the private key: the host signs for you, and only for that',
+      'server. There is no key file to look for. See the deploy-keys skill.',
       '',
       ...keys.map((k) =>
-        k.target ? `- ${k.name}: \`ssh -i ${k.path} ${k.target}\`` : `- ${k.name}: \`${k.path}\` (no target recorded)`,
+        k.command
+          ? `- ${k.name}: \`${k.command}\` (${k.target})`
+          : `- ${k.name}: not usable yet${k.target ? ` (${k.target}: its host key could not be checked)` : ' (no target set)'}`,
       ),
       '',
     );
@@ -113,11 +129,7 @@ function renderBlock(hosts: string[], keys: { name: string; path: string; target
  * secret operation that triggered it — the credential is already wired, and a
  * stale note is a much smaller problem than a half-applied write.
  */
-export async function syncCredentialNote(
-  agentGroupId: string,
-  hosts: string[],
-  keys: { name: string; path: string; target?: string }[] = [],
-): Promise<void> {
+export async function syncCredentialNote(agentGroupId: string, hosts: string[], keys: NoteKey[] = []): Promise<void> {
   try {
     const group = await getAgentGroup(agentGroupId);
     if (!group) return;

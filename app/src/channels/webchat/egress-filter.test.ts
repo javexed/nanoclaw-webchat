@@ -18,6 +18,7 @@ import {
   serveProxyClient,
   type EgressFilterDeps,
 } from './egress-filter.js';
+import { keyTargetFor, registerKeyTargets } from './egress-key-targets.js';
 import { __resetRunnerEgressForTest, __setRunnerEgressForTest, allowlistFor, listBlocked } from './egress-policy.js';
 
 let gateway: net.Server;
@@ -308,6 +309,58 @@ describe('egress filter', () => {
     expect(parseProxyHead(smuggled)).toHaveProperty('error');
     expect(parseProxyHead(smuggled)).not.toHaveProperty('kind');
     expect(parseProxyHead('GET http://a_b!c/ HTTP/1.1')).toMatchObject({ status: '400 Bad Request' });
+  });
+});
+
+// Registered once for the file: ag-1 holds a key for ssh.example.test:22.
+const keyTargets = new Map<string, Array<{ host: string; port: number; allowPrivate: boolean }>>();
+registerKeyTargets(async (agentGroupId) => keyTargets.get(agentGroupId) ?? []);
+
+describe('a deploy key’s target', () => {
+  afterEach(() => keyTargets.clear());
+
+  it('matches the agent’s own targets by host and port only', async () => {
+    keyTargets.set('ag-1', [{ host: 'ssh.example.test', port: 22, allowPrivate: false }]);
+    expect(await keyTargetFor('ag-1', 'SSH.example.test.', 22)).not.toBeNull();
+    expect(await keyTargetFor('ag-1', 'ssh.example.test', 2222)).toBeNull();
+    expect(await keyTargetFor('ag-2', 'ssh.example.test', 22)).toBeNull();
+  });
+
+  it('opens a direct tunnel for the agent holding the key, in Allowlist mode, never via the gateway', async () => {
+    const dialled: string[] = [];
+    const upstream = net.createServer((sock) =>
+      sock.on('data', (d) => sock.write(Buffer.concat([Buffer.from('echo:'), d]))),
+    );
+    const port = await new Promise<number>((r) =>
+      upstream.listen(0, '127.0.0.1', () => r((upstream.address() as net.AddressInfo).port)),
+    );
+    deps.direct = async (host, p) => {
+      dialled.push(`${host}:${p}`);
+      return net.connect(port, '127.0.0.1');
+    };
+    keyTargets.set('ag-1', [{ host: 'ssh.example.test', port: 22, allowPrivate: false }]);
+    const got = await ask(`CONNECT ssh.example.test:22 HTTP/1.1\r\n${cred}\r\n\r\n`, 'SSH-2.0-test\r\n');
+    expect(got).toContain('200 Connection Established');
+    expect(got).toContain('echo:SSH-2.0-test');
+    expect(dialled).toEqual(['ssh.example.test:22']);
+    expect(seen).toEqual([]);
+    upstream.close();
+  });
+
+  it('is refused to another agent, and in Model only', async () => {
+    keyTargets.set('ag-2', [{ host: 'ssh.example.test', port: 22, allowPrivate: false }]);
+    expect(await ask(`CONNECT ssh.example.test:22 HTTP/1.1\r\n${cred}\r\n\r\n`)).toContain('403');
+    keyTargets.set('ag-1', [{ host: 'ssh.example.test', port: 22, allowPrivate: false }]);
+    deps.mode = async () => 'none';
+    expect(await ask(`CONNECT ssh.example.test:22 HTTP/1.1\r\n${cred}\r\n\r\n`)).toContain('403');
+    expect(seen).toEqual([]);
+  });
+
+  it('a scoped admin’s target may not reach a private address, even named literally', async () => {
+    keyTargets.set('ag-1', [{ host: '10.0.0.5', port: 22, allowPrivate: false }]);
+    const got = await ask(`CONNECT 10.0.0.5:22 HTTP/1.1\r\n${cred}\r\n\r\n`);
+    expect(got).toContain('502');
+    expect(got).toContain('not allowed directly');
   });
 });
 
