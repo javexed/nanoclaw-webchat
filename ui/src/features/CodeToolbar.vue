@@ -3,13 +3,13 @@
  * The Wrap / Copy strip on a fenced code block, mounted INTO the .code-toolbar div, one
  * app per <pre>, so the opaque v-html markdown subtree is otherwise untouched. Button
  * feedback is component state, so the copy timer is cleared on unmount. Wrap toggles a
- * class on the parent <pre> (the CSS rule is `.msg .bubble pre.wrap code`) — the one
+ * class on the <pre> (on from the start when `wrap` is set) (the CSS rule is `.msg .bubble pre.wrap code`) — the one
  * element it touches outside its own tree.
  */
-import { onUnmounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { copyTextToClipboard } from '../boot.js';
 
-const props = defineProps<{ lang: string; pre: HTMLElement }>();
+const props = defineProps<{ lang: string; pre: HTMLElement; wrap?: boolean }>();
 
 const COPY = 'Copy';
 const COPIED = 'Copied ✓';
@@ -20,8 +20,10 @@ const COPY_LABEL = 'Copy code to clipboard';
 const WRAP_LABEL = 'Toggle line wrapping';
 
 const copyState = ref<'idle' | 'copied' | 'error'>('idle');
-const wrapping = ref(false);
+const wrapping = ref(Boolean(props.wrap));
 let timer: ReturnType<typeof setTimeout> | null = null;
+
+onMounted(() => props.pre.classList.toggle('wrap', wrapping.value));
 
 onUnmounted(() => {
   if (timer) clearTimeout(timer);
