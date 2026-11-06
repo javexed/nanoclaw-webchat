@@ -1,11 +1,13 @@
 <script setup lang="ts">
 /**
  * An agent's SSH deploy keys, mounted into <ul id="agent-keys-list">; rows are shaped in
- * renderAgentKeys, including the one-string meta line (ssh command, or path plus note).
- * The private key never reaches the client, so copying the public key is the whole
- * workflow; it uses the .btn-icon copy control (CopyIconButton), paired with Edit and
- * Remove. Edit changes only the login target (user@host): the key stays the same, so
- * the far end keeps trusting it — no need to delete and re-add a key to fix its host.
+ * renderAgentKeys, including the one-string meta line (ssh command and target, or what
+ * is missing). The private key is held on the host and never reaches the client, so
+ * copying the public key is the whole workflow; it uses the .btn-icon copy control
+ * (CopyIconButton), paired with Edit and Remove. Edit changes only the login target
+ * (user@host): the key stays the same, so the far end keeps trusting it. A key the
+ * agent could once read is marked Exposed; Rotate replaces it with a new one, whose
+ * public half then goes on the server.
  */
 import { ref } from 'vue';
 import { agentKeyRows } from './agent-lists-state.js';
@@ -14,9 +16,19 @@ import CopyIconButton from './CopyIconButton.vue';
 const props = defineProps<{
   onRemove: (row: { key: unknown }) => void;
   onSaveTarget: (name: string, target: string) => Promise<boolean>;
+  onRotate: (row: { name: string }) => void;
 }>();
 
-const T = { edit: 'Edit', save: 'Save', cancel: 'Cancel', remove: 'Remove', target: 'user@host' };
+const T = {
+  edit: 'Edit',
+  save: 'Save',
+  cancel: 'Cancel',
+  remove: 'Remove',
+  rotate: 'Rotate',
+  target: 'user@host',
+  exposed: 'Exposed',
+  exposedTip: 'The agent could read this key once. Rotate it, then put the new public key on the server.',
+};
 
 /** Name of the row being edited, and its draft target. */
 const editing = ref<string | null>(null);
@@ -43,7 +55,10 @@ async function save(name: string): Promise<void> {
 <template>
   <li v-for="r in agentKeyRows" :key="r.name" class="skill-source-row secret-row">
     <div class="skill-info">
-      <div class="skill-head">{{ r.name }}</div>
+      <div class="skill-head">
+        {{ r.name
+        }}<span v-if="r.exposed" class="skill-badge skill-badge-warn" :title="T.exposedTip">{{ T.exposed }}</span>
+      </div>
       <form v-if="editing === r.name" class="agent-key-edit" @submit.prevent="save(r.name)">
         <input
           v-model="draft"
@@ -66,6 +81,11 @@ async function save(name: string): Promise<void> {
       </template>
       <template v-else>
         <CopyIconButton :text="r.publicKey" label="Copy public key" /><button
+          v-if="r.exposed"
+          class="btn btn-secondary"
+          type="button"
+          @click="props.onRotate(r)"
+        >{{ T.rotate }}</button><button
           class="btn btn-secondary"
           type="button"
           @click="startEdit(r)"

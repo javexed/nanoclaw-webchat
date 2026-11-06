@@ -45,7 +45,7 @@ export const agentSecretEffective = ref('');
  * object, which is what the delete call takes.
  */
 export const agentKeyRows = ref<
-  Array<{ name: string; meta: string; target: string; publicKey: string; key: unknown }>
+  Array<{ name: string; meta: string; target: string; publicKey: string; exposed: boolean; key: unknown }>
 >([]);
 
 /** Env var NAMES for the open agent — values are never sent to the client. */

@@ -1306,6 +1306,7 @@ function mountAgentKeyList(): void {
     createApp(AgentKeyList, {
       onRemove: (r: { key: unknown }) => void removeAgentKey(agentKeysGroupId, r.key),
       onSaveTarget: (name: string, target: string) => saveAgentKeyTarget(agentKeysGroupId, name, target),
+      onRotate: (r: { name: string }) => void rotateAgentKey(agentKeysGroupId, r.name),
     }),
   );
 }
@@ -1327,9 +1328,14 @@ async function renderAgentKeys(agentGroupId?: any) {
   agentKeysGroupId = agentGroupId;
   agentKeyRows.value = keys.map((k: any) => ({
     name: k.name,
-    meta: k.target ? `ssh -i ${k.path} ${k.target}` : `${k.path} · no login target set`,
+    meta: !k.target
+      ? 'Target needed'
+      : k.command
+        ? `${k.command} · ${k.target}`
+        : `${k.target} · host key not checked yet`,
     target: k.target || '',
     publicKey: k.publicKey,
+    exposed: k.exposed === true,
     key: k,
   }));
   mountAgentKeyList();
@@ -1388,6 +1394,31 @@ export async function saveAgentKeyTarget(agentGroupId: any, name: string, target
   } catch (err) {
     showToast((err as any)?.body?.error || 'Could not save', { kind: 'error' });
     return false;
+  }
+}
+
+/** Replace an exposed key with a new pair; the new public half goes on the server. */
+export async function rotateAgentKey(agentGroupId: any, name: string): Promise<void> {
+  const ok = await deps.showConfirmModal({
+    title: 'Rotate deploy key',
+    body: `Replace “${name}” with a new key? The old one stops working here at once. Put the new public key on the server.`,
+    confirmLabel: 'Rotate',
+  });
+  if (!ok) return;
+  try {
+    const body = await apiJson(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? '')}`, {
+      method: 'POST',
+      body: { name, rotate: true },
+    });
+    try {
+      await navigator.clipboard.writeText(body.key.publicKey);
+      showToast(`Rotated ${name} — new public key copied`);
+    } catch {
+      showToast(`Rotated ${name}`);
+    }
+    await renderAgentKeys(agentGroupId);
+  } catch (err) {
+    showToast((err as any)?.body?.error || 'Could not rotate key', { kind: 'error' });
   }
 }
 

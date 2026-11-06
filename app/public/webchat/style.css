@@ -5311,6 +5311,12 @@ a.lightbox-btn {
   color: var(--accent);
   border-color: var(--accent);
 }
+/* A state that needs action (a deploy key the agent could read): warning colour. */
+.skill-badge-warn {
+  color: var(--warning);
+  border-color: var(--warning);
+  margin-left: 6px;
+}
 /* Scope pill on agent-scoped skills: carries a room or agent name, so it keeps
    normal case (like origin badges) and truncates rather than wrapping. */
 .skill-badge-scope {
