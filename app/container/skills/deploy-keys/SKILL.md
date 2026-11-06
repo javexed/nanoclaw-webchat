@@ -27,7 +27,8 @@ host signs logins for you, and only for that key's own server.
 - An empty `~/.ssh` does not mean you have no key.
 
 If a user says they added a key, a message labelled `[SSH keys changed]` in
-this conversation names it. Say what you checked; do not conclude there is
+this conversation names it. Your first key works from your next session;
+later ones work at once. Say what you checked; do not conclude there is
 none.
 
 ## Connect with the name

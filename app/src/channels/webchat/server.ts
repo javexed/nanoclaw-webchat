@@ -388,7 +388,7 @@ import {
   deleteDeployKey,
   rotateDeployKey,
   setDeployKeyTarget,
-} from '../../modules/deploy-keys/index.js';
+} from '../../modules/deploy-keys/keys.js';
 import {
   WORKSPACE,
   type Scope,

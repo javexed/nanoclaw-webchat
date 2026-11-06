@@ -138,8 +138,12 @@ describe('a key is held on the host', () => {
 });
 
 describe('what the container and the egress filter get', () => {
-  it('SSH_AUTH_SOCK points into the view', () => {
-    expect(hooks.env.map((fn) => fn('ag-1'))).toContainEqual({ SSH_AUTH_SOCK: '/run/nanoclaw-ssh/agent.sock' });
+  it('an agent with no key gets no mount and no env; one with a key gets both', async () => {
+    expect(deployKeyMount('ag-1')).toBeNull();
+    expect(hooks.env.map((fn) => fn('ag-1'))).toEqual([{}]);
+    await dk.createDeployKey('ag-1', 'app', 'deploy@192.0.2.10');
+    expect(deployKeyMount('ag-1')).not.toBeNull();
+    expect(hooks.env.map((fn) => fn('ag-1'))).toEqual([{ SSH_AUTH_SOCK: '/run/nanoclaw-ssh/agent.sock' }]);
   });
 
   it('each target on port 22; private addresses only for an install admin’s target', async () => {

@@ -6,9 +6,10 @@
  */
 import { getSessionsByAgentGroup } from '../../db/sessions.js';
 import { log } from '../../log.js';
-import { writeSessionMessage } from '../../session-manager.js';
 
 export async function notifyKeyChange(agentGroupId: string, text: string): Promise<number> {
+  // Imported here: the session manager pulls in much of the host.
+  const { writeSessionMessage } = await import('../../session-manager.js');
   let n = 0;
   const now = new Date();
   for (const s of await getSessionsByAgentGroup(agentGroupId)) {

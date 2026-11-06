@@ -55,8 +55,9 @@ user" is too much; a full shell as the key's user is accepted for now.
   pinned `known_hosts`, `StrictHostKeyChecking yes`), the public halves and
   the socket. The image includes that config from `/etc/ssh/ssh_config.d` and
   ships `openssh-client` (Debian bookworm: 9.2). `SSH_AUTH_SOCK` points at the
-  socket. Every agent gets the directory, empty until it has a key, so a key
-  added during a session works without a restart.
+  socket. Only an agent with a key gets the mount and the variable, so an
+  agent's first key works from its next session; later changes reach running
+  sessions, since they land in the mounted directory.
 - **Route out.** `ProxyCommand bun /app/src/ssh-proxy.ts %h %p` tries a direct
   connection briefly (an agent on the open network has a route), then
   `CONNECT`s through the proxy in `HTTPS_PROXY`.

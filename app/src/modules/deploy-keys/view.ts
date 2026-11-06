@@ -64,12 +64,13 @@ export function syncView(agentGroupId: string): boolean {
 }
 
 /**
- * The view directory, created if missing, for the container mount. Every agent
- * gets one, empty until it has a key, so a key added while a session runs works
- * without a restart.
+ * The view directory for the container mount, when the agent has a key. An
+ * agent's first key reaches its next session; later changes reach running
+ * ones too, since the view and socket live in the mounted directory.
  */
 export function viewDirFor(agentGroupId: string): string | null {
   try {
+    if (!listStored(agentGroupId).length) return null;
     return groupViewDir(agentGroupId);
   } catch {
     return null;

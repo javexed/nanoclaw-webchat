@@ -41,7 +41,7 @@ registerResource({
         dryRunShown = dryRun;
         const r = await migrateKeys({ dryRun, trustTargets: args.trust_targets === true });
         if (!dryRun) {
-          const { refreshAfterMigration } = await import('./index.js');
+          const { refreshAfterMigration } = await import('./keys.js');
           for (const p of r.plans) await refreshAfterMigration(p.agentGroupId);
         }
         return r;
