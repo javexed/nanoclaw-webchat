@@ -50,6 +50,24 @@ function scaffoldIndex(extra = ''): void {
 }
 
 describe('credential note placement', () => {
+  it('lists SSH keys as commands with their target, never a key path', async () => {
+    scaffoldIndex();
+    await syncCredentialNote(
+      'ag-1',
+      [],
+      [
+        { name: 'app', target: 'deploy@192.0.2.10', command: 'ssh app' },
+        { name: 'far', target: 'git@far.example.com' },
+      ],
+    );
+    const c = fs.readFileSync(conceptFile, 'utf-8');
+    expect(c).toContain('- app: `ssh app` (deploy@192.0.2.10)');
+    expect(c).toContain('- far: not usable yet (git@far.example.com: its host key could not be checked)');
+    expect(c).toContain('deploy-keys skill');
+    expect(c).not.toMatch(/deploy_key_|\/workspace\/agent|ssh -i/);
+    expect(fs.readFileSync(indexFile, 'utf-8')).toContain('SSH: `ssh app`');
+  });
+
   it('writes an OKF-typed concept file with the hosts, never the values', async () => {
     scaffoldIndex();
     await syncCredentialNote('ag-1', ['git.example.com'], []);
