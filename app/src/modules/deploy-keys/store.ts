@@ -9,8 +9,8 @@
  * keys, public halves). The view sits under the group's session root because
  * that is where a group-state mount may come from.
  *
- * Per key: `<name>.key` (0600), `<name>.pub`, and `<name>.json` with the target
- * and state. Per agent: `known_hosts`, the host keys pinned for its targets.
+ * Per key: `<name>.key` (0600), `<name>.pub`, and `<name>.json` with the
+ * targets and state. Per agent: `known_hosts`, the host keys pinned for its targets.
  */
 import { execFileSync } from 'child_process';
 import fs from 'fs';
@@ -24,7 +24,9 @@ import { isPlainFile, readNoFollow, removeNoFollow, writeNoFollow } from '../../
 export type TargetSetBy = 'install' | 'agent';
 
 export interface KeyMeta {
-  /** `user@host` */
+  /** `user@host`, or `user@host via jumpuser@jumphost` (see normalizeTargets). */
+  targets?: string[];
+  /** The single target of keys stored before a key could have several. Read, never written. */
   target?: string;
   targetSetBy?: TargetSetBy;
   /** The private half was readable by the agent at some point: rotate it. */
@@ -44,6 +46,84 @@ export const NAME_RE = /^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/;
 /** `user@host`; host is a name or an IPv4 address. */
 export const TARGET_RE = /^[a-z_][a-z0-9._-]{0,31}@[a-zA-Z0-9.-]+$/;
 const GROUP_RE = /^[A-Za-z0-9_-]{1,80}$/;
+/** `user@host via jumpuser@jumphost`: reach the first through the second, itself a target of the key. */
+const VIA_RE = /^(\S+)\s+via\s+(\S+)$/;
+export const MAX_TARGETS = 16;
+
+/** The `user@host` an entry logs in to. */
+export const hopOf = (entry: string): string => VIA_RE.exec(entry)?.[1] ?? entry;
+/** The `user@host` an entry is reached through, if any. */
+export const viaOf = (entry: string): string | undefined => VIA_RE.exec(entry)?.[2];
+
+/** An entry of the right shape: it becomes SSH config lines, so nothing else passes. */
+function wellFormed(entry: unknown): entry is string {
+  if (typeof entry !== 'string' || /[\r\n]/.test(entry)) return false;
+  const via = viaOf(entry);
+  return TARGET_RE.test(hopOf(entry)) && (via === undefined || TARGET_RE.test(via));
+}
+
+/** A key's targets, whichever shape its state file has. Malformed entries are dropped. */
+export function targetsOf(meta: KeyMeta): string[] {
+  if (Array.isArray(meta.targets)) return meta.targets.filter(wellFormed);
+  return wellFormed(meta.target) ? [meta.target] : [];
+}
+
+/**
+ * Validate a target list: an array, or one string separated by commas or new
+ * lines. Each entry is `user@host`, or `user@host via jumpuser@jumphost` when
+ * the server is reached through another one; the jump must be listed earlier
+ * in the same key. Duplicates go; order is kept (it names the SSH aliases).
+ */
+export function normalizeTargets(input: string | string[] | undefined): string[] {
+  const raw = Array.isArray(input) ? input : (input ?? '').split(/[,\n]/);
+  const out: string[] = [];
+  for (const item of raw) {
+    const entry = String(item).trim().replace(/\s+/g, ' ');
+    if (!entry) continue;
+    const hop = hopOf(entry);
+    const via = viaOf(entry);
+    if (!TARGET_RE.test(hop) || (via !== undefined && !TARGET_RE.test(via)))
+      throw new Error('Target must look like user@host');
+    if (via !== undefined && !out.some((e) => hopOf(e) === via))
+      throw new Error(`Target "${entry}": list ${via} before it`);
+    if (via === hop) throw new Error(`Target "${entry}" goes through itself`);
+    if (!out.includes(entry)) out.push(entry);
+  }
+  if (!out.length) throw new Error('Target must look like user@host');
+  if (out.length > MAX_TARGETS) throw new Error(`Targets: at most ${MAX_TARGETS} per key`);
+  return out;
+}
+
+/** The SSH alias for a key's i-th target: the key's name, then `<name>.2`, `<name>.3`… (names hold no dot). */
+export const aliasFor = (name: string, i: number): string => (i === 0 ? name : `${name}.${i + 1}`);
+
+export interface ResolvedTarget {
+  target: string;
+  alias: string;
+  user: string;
+  host: string;
+  /** The alias of the target this one is reached through. */
+  jump?: string;
+  /** Its host key is pinned, and so is every hop's on the way. */
+  usable: boolean;
+}
+
+/** A key's targets with their aliases and whether each can be used. Pure. */
+export function resolveTargets(name: string, meta: KeyMeta, pinned: Set<string>): ResolvedTarget[] {
+  const out: ResolvedTarget[] = [];
+  targetsOf(meta).forEach((target, i) => {
+    const { user, host } = splitTarget(hopOf(target));
+    const via = viaOf(target);
+    const jumpIdx = via === undefined ? -1 : out.findIndex((r) => hopOf(r.target) === via);
+    const jump = jumpIdx >= 0 ? out[jumpIdx] : undefined;
+    const usable = pinned.has(host) && (via === undefined || (jump?.usable ?? false));
+    out.push({ target, alias: aliasFor(name, i), user, host, ...(jump ? { jump: jump.alias } : {}), usable });
+  });
+  return out;
+}
+
+/** Every `user@host` a key signs for, once each: the destination constraints. */
+export const hopsOf = (meta: KeyMeta): string[] => [...new Set(targetsOf(meta).map(hopOf))];
 
 export const storeRoot = (): string => path.join(DATA_DIR, 'deploy-keys');
 /** Under the group's session root, beside its sessions: where group-state mounts may come from. */
@@ -95,6 +175,12 @@ export function readMeta(dir: string, name: string): KeyMeta {
   }
 }
 
+/** `meta` with a new target list, in the current shape (the single `target` field goes). */
+export function withTargets(meta: KeyMeta, targets: string[], setBy: TargetSetBy): KeyMeta {
+  const { target: _single, ...rest } = meta;
+  return { ...rest, targets, targetSetBy: setBy };
+}
+
 export function writeMeta(dir: string, name: string, meta: KeyMeta): void {
   writeNoFollow(dir, `${name}.json`, JSON.stringify(meta, null, 2) + '\n', 0o600);
 }
@@ -124,7 +210,7 @@ export function putKey(agentGroupId: string, name: string, priv: Buffer, pub: st
   writeMeta(dir, name, meta);
 }
 
-/** Replace a key's pair in place (rotation): same name, target and state file. */
+/** Replace a key's pair in place (rotation): same name, targets and state file. */
 export function replaceKey(agentGroupId: string, name: string, priv: Buffer, pub: string): void {
   const dir = groupStoreDir(agentGroupId);
   writeNoFollow(dir, `${name}.key`, priv, 0o600);
@@ -208,6 +294,26 @@ export function pinHost(agentGroupId: string, host: string, lines: string[]): vo
     .split('\n')
     .filter((l) => l.trim() && l.trim().split(/\s+/)[0] !== host);
   writeNoFollow(dir, 'known_hosts', [...kept, ...lines].join('\n') + '\n', 0o600);
+}
+
+/**
+ * Pin host keys an operator supplies (known_hosts text) for `hosts`, for a
+ * server this host cannot scan, such as one reached only through a jump host.
+ * Lines for other hosts, hashed lines and malformed lines are ignored.
+ * Returns the hosts pinned.
+ */
+export function pinFromKnownHosts(agentGroupId: string, hosts: string[], text: string): string[] {
+  const wanted = new Set(hosts);
+  const byHost = new Map<string, string[]>();
+  for (const line of text.split('\n')) {
+    const [names, type, b64, ...rest] = line.trim().split(/\s+/);
+    if (!names || !type || !b64 || rest.length > 1 || names.startsWith('#') || names.startsWith('|')) continue;
+    if (!/^(ssh-|ecdsa-|sk-)[a-z0-9@.-]+$/.test(type) || !/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) continue;
+    for (const h of names.split(',').map((n) => n.replace(/^\[(.+)\]:22$/, '$1')))
+      if (wanted.has(h)) byHost.set(h, [...(byHost.get(h) ?? []), `${h} ${type} ${b64}`]);
+  }
+  for (const [h, lines] of byHost) pinHost(agentGroupId, h, lines);
+  return [...byHost.keys()];
 }
 
 /** Pinned host keys as `{host, blob}`, for naming the host a signature was bound to. */

@@ -19,7 +19,8 @@ vi.mock('../../db/agent-groups.js', () => ({
   ],
 }));
 
-const { findKeyFiles, migrateKeys, nameFor, targetFromConfig, formatPlan } = await import('./migrate.js');
+const { checkGivenTargets, findKeyFiles, migrateKeys, nameFor, targetFromConfig, formatPlan } =
+  await import('./migrate.js');
 const store = await import('./store.js');
 
 function keygen(file: string, comment: string, pass = ''): void {
@@ -80,7 +81,7 @@ describe('migrating', () => {
     expect(text).toContain('deploy_key_app → app  deploy@192.0.2.10');
     expect(text).toContain('.ssh/id_ed25519 → id-ed25519  root@192.0.2.20');
     expect(text).toContain('locked → locked  [skipped: passphrase-protected or unreadable]');
-    expect(text).toContain('tools/deploy → deploy  [target needed in Admin]');
+    expect(text).toContain('tools/deploy → deploy  [target needed: ncl deploy-keys set-target, or Admin]');
     expect(text).toContain('3 keys would move');
     expect(text).not.toContain('PRIVATE');
     expect(fs.existsSync(path.join(GROUPS, 'one', 'deploy_key_app'))).toBe(true);
@@ -106,11 +107,12 @@ describe('migrating', () => {
     ]);
 
     const one = store.listStored('ag-1');
-    expect(one.map((k) => [k.name, k.meta.target, k.meta.exposed, k.meta.targetSetBy])).toEqual([
-      ['app', 'deploy@192.0.2.10', true, 'agent'],
-      ['id-ed25519', 'root@192.0.2.20', true, 'agent'],
+    expect(one.map((k) => [k.name, k.meta.targets, k.meta.exposed, k.meta.targetSetBy])).toEqual([
+      ['app', ['deploy@192.0.2.10'], true, 'agent'],
+      ['id-ed25519', ['root@192.0.2.20'], true, 'agent'],
     ]);
-    expect(store.listStored('ag-2').map((k) => [k.name, k.meta.target])).toEqual([['deploy', undefined]]);
+    expect(one.every((k) => k.meta.target === undefined)).toBe(true);
+    expect(store.listStored('ag-2').map((k) => [k.name, k.meta.targets])).toEqual([['deploy', undefined]]);
 
     // A second run finds nothing new.
     expect((await migrateKeys({ dryRun: false })).imported).toBe(0);
@@ -119,5 +121,48 @@ describe('migrating', () => {
   it('--trust-targets records the found targets as an install admin’s', async () => {
     await migrateKeys({ dryRun: false, trustTargets: true });
     expect(store.listStored('ag-1').map((k) => k.meta.targetSetBy)).toEqual(['install', 'install']);
+  });
+
+  it('--group moves one agent’s keys, and its dry run lists only that agent', async () => {
+    const dry = formatPlan(await migrateKeys({ dryRun: true, group: 'ag-2' }), true);
+    expect(dry).toContain('two (ag-2)');
+    expect(dry).not.toContain('one (ag-1)');
+    expect(dry).toContain('1 key would move');
+    const r = await migrateKeys({ dryRun: false, group: 'ag-2' });
+    expect(r.imported).toBe(1);
+    expect(store.listStored('ag-1')).toEqual([]);
+    expect(fs.existsSync(path.join(GROUPS, 'one', 'deploy_key_app'))).toBe(true);
+    await expect(migrateKeys({ dryRun: true, group: 'ag-404' })).rejects.toThrow(/No agent group/);
+  });
+
+  it('--targets gives a key several targets, as an install admin’s, replacing any found', async () => {
+    const targets = checkGivenTargets({
+      app: 'deploy@192.0.2.10, deploy@192.0.2.11',
+      'id-ed25519': ['root@192.0.2.20', 'ops@198.51.100.7 via root@192.0.2.20'],
+    });
+    const dry = formatPlan(await migrateKeys({ dryRun: true, group: 'ag-1', targets }), true);
+    expect(dry).toContain('deploy_key_app → app  deploy@192.0.2.10, deploy@192.0.2.11');
+    await migrateKeys({ dryRun: false, group: 'ag-1', targets });
+    expect(store.listStored('ag-1').map((k) => [k.name, k.meta.targets, k.meta.targetSetBy])).toEqual([
+      ['app', ['deploy@192.0.2.10', 'deploy@192.0.2.11'], 'install'],
+      ['id-ed25519', ['root@192.0.2.20', 'ops@198.51.100.7 via root@192.0.2.20'], 'install'],
+    ]);
+  });
+
+  it('--targets is checked before anything moves', async () => {
+    expect(() => checkGivenTargets({ app: 'not a target' })).toThrow(/Target must/);
+    expect(() => checkGivenTargets({ '../x': 'a@192.0.2.1' })).toThrow(/not a key name/);
+    expect(() => checkGivenTargets(['a@192.0.2.1'])).toThrow(/JSON object/);
+    expect(() => checkGivenTargets({ app: 5 })).toThrow(/string or a list/);
+    await expect(migrateKeys({ dryRun: false, targets: { app: ['a@192.0.2.1'] } })).rejects.toThrow(/needs --group/);
+    await expect(migrateKeys({ dryRun: false, group: 'ag-1', targets: { nope: ['a@192.0.2.1'] } })).rejects.toThrow(
+      /names no key/,
+    );
+    // Locked keys are not imported, so they cannot be named either.
+    await expect(migrateKeys({ dryRun: true, group: 'ag-1', targets: { locked: ['a@192.0.2.1'] } })).rejects.toThrow(
+      /names no key/,
+    );
+    expect(fs.existsSync(path.join(GROUPS, 'one', 'deploy_key_app'))).toBe(true);
+    expect(fs.existsSync(path.join(DATA, 'deploy-keys'))).toBe(false);
   });
 });

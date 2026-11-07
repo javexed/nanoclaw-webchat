@@ -12,7 +12,7 @@ import { registerKeyTargets } from '../../channels/webchat/egress-key-targets.js
 import './cli.js';
 import { ensureAgent, stopAllAgents, sweepAgents } from './agent.js';
 import { groupIsLive, pinTarget } from './keys.js';
-import { listStored, pinnedHosts, readKnownHosts, splitTarget, storedGroups } from './store.js';
+import { hopsOf, listStored, pinnedHosts, readKnownHosts, splitTarget, storedGroups } from './store.js';
 import { CONTAINER_SSH_DIR, syncView } from './view.js';
 
 export * from './keys.js';
@@ -26,8 +26,7 @@ registerSessionPrepareHook(async (agentGroupId) => {
   if (!keys.length) return;
   const pinned = pinnedHosts(readKnownHosts(agentGroupId));
   for (const k of keys)
-    if (k.meta.target && !pinned.has(splitTarget(k.meta.target).host))
-      await pinTarget(agentGroupId, k.meta.target, false);
+    for (const t of hopsOf(k.meta)) if (!pinned.has(splitTarget(t).host)) await pinTarget(agentGroupId, t, false);
   syncView(agentGroupId);
   await ensureAgent(agentGroupId);
 });
@@ -39,16 +38,20 @@ registerContainerEnvResolver(
 );
 
 /**
- * The egress filter lets an agent reach its own keys' targets, port 22,
- * directly (SSH is not TLS, so not through the credential gateway). A target
- * an install admin set may resolve to a private address; one a scoped admin
- * set may not, the same line the install allowlist draws for direct tunnels.
+ * The egress filter lets an agent reach every target of its own keys, port 22,
+ * directly (SSH is not TLS, so not through the credential gateway). A server
+ * reached through a jump host is listed too: the container may have no route
+ * to it, and then the tunnel simply goes unused. Targets an install admin set
+ * may resolve to a private address; a scoped admin's may not, the same line
+ * the install allowlist draws for direct tunnels.
  */
 registerKeyTargets(async (agentGroupId) =>
   listStored(agentGroupId).flatMap((k) =>
-    k.meta.target
-      ? [{ host: splitTarget(k.meta.target).host, port: 22, allowPrivate: k.meta.targetSetBy === 'install' }]
-      : [],
+    hopsOf(k.meta).map((t) => ({
+      host: splitTarget(t).host,
+      port: 22,
+      allowPrivate: k.meta.targetSetBy === 'install',
+    })),
   ),
 );
 

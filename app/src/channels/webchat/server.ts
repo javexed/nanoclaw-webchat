@@ -1422,9 +1422,12 @@ async function rDeployKeys(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
     }
     const raw = await readJsonBody(req, res);
     if (raw === null) return;
-    const body = JSON.parse(raw) as { name?: string; target?: string; rotate?: boolean };
+    const body = JSON.parse(raw) as { name?: string; target?: string; targets?: unknown; rotate?: boolean };
     const name = (body.name ?? '').trim().toLowerCase();
-    const target = (body.target ?? '').trim() || undefined;
+    // `targets` (a list) or `target` (one, or several separated by commas).
+    const target = Array.isArray(body.targets)
+      ? body.targets.map((t) => String(t))
+      : (body.target ?? '').trim() || undefined;
     // An owner's or global admin's target may resolve to a private address
     // (egress filter); a scoped admin's may not.
     const setBy = (await isOwner(userId)) || (await isGlobalAdmin(userId)) ? 'install' : 'agent';

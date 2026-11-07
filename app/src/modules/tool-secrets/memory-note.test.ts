@@ -68,6 +68,29 @@ describe('credential note placement', () => {
     expect(fs.readFileSync(indexFile, 'utf-8')).toContain('SSH: `ssh app`');
   });
 
+  it('lists every usable target of a key with its own command', async () => {
+    scaffoldIndex();
+    await syncCredentialNote(
+      'ag-1',
+      [],
+      [
+        {
+          name: 'ops',
+          target: 'root@192.0.2.1',
+          command: 'ssh ops',
+          targets: [
+            { target: 'root@192.0.2.1', command: 'ssh ops' },
+            { target: 'ops@198.51.100.7 via root@192.0.2.1', command: 'ssh ops.2' },
+            { target: 'x@far.example.com' },
+          ],
+        },
+      ],
+    );
+    const c = fs.readFileSync(conceptFile, 'utf-8');
+    expect(c).toContain('- ops: `ssh ops` (root@192.0.2.1), `ssh ops.2` (ops@198.51.100.7 via root@192.0.2.1)');
+    expect(fs.readFileSync(indexFile, 'utf-8')).toContain('SSH: `ssh ops`, `ssh ops.2`');
+  });
+
   it('writes an OKF-typed concept file with the hosts, never the values', async () => {
     scaffoldIndex();
     await syncCredentialNote('ag-1', ['git.example.com'], []);

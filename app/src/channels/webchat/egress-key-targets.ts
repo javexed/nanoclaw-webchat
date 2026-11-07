@@ -20,10 +20,15 @@ export function registerKeyTargets(fn: (agentGroupId: string) => Promise<KeyTarg
   keyTargetResolvers.push(fn);
 }
 
+/** The agent's target for host:port. When several keys name it, one an install admin set wins. */
 export async function keyTargetFor(agentGroupId: string, host: string, port: number): Promise<KeyTarget | null> {
   const h = host.toLowerCase().replace(/\.$/, '');
+  let found: KeyTarget | null = null;
   for (const fn of keyTargetResolvers)
     for (const t of await fn(agentGroupId).catch(() => []))
-      if (t.port === port && t.host.toLowerCase().replace(/\.$/, '') === h) return t;
-  return null;
+      if (t.port === port && t.host.toLowerCase().replace(/\.$/, '') === h) {
+        if (t.allowPrivate) return t;
+        found ??= t;
+      }
+  return found;
 }

@@ -1326,18 +1326,22 @@ async function renderAgentKeys(agentGroupId?: any) {
   } catch {}
 
   agentKeysGroupId = agentGroupId;
-  agentKeyRows.value = keys.map((k: any) => ({
-    name: k.name,
-    meta: !k.target
-      ? 'Target needed'
-      : k.command
-        ? `${k.command} · ${k.target}`
-        : `${k.target} · host key not checked yet`,
-    target: k.target || '',
-    publicKey: k.publicKey,
-    exposed: k.exposed === true,
-    key: k,
-  }));
+  agentKeyRows.value = keys.map((k: any) => {
+    // One entry per target; older servers send a single `target`.
+    const targets: any[] = k.targets ?? (k.target ? [{ target: k.target, command: k.command }] : []);
+    return {
+      name: k.name,
+      meta: !targets.length
+        ? 'Target needed'
+        : targets
+            .map((t) => (t.command ? `${t.command} · ${t.target}` : `${t.target} · host key not checked yet`))
+            .join(', '),
+      target: targets.map((t) => t.target).join(', '),
+      publicKey: k.publicKey,
+      exposed: k.exposed === true,
+      key: k,
+    };
+  });
   mountAgentKeyList();
   $('#agent-keys-count')!.textContent = keys.length ? String(keys.length) : '';
 }
@@ -1355,7 +1359,7 @@ async function createAgentKey() {
   try {
     const body = await apiJson(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? '')}`, {
       method: 'POST',
-      // target (user@host) rides in the key's comment: it tells the agent who to log in as.
+      // target: one user@host, or several separated by commas; the server checks each.
       body: target ? { name, target } : { name },
     });
     $<HTMLInputElement>('#agent-key-name')!.value = '';
@@ -1377,8 +1381,8 @@ async function createAgentKey() {
 }
 
 /**
- * Re-point an existing key at a new user@host. The server re-stamps the
- * target in the key's public half and refreshes the agent's credential note;
+ * Re-point an existing key at new targets (user@host, comma-separated). The
+ * server pins their host keys and refreshes the agent's credential note;
  * the key material is unchanged, so the far end keeps trusting it. True when
  * saved.
  */

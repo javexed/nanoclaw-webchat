@@ -1,10 +1,13 @@
 /**
  * One ssh-agent per agent group, on the host.
  *
- * Each key is loaded with an OpenSSH destination constraint (`ssh-add -h
- * user@host`, checked against the host keys pinned for the target), so the
- * agent signs only for a connection bound to that server, whatever host the
- * container tunnels to. The real agent socket stays in the host-only store.
+ * Each key is loaded with an OpenSSH destination constraint per target
+ * (`ssh-add -h user@host`, repeated, checked against the host keys pinned for
+ * the targets), so the agent signs only for a connection bound to one of those
+ * servers as its user, whatever host the container tunnels to. A server
+ * reached through a jump host needs no forwarding constraint: the container's
+ * ssh opens both connections itself (ProxyJump), so each is a direct
+ * destination with its own `-h`. The real agent socket stays in the host-only store.
  * The container gets a second socket (in its read-only view) served by
  * `serveFiltered`: it passes only listing, signing and the session-bind
  * extension, refuses everything else (adding, removing, locking keys), and
@@ -24,6 +27,7 @@ import { log } from '../../log.js';
 import {
   groupStoreDir,
   groupViewDir,
+  hopsOf,
   keyFile,
   listStored,
   pinnedHosts,
@@ -62,14 +66,17 @@ export function agentRunning(agentGroupId: string): boolean {
   return running.has(agentGroupId);
 }
 
-/** Keys that can be loaded: a target and a pinned host key for it. */
-function loadable(agentGroupId: string): Array<{ name: string; target: string; host: string }> {
+/**
+ * Keys that can be loaded, each with the destinations it may sign for: its
+ * targets whose host key is pinned (ssh-add refuses a destination it has no
+ * host key for, so an unpinned one would keep the whole key out).
+ */
+function loadable(agentGroupId: string): Array<{ name: string; hops: string[] }> {
   const pinned = pinnedHosts(readKnownHosts(agentGroupId));
-  const out: Array<{ name: string; target: string; host: string }> = [];
+  const out: Array<{ name: string; hops: string[] }> = [];
   for (const k of listStored(agentGroupId)) {
-    if (!k.meta.target) continue;
-    const { host } = splitTarget(k.meta.target);
-    if (pinned.has(host)) out.push({ name: k.name, target: k.meta.target, host });
+    const hops = hopsOf(k.meta).filter((t) => pinned.has(splitTarget(t).host));
+    if (hops.length) out.push({ name: k.name, hops });
   }
   return out;
 }
@@ -127,7 +134,8 @@ async function startAgent(agentGroupId: string): Promise<boolean> {
   let loaded = 0;
   for (const k of keys) {
     try {
-      await run('ssh-add', ['-q', '-h', k.target, '-H', knownHosts, keyFile(agentGroupId, k.name)], {
+      const constraints = k.hops.flatMap((t) => ['-h', t]);
+      await run('ssh-add', ['-q', ...constraints, '-H', knownHosts, keyFile(agentGroupId, k.name)], {
         env: { PATH: process.env.PATH ?? '/usr/bin:/bin', SSH_AUTH_SOCK: realSock },
         timeout: 10_000,
       });

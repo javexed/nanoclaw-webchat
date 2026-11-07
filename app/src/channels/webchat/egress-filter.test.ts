@@ -327,6 +327,16 @@ describe('a deploy key’s target', () => {
     expect(await keyTargetFor('ag-2', 'ssh.example.test', 22)).toBeNull();
   });
 
+  it('when several keys name a host, an install admin’s target decides', async () => {
+    keyTargets.set('ag-1', [
+      { host: 'a.example.test', port: 22, allowPrivate: false },
+      { host: 'b.example.test', port: 22, allowPrivate: false },
+      { host: 'a.example.test', port: 22, allowPrivate: true },
+    ]);
+    expect(await keyTargetFor('ag-1', 'a.example.test', 22)).toMatchObject({ allowPrivate: true });
+    expect(await keyTargetFor('ag-1', 'b.example.test', 22)).toMatchObject({ allowPrivate: false });
+  });
+
   it('opens a direct tunnel for the agent holding the key, in Allowlist mode, never via the gateway', async () => {
     const dialled: string[] = [];
     const upstream = net.createServer((sock) =>

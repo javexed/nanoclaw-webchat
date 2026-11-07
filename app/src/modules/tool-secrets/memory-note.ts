@@ -44,7 +44,17 @@ export interface NoteKey {
   target?: string;
   /** `ssh <name>` once the key is usable. */
   command?: string;
+  /** Every target with its own command (`ssh <name>`, `ssh <name>.2`…), when the key has several. */
+  targets?: Array<{ target: string; command?: string }>;
 }
+
+/** A key's usable commands, each with its target. */
+const commandsOf = (k: NoteKey): Array<{ target?: string; command: string }> =>
+  k.targets?.length
+    ? k.targets.flatMap((t) => (t.command ? [{ target: t.target, command: t.command }] : []))
+    : k.command
+      ? [{ target: k.target, command: k.command }]
+      : [];
 
 /** OKF concept file: frontmatter + the full guidance. */
 function renderConcept(hosts: string[], keys: NoteKey[]): string {
@@ -80,7 +90,7 @@ function renderIndexPointer(hosts: string[], keys: NoteKey[]): string {
     );
   }
   if (keys.length) {
-    const usable = keys.filter((k) => k.command).map((k) => `\`${k.command}\``);
+    const usable = keys.flatMap((k) => commandsOf(k).map((c) => `\`${c.command}\``));
     out.push(
       usable.length
         ? `SSH: ${usable.join(', ')} (see the deploy-keys skill).`
@@ -109,12 +119,14 @@ function renderBlock(hosts: string[], keys: NoteKey[]): string {
     out.push(
       'SSH keys available to you. Run the command shown: the login user and host are',
       'already set, and `git` works with the name as the host (`git clone <name>:repo`).',
-      'You never see or need the private key: the host signs for you, and only for that',
-      'server. There is no key file to look for. See the deploy-keys skill.',
+      'You never see or need the private key: the host signs for you, and only for the',
+      'servers shown. There is no key file to look for. See the deploy-keys skill.',
       '',
       ...keys.map((k) =>
-        k.command
-          ? `- ${k.name}: \`${k.command}\` (${k.target})`
+        commandsOf(k).length
+          ? `- ${k.name}: ${commandsOf(k)
+              .map((c) => `\`${c.command}\` (${c.target})`)
+              .join(', ')}`
           : `- ${k.name}: not usable yet${k.target ? ` (${k.target}: its host key could not be checked)` : ' (no target set)'}`,
       ),
       '',
