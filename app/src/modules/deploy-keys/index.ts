@@ -1,184 +1,76 @@
 /**
- * Deploy keys — per-agent SSH keypairs for reaching servers and git remotes.
- *
- * WHY NOT THE VAULT: OneCLI injects credentials into outbound HTTPS at the
- * proxy. SSH is not HTTP, so there is nothing for it to inject into — these
- * have to be files. That is fine, and in one respect better: a group folder is
- * mounted only into that group's container, so a deploy key is private to its
- * agent by construction, with no `selective`-mode precondition.
- *
- * WHY THIS EXISTS: the alternative is a human generating a key by hand and then
- * either pasting the private half into chat (which persists it in
- * webchat_messages and every archived transcript) or asking the agent to make
- * one — which agents refuse, correctly, and which would put the private key in
- * the agent's context either way. Here the pair is generated host-side, the
- * PRIVATE half never leaves disk and is never returned by any API, and only the
- * public half is ever shown.
- *
- * Memory holds the PATH and fingerprint, never key material — the same rule the
- * tool-secrets module applies to tokens.
- *
- * The group folder is mounted read-write into the agent's container, so a key
- * file may be a link the agent planted. Nothing here follows one: a read would
- * show a host file in the UI, a write or chmod would land on it.
+ * Deploy keys: the boot entry point. Registers what runs around a container
+ * (view, agent, env), the egress filter's per-agent targets, the sweep, and
+ * `ncl deploy-keys`. The operations live in keys.ts, which other modules
+ * import without pulling these hooks in.
  */
-import { execFileSync } from 'child_process';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
-
-import { GROUPS_DIR } from '../../config.js';
-import { getAgentGroup } from '../../db/agent-groups.js';
+import { getAllAgentGroups } from '../../db/agent-groups.js';
 import { log } from '../../log.js';
-import { isPlainFile, readNoFollow, removeNoFollow, writeNoFollow } from '../../no-follow-fs.js';
+import { registerModuleSweep } from '../../module-sweep.js';
+import { registerContainerEnvResolver, registerSessionPrepareHook } from '../../seam/index.js';
+import { registerKeyTargets } from '../../channels/webchat/egress-key-targets.js';
+import './cli.js';
+import { ensureAgent, stopAllAgents, sweepAgents } from './agent.js';
+import { groupIsLive, pinTarget } from './keys.js';
+import { listStored, pinnedHosts, readKnownHosts, splitTarget, storedGroups } from './store.js';
+import { CONTAINER_SSH_DIR, syncView } from './view.js';
 
-/** A deploy key, as the UI may see it. Never carries the private half. */
-export interface DeployKeyInfo {
-  name: string;
-  /** Path INSIDE the container — what the agent actually uses. */
-  path: string;
-  publicKey: string;
-  fingerprint: string;
-  /**
-   * Where the key is meant to be used, as `user@host`. Carried in the key's
-   * comment because a keypair is otherwise just two opaque files: without it an
-   * agent knows it HAS a key but not who to log in as, and burns a turn
-   * guessing usernames.
-   */
-  target?: string;
-}
+export * from './keys.js';
+export { deployKeyMount } from './mount.js';
 
-/**
- * Key names become filenames in the group folder, so anything but a plain slug
- * is a path-traversal attempt or an accident. Rejected rather than sanitised —
- * silently rewriting a name would make the file the operator sees differ from
- * the one they asked for.
- */
-const NAME_RE = /^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/;
+// ── spawn, egress, sweep ──────────────────────────────────────────────────────
 
-/** `user@host` — host may be a name or an IP. Kept strict; it lands in a comment. */
-const TARGET_RE = /^[a-z_][a-z0-9._-]{0,31}@[a-zA-Z0-9.-]+$/;
+/** Before a container spawns: refresh the view, pin missing host keys, start the agent. */
+registerSessionPrepareHook(async (agentGroupId) => {
+  const keys = listStored(agentGroupId);
+  if (!keys.length) return;
+  const pinned = pinnedHosts(readKnownHosts(agentGroupId));
+  for (const k of keys)
+    if (k.meta.target && !pinned.has(splitTarget(k.meta.target).host))
+      await pinTarget(agentGroupId, k.meta.target, false);
+  syncView(agentGroupId);
+  await ensureAgent(agentGroupId);
+});
 
-/** The comment is `user@host` when it looks like a target, else it's decoration. */
-function targetFromComment(pub: string): string | undefined {
-  const comment = pub.trim().split(/\s+/)[2] ?? '';
-  return TARGET_RE.test(comment) ? comment : undefined;
-}
-
-async function groupDir(agentGroupId: string): Promise<string | null> {
-  const group = await getAgentGroup(agentGroupId);
-  if (!group) return null;
-  const dir = path.join(GROUPS_DIR, group.folder);
-  return fs.existsSync(dir) ? dir : null;
-}
-
-/** `deploy_key_<name>` — prefixed so keys are obvious among the group's files. */
-function keyRel(name: string): string {
-  return `deploy_key_${name}`;
-}
-
-/** Anything at all at `p`, a dangling link included (existsSync misses those). */
-function occupied(p: string): boolean {
-  try {
-    fs.lstatSync(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function fingerprintOf(publicKey: string): string {
-  try {
-    // `ssh-keygen -lf -` → "256 SHA256:… comment (ED25519)"; keep the hash only.
-    const out = execFileSync('ssh-keygen', ['-lf', '-'], { input: publicKey, encoding: 'utf-8', timeout: 5000 });
-    return out.trim().split(/\s+/)[1] ?? '';
-  } catch {
-    return '';
-  }
-}
-
-export async function listDeployKeys(agentGroupId: string): Promise<DeployKeyInfo[]> {
-  const dir = await groupDir(agentGroupId);
-  if (!dir) return [];
-  const out: DeployKeyInfo[] = [];
-  for (const entry of fs.readdirSync(dir)) {
-    if (!entry.startsWith('deploy_key_') || !entry.endsWith('.pub')) continue;
-    const name = entry.slice('deploy_key_'.length, -'.pub'.length);
-    if (!isPlainFile(dir, entry)) continue;
-    const publicKey = (readNoFollow(dir, entry) ?? '').trim();
-    out.push({
-      name,
-      path: `/workspace/agent/deploy_key_${name}`,
-      publicKey,
-      fingerprint: fingerprintOf(publicKey),
-      target: targetFromComment(publicKey),
-    });
-  }
-  return out.sort((a, b) => a.name.localeCompare(b.name));
-}
+// Only for an agent with a key: the view and socket are mounted only then.
+registerContainerEnvResolver(
+  (agentGroupId): Record<string, string> =>
+    listStored(agentGroupId).length ? { SSH_AUTH_SOCK: `${CONTAINER_SSH_DIR}/agent.sock` } : {},
+);
 
 /**
- * Generate an ed25519 pair in the group folder. Returns the PUBLIC half only —
- * the private key is written 0600 and has no read path through this module, so
- * it cannot be surfaced by any caller, deliberately or by mistake.
+ * The egress filter lets an agent reach its own keys' targets, port 22,
+ * directly (SSH is not TLS, so not through the credential gateway). A target
+ * an install admin set may resolve to a private address; one a scoped admin
+ * set may not, the same line the install allowlist draws for direct tunnels.
  */
-export async function createDeployKey(agentGroupId: string, name: string, target?: string): Promise<DeployKeyInfo> {
-  if (!NAME_RE.test(name)) throw new Error('Name must be lowercase letters, numbers and hyphens');
-  if (target && !TARGET_RE.test(target)) throw new Error('Target must look like user@host');
-  const dir = await groupDir(agentGroupId);
-  if (!dir) throw new Error('This agent has no workspace folder yet');
-  const rel = keyRel(name);
-  if (occupied(path.join(dir, rel)) || occupied(path.join(dir, `${rel}.pub`)))
-    throw new Error(`A key named "${name}" already exists`);
+registerKeyTargets(async (agentGroupId) =>
+  listStored(agentGroupId).flatMap((k) =>
+    k.meta.target
+      ? [{ host: splitTarget(k.meta.target).host, port: 22, allowPrivate: k.meta.targetSetBy === 'install' }]
+      : [],
+  ),
+);
 
-  const group = (await getAgentGroup(agentGroupId))!;
-  // The comment carries the target when we know it — that is what tells the
-  // agent (via its memory note) who to log in as.
-  const comment = target || `${name}@${group.folder}`;
-  // Generated in a private temp dir, then written in without following links.
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-deploy-key-'));
-  try {
-    const priv = path.join(tmp, 'key');
-    execFileSync('ssh-keygen', ['-t', 'ed25519', '-f', priv, '-N', '', '-C', comment, '-q'], { timeout: 15000 });
-    writeNoFollow(dir, rel, fs.readFileSync(priv), 0o600);
-    writeNoFollow(dir, `${rel}.pub`, fs.readFileSync(`${priv}.pub`), 0o644);
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+// Agents of groups with no running container are stopped; the first pass also
+// rewrites every group's view (and memory note, which names keys, not paths).
+let backfilled = false;
+registerModuleSweep('deploy-keys-agents', async () => {
+  await sweepAgents(groupIsLive);
+  if (backfilled) return;
+  backfilled = true;
+  const known = new Set((await getAllAgentGroups()).map((g) => g.id));
+  for (const id of storedGroups()) {
+    if (!known.has(id) || !listStored(id).length) continue;
+    try {
+      syncView(id);
+      const { refreshCredentialNote } = await import('../tool-secrets/index.js');
+      const { realOnecliAdmin } = await import('../user-credentials/onecli-admin.js');
+      await refreshCredentialNote(realOnecliAdmin, id);
+    } catch (err) {
+      log.warn('Deploy key: start-up refresh failed', { agentGroupId: id, err: String(err) });
+    }
   }
-  log.info('Deploy key created', { agentGroupId, name });
+});
 
-  const info = (await listDeployKeys(agentGroupId)).find((k) => k.name === name);
-  if (!info) throw new Error('Key generation reported success but no key was found');
-  return info;
-}
-
-/**
- * Re-stamp an existing key's target. The comment lives in the .pub file's third
- * field, so this rewrites that rather than regenerating the pair — the key
- * material, and anything already trusting it, stays valid.
- */
-export async function setDeployKeyTarget(agentGroupId: string, name: string, target: string): Promise<DeployKeyInfo> {
-  if (!NAME_RE.test(name)) throw new Error('Name must be lowercase letters, numbers and hyphens');
-  if (!TARGET_RE.test(target)) throw new Error('Target must look like user@host');
-  const dir = await groupDir(agentGroupId);
-  if (!dir) throw new Error('This agent has no workspace folder yet');
-  const pubRel = `${keyRel(name)}.pub`;
-  const pub = isPlainFile(dir, pubRel) ? readNoFollow(dir, pubRel) : null;
-  if (pub === null) throw new Error(`No key named "${name}"`);
-  const [type, material] = pub.trim().split(/\s+/);
-  writeNoFollow(dir, pubRel, `${type} ${material} ${target}\n`, 0o644);
-  log.info('Deploy key target set', { agentGroupId, name, target });
-  return (await listDeployKeys(agentGroupId)).find((k) => k.name === name)!;
-}
-
-export async function deleteDeployKey(agentGroupId: string, name: string): Promise<boolean> {
-  if (!NAME_RE.test(name)) return false;
-  const dir = await groupDir(agentGroupId);
-  if (!dir) return false;
-  const rel = keyRel(name);
-  if (!occupied(path.join(dir, `${rel}.pub`))) return false;
-  removeNoFollow(dir, rel);
-  removeNoFollow(dir, `${rel}.pub`);
-  log.info('Deploy key deleted', { agentGroupId, name });
-  return true;
-}
+process.once('exit', stopAllAgents);

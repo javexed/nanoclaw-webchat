@@ -139,6 +139,19 @@ function cssEscape(s) {
 	if (window.CSS && CSS.escape) return CSS.escape(String(s));
 	return String(s).replace(/["\\\]]/g, "\\$&");
 }
+/** What a paste into the composer becomes: a file, a ```text block, or plain inline text. */
+function pasteKind(text) {
+	if (text.length > 4e3 || lineCount(text) > 40) return "attach";
+	return text.includes("\n") ? "block" : "inline";
+}
+/** Lines in a block of text, not counting one trailing newline. */
+function lineCount(text) {
+	return text.replace(/\n$/, "").split("\n").length;
+}
+/** Ctrl/Cmd+Shift+V: paste as plain text, never as a file or a fenced block. */
+function isPlainPasteKey(e) {
+	return e.shiftKey && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v";
+}
 //#endregion
 //#region src/core/state.ts
 /**
@@ -489,11 +502,11 @@ var _hoisted_7$33 = {
 };
 var _hoisted_8$24 = { class: "approval-payload" };
 var _hoisted_9$20 = ["disabled"];
-var _hoisted_10$19 = {
+var _hoisted_10$20 = {
 	key: 4,
 	class: "approval-actions"
 };
-var _hoisted_11$14 = ["disabled", "onClick"];
+var _hoisted_11$15 = ["disabled", "onClick"];
 var _hoisted_12$13 = {
 	key: 5,
 	class: "approval-error"
@@ -614,13 +627,13 @@ var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 						class: "reject",
 						disabled: !reason.value.trim() || unref(approvalBusy).has(__props.approval.questionId) || void 0
 					}, "Reject", 8, _hoisted_9$20)
-				], 32)) : (openBlock(), createElementBlock("div", _hoisted_10$19, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
+				], 32)) : (openBlock(), createElementBlock("div", _hoisted_10$20, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
 					return openBlock(), createElementBlock("button", {
 						key: i,
 						class: normalizeClass(btnClass(o.value)),
 						disabled: unref(approvalBusy).has(__props.approval.questionId) || void 0,
 						onClick: ($event) => pick(o.value)
-					}, toDisplayString(o.label || o.value), 11, _hoisted_11$14);
+					}, toDisplayString(o.label || o.value), 11, _hoisted_11$15);
 				}), 128))])),
 				unref(approvalErrors)[__props.approval.questionId] ? (openBlock(), createElementBlock("div", _hoisted_12$13, toDisplayString(unref(approvalErrors)[__props.approval.questionId]), 1)) : createCommentVNode("", true)
 			], 8, _hoisted_1$84);
@@ -1179,8 +1192,8 @@ var _hoisted_6$40 = { class: "bubble" };
 var _hoisted_7$31 = ["hidden"];
 var _hoisted_8$23 = ["hidden"];
 var _hoisted_9$19 = ["hidden"];
-var _hoisted_10$18 = ["hidden"];
-var _hoisted_11$13 = {
+var _hoisted_10$19 = ["hidden"];
+var _hoisted_11$14 = {
 	ref: "trace",
 	class: "thinking-fulltrace"
 };
@@ -1279,8 +1292,8 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 				createElementVNode("div", {
 					class: "thinking-preview",
 					hidden: !__props.turn.preview
-				}, toDisplayString(__props.turn.preview), 9, _hoisted_10$18),
-				createElementVNode("div", _hoisted_11$13, [createTextVNode(toDisplayString(traceEmpty.value), 1), liveView.value && !traceEmpty.value ? (openBlock(), createBlock(TraceView_default, {
+				}, toDisplayString(__props.turn.preview), 9, _hoisted_10$19),
+				createElementVNode("div", _hoisted_11$14, [createTextVNode(toDisplayString(traceEmpty.value), 1), liveView.value && !traceEmpty.value ? (openBlock(), createBlock(TraceView_default, {
 					key: 0,
 					view: liveView.value
 				}, null, 8, ["view"])) : createCommentVNode("", true)], 512),
@@ -2762,7 +2775,7 @@ var _hoisted_9$18 = {
 	key: 0,
 	class: "file-caption"
 };
-var _hoisted_10$17 = ["innerHTML"];
+var _hoisted_10$18 = ["innerHTML"];
 var DOWNLOAD = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-download\"></use></svg>";
 var IMAGE = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-image\"></use></svg>";
 var FILE_TEXT = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-file-text\"></use></svg>";
@@ -2847,7 +2860,7 @@ var MessageBubble_default = /* @__PURE__ */ defineComponent({
 				ref: bind,
 				class: "bubble",
 				innerHTML: __props.row.html
-			}, null, 8, _hoisted_10$17)) : (openBlock(), createElementBlock("div", {
+			}, null, 8, _hoisted_10$18)) : (openBlock(), createElementBlock("div", {
 				key: 2,
 				ref: bind,
 				class: "bubble"
@@ -3072,11 +3085,11 @@ var _hoisted_9$17 = {
 	key: 3,
 	class: "approval-inroom-note resolved"
 };
-var _hoisted_10$16 = {
+var _hoisted_10$17 = {
 	key: 4,
 	class: "skill-draft-card"
 };
-var _hoisted_11$12 = { class: "skill-head" };
+var _hoisted_11$13 = { class: "skill-head" };
 var _hoisted_12$12 = { class: "skill-name" };
 var _hoisted_13$12 = { class: "skill-desc" };
 var _hoisted_14$12 = { class: "skill-draft-actions" };
@@ -3170,8 +3183,8 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 				busy: undoing.value,
 				label: UNDO$1,
 				"busy-label": UNDOING
-			}, null, 8, ["busy"])], 8, _hoisted_7$29)])) : unref(draftAction)[__props.draftId]?.phase === "undone" ? (openBlock(), createElementBlock("div", _hoisted_8$21, " ↩ " + toDisplayString(unref(draftAction)[__props.draftId].name) + " — undone ", 1)) : __props.resolved ? (openBlock(), createElementBlock("div", _hoisted_9$17, toDisplayString(__props.status === "kept" ? `✅ ${__props.title} — kept` : `🗑 ${__props.title} — discarded`), 1)) : (openBlock(), createElementBlock("div", _hoisted_10$16, [
-				createElementVNode("div", _hoisted_11$12, [createElementVNode("span", _hoisted_12$12, toDisplayString(__props.title), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
+			}, null, 8, ["busy"])], 8, _hoisted_7$29)])) : unref(draftAction)[__props.draftId]?.phase === "undone" ? (openBlock(), createElementBlock("div", _hoisted_8$21, " ↩ " + toDisplayString(unref(draftAction)[__props.draftId].name) + " — undone ", 1)) : __props.resolved ? (openBlock(), createElementBlock("div", _hoisted_9$17, toDisplayString(__props.status === "kept" ? `✅ ${__props.title} — kept` : `🗑 ${__props.title} — discarded`), 1)) : (openBlock(), createElementBlock("div", _hoisted_10$17, [
+				createElementVNode("div", _hoisted_11$13, [createElementVNode("span", _hoisted_12$12, toDisplayString(__props.title), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
 					key: 0,
 					origin: {
 						label: `loads in every ${__props.agentName} session`,
@@ -3508,11 +3521,11 @@ var _hoisted_8$20 = {
 	class: "approval-notice-done"
 };
 var _hoisted_9$16 = ["disabled", "onClick"];
-var _hoisted_10$15 = {
+var _hoisted_10$16 = {
 	key: 2,
 	class: "approval-error"
 };
-var _hoisted_11$11 = ["data-draft-id"];
+var _hoisted_11$12 = ["data-draft-id"];
 var _hoisted_12$11 = {
 	key: 0,
 	class: "msg-body"
@@ -3579,12 +3592,12 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 						disabled: unref(approvalBusy).has(`resend:${row.notice.questionId}`) || void 0,
 						onClick: ($event) => unref(resendApproval)(row.notice.questionId)
 					}, "Send again", 8, _hoisted_9$16)) : createCommentVNode("", true),
-					unref(approvalErrors)[`resend:${row.notice.questionId}`] ? (openBlock(), createElementBlock("span", _hoisted_10$15, toDisplayString(unref(approvalErrors)[`resend:${row.notice.questionId}`]), 1)) : createCommentVNode("", true)
+					unref(approvalErrors)[`resend:${row.notice.questionId}`] ? (openBlock(), createElementBlock("span", _hoisted_10$16, toDisplayString(unref(approvalErrors)[`resend:${row.notice.questionId}`]), 1)) : createCommentVNode("", true)
 				], 2)], 8, _hoisted_7$28)) : row.kind === "draft" ? (openBlock(), createElementBlock("div", {
 					key: 4,
 					class: "msg skill-draft-msg",
 					"data-draft-id": row.id || ""
-				}, [createVNode(SkillDraftCard_default, mergeProps({ ref_for: true }, row.payload), null, 16)], 8, _hoisted_11$11)) : (openBlock(), createElementBlock("div", mergeProps({
+				}, [createVNode(SkillDraftCard_default, mergeProps({ ref_for: true }, row.payload), null, 16)], 8, _hoisted_11$12)) : (openBlock(), createElementBlock("div", mergeProps({
 					key: 5,
 					class: row.cls
 				}, { ref_for: true }, row.id ? { "data-message-id": row.id } : {}, { style: row.isA2a ? { "--a2a-accent": row.a2aAccent } : void 0 }), [
@@ -3675,20 +3688,22 @@ var CodeToolbar_default = /* @__PURE__ */ defineComponent({
 	__name: "CodeToolbar",
 	props: {
 		lang: {},
-		pre: {}
+		pre: {},
+		wrap: { type: Boolean }
 	},
 	setup(__props) {
 		/**
 		* The Wrap / Copy strip on a fenced code block, mounted INTO the .code-toolbar div, one
 		* app per <pre>, so the opaque v-html markdown subtree is otherwise untouched. Button
 		* feedback is component state, so the copy timer is cleared on unmount. Wrap toggles a
-		* class on the parent <pre> (the CSS rule is `.msg .bubble pre.wrap code`) — the one
-		* element it touches outside its own tree.
+		* class on the <pre> (the CSS rule is `.msg .bubble pre.wrap code`), on from the start
+		* when `wrap` is set — the one element it touches outside its own tree.
 		*/
 		const props = __props;
 		const copyState = ref("idle");
-		const wrapping = ref(false);
+		const wrapping = ref(Boolean(props.wrap));
 		let timer = null;
+		onMounted(() => props.pre.classList.toggle("wrap", wrapping.value));
 		onUnmounted(() => {
 			if (timer) clearTimeout(timer);
 		});
@@ -3732,7 +3747,10 @@ function provideTranscriptDeps(provided) {
 	Object.assign(deps$16, provided);
 }
 /**
-* Give every fenced block a Wrap / Copy strip by mounting CodeToolbar. The
+* Give every fenced block a Wrap / Copy strip by mounting CodeToolbar, in a
+* .code-block wrapper so the strip can stick to the top of the view while a
+* long block scrolls past (inside the <pre>, its overflow would pin it there).
+* Pasted text (```text) starts wrapped; a long block starts collapsed. The
 * has-code-toolbar guard keeps it idempotent across markdown re-renders. Apps
 * are not tracked for unmount: each lives exactly as long as its v-html <pre>.
 */
@@ -3743,14 +3761,38 @@ function decorateCodeBlocks(container) {
 		const code = pre.querySelector("code");
 		const langClass = code && [...code.classList].find((c) => c.startsWith("language-"));
 		const lang = langClass ? langClass.slice(9) : "";
+		const block = document.createElement("div");
+		block.className = "code-block";
+		pre.parentNode.insertBefore(block, pre);
 		const toolbar = document.createElement("div");
 		toolbar.className = "code-toolbar";
-		pre.insertBefore(toolbar, pre.firstChild);
+		block.append(toolbar, pre);
 		createApp(CodeToolbar_default, {
 			lang,
-			pre
+			pre,
+			wrap: lang === "text"
 		}).mount(toolbar);
+		const lines = lineCount((code ?? pre).textContent ?? "");
+		if (lines > 25) clampCodeBlock(block, lines);
 	});
+}
+function clampCodeBlock(block, lines) {
+	block.classList.add("clamped", "collapsed");
+	const more = document.createElement("button");
+	more.type = "button";
+	more.className = "code-more";
+	const label = () => {
+		const collapsed = block.classList.contains("collapsed");
+		more.textContent = collapsed ? `Show all (${lines} lines)` : "Show less";
+		more.setAttribute("aria-expanded", String(!collapsed));
+	};
+	label();
+	more.addEventListener("click", () => {
+		const collapsed = block.classList.toggle("collapsed");
+		label();
+		if (collapsed) block.scrollIntoView({ block: "nearest" });
+	});
+	block.appendChild(more);
 }
 function messageMentionsMe(text) {
 	if (!state.myHandle || typeof text !== "string") return false;
@@ -5113,7 +5155,7 @@ var _hoisted_8$19 = {
 	class: "skill-desc"
 };
 var _hoisted_9$15 = ["onClick"];
-var _hoisted_10$14 = ["onClick"];
+var _hoisted_10$15 = ["onClick"];
 var REMOVE$5 = "Remove";
 var UPDATE$1 = "Update";
 var EMPTY$13 = "No secrets yet";
@@ -5173,7 +5215,7 @@ var AgentSecretList_default = /* @__PURE__ */ defineComponent({
 							class: "btn btn-danger",
 							type: "button",
 							onClick: ($event) => props.onRemove(r)
-						}, toDisplayString(REMOVE$5), 8, _hoisted_10$14)], 64)) : createCommentVNode("", true)]);
+						}, toDisplayString(REMOVE$5), 8, _hoisted_10$15)], 64)) : createCommentVNode("", true)]);
 					}), 128))], 64);
 				}), 128))
 			], 64);
@@ -5264,32 +5306,37 @@ var CopyIconButton_default = /* @__PURE__ */ defineComponent({
 //#region src/features/AgentKeyList.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$63 = { class: "skill-info" };
 var _hoisted_2$55 = { class: "skill-head" };
-var _hoisted_3$51 = ["onSubmit"];
-var _hoisted_4$43 = ["placeholder", "aria-label"];
-var _hoisted_5$36 = {
+var _hoisted_3$51 = ["title"];
+var _hoisted_4$43 = ["onSubmit"];
+var _hoisted_5$36 = ["placeholder", "aria-label"];
+var _hoisted_6$32 = {
 	key: 1,
 	class: "skill-desc"
 };
-var _hoisted_6$32 = { class: "secret-actions" };
-var _hoisted_7$24 = ["disabled", "onClick"];
-var _hoisted_8$18 = ["onClick"];
+var _hoisted_7$24 = { class: "secret-actions" };
+var _hoisted_8$18 = ["disabled", "onClick"];
 var _hoisted_9$14 = ["onClick"];
+var _hoisted_10$14 = ["onClick"];
+var _hoisted_11$11 = ["onClick"];
 //#endregion
 //#region src/features/AgentKeyList.vue
 var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 	__name: "AgentKeyList",
 	props: {
 		onRemove: { type: Function },
-		onSaveTarget: { type: Function }
+		onSaveTarget: { type: Function },
+		onRotate: { type: Function }
 	},
 	setup(__props) {
 		/**
 		* An agent's SSH deploy keys, mounted into <ul id="agent-keys-list">; rows are shaped in
-		* renderAgentKeys, including the one-string meta line (ssh command, or path plus note).
-		* The private key never reaches the client, so copying the public key is the whole
-		* workflow; it uses the .btn-icon copy control (CopyIconButton), paired with Edit and
-		* Remove. Edit changes only the login target (user@host): the key stays the same, so
-		* the far end keeps trusting it — no need to delete and re-add a key to fix its host.
+		* renderAgentKeys, including the one-string meta line (ssh command and target, or what
+		* is missing). The private key is held on the host and never reaches the client, so
+		* copying the public key is the whole workflow; it uses the .btn-icon copy control
+		* (CopyIconButton), paired with Edit and Remove. Edit changes only the login target
+		* (user@host): the key stays the same, so the far end keeps trusting it. A key the
+		* agent could once read is marked Exposed; Rotate replaces it with a new one, whose
+		* public half then goes on the server.
 		*/
 		const props = __props;
 		const T = {
@@ -5297,7 +5344,10 @@ var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 			save: "Save",
 			cancel: "Cancel",
 			remove: "Remove",
-			target: "user@host"
+			rotate: "Rotate",
+			target: "user@host",
+			exposed: "Exposed",
+			exposedTip: "The agent could read this key once. Rotate it, then put the new public key on the server."
 		};
 		/** Name of the row being edited, and its draft target. */
 		const editing = ref(null);
@@ -5322,7 +5372,11 @@ var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("li", {
 					key: r.name,
 					class: "skill-source-row secret-row"
-				}, [createElementVNode("div", _hoisted_1$63, [createElementVNode("div", _hoisted_2$55, toDisplayString(r.name), 1), editing.value === r.name ? (openBlock(), createElementBlock("form", {
+				}, [createElementVNode("div", _hoisted_1$63, [createElementVNode("div", _hoisted_2$55, [createTextVNode(toDisplayString(r.name), 1), r.exposed ? (openBlock(), createElementBlock("span", {
+					key: 0,
+					class: "skill-badge skill-badge-warn",
+					title: T.exposedTip
+				}, toDisplayString(T.exposed), 9, _hoisted_3$51)) : createCommentVNode("", true)]), editing.value === r.name ? (openBlock(), createElementBlock("form", {
 					key: 0,
 					class: "agent-key-edit",
 					onSubmit: withModifiers(($event) => save(r.name), ["prevent"])
@@ -5334,12 +5388,12 @@ var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 					autocomplete: "off",
 					spellcheck: "false",
 					onKeydown: _cache[1] || (_cache[1] = withKeys(($event) => editing.value = null, ["esc"]))
-				}, null, 40, _hoisted_4$43), [[vModelText, draft.value]])], 40, _hoisted_3$51)) : (openBlock(), createElementBlock("span", _hoisted_5$36, toDisplayString(r.meta), 1))]), createElementVNode("div", _hoisted_6$32, [editing.value === r.name ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("button", {
+				}, null, 40, _hoisted_5$36), [[vModelText, draft.value]])], 40, _hoisted_4$43)) : (openBlock(), createElementBlock("span", _hoisted_6$32, toDisplayString(r.meta), 1))]), createElementVNode("div", _hoisted_7$24, [editing.value === r.name ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("button", {
 					class: "btn btn-primary",
 					type: "button",
 					disabled: !draft.value.trim() || saving.value,
 					onClick: ($event) => save(r.name)
-				}, toDisplayString(T.save), 9, _hoisted_7$24), createElementVNode("button", {
+				}, toDisplayString(T.save), 9, _hoisted_8$18), createElementVNode("button", {
 					class: "btn btn-secondary",
 					type: "button",
 					onClick: _cache[2] || (_cache[2] = ($event) => editing.value = null)
@@ -5348,16 +5402,22 @@ var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 						text: r.publicKey,
 						label: "Copy public key"
 					}, null, 8, ["text"]),
+					r.exposed ? (openBlock(), createElementBlock("button", {
+						key: 0,
+						class: "btn btn-secondary",
+						type: "button",
+						onClick: ($event) => props.onRotate(r)
+					}, toDisplayString(T.rotate), 9, _hoisted_9$14)) : createCommentVNode("", true),
 					createElementVNode("button", {
 						class: "btn btn-secondary",
 						type: "button",
 						onClick: ($event) => startEdit(r)
-					}, toDisplayString(T.edit), 9, _hoisted_8$18),
+					}, toDisplayString(T.edit), 9, _hoisted_10$14),
 					createElementVNode("button", {
 						class: "btn btn-danger",
 						type: "button",
 						onClick: ($event) => props.onRemove(r)
-					}, toDisplayString(T.remove), 9, _hoisted_9$14)
+					}, toDisplayString(T.remove), 9, _hoisted_11$11)
 				], 64))])]);
 			}), 128);
 		};
@@ -21653,7 +21713,8 @@ var agentKeysGroupId = null;
 function mountAgentKeyList() {
 	agentKeysApp ??= mountIsland("#agent-keys-list", () => createApp(AgentKeyList_default, {
 		onRemove: (r) => void removeAgentKey(agentKeysGroupId, r.key),
-		onSaveTarget: (name, target) => saveAgentKeyTarget(agentKeysGroupId, name, target)
+		onSaveTarget: (name, target) => saveAgentKeyTarget(agentKeysGroupId, name, target),
+		onRotate: (r) => void rotateAgentKey(agentKeysGroupId, r.name)
 	}));
 }
 async function renderAgentKeys(agentGroupId) {
@@ -21671,9 +21732,10 @@ async function renderAgentKeys(agentGroupId) {
 	agentKeysGroupId = agentGroupId;
 	agentKeyRows.value = keys.map((k) => ({
 		name: k.name,
-		meta: k.target ? `ssh -i ${k.path} ${k.target}` : `${k.path} · no login target set`,
+		meta: !k.target ? "Target needed" : k.command ? `${k.command} · ${k.target}` : `${k.target} · host key not checked yet`,
 		target: k.target || "",
 		publicKey: k.publicKey,
+		exposed: k.exposed === true,
 		key: k
 	}));
 	mountAgentKeyList();
@@ -21733,6 +21795,32 @@ async function saveAgentKeyTarget(agentGroupId, name, target) {
 	} catch (err) {
 		showToast(err?.body?.error || "Could not save", { kind: "error" });
 		return false;
+	}
+}
+/** Replace an exposed key with a new pair; the new public half goes on the server. */
+async function rotateAgentKey(agentGroupId, name) {
+	if (!await deps$3.showConfirmModal({
+		title: "Rotate deploy key",
+		body: `Replace “${name}” with a new key? The old one stops working here at once. Put the new public key on the server.`,
+		confirmLabel: "Rotate"
+	})) return;
+	try {
+		const body = await apiJson(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? "")}`, {
+			method: "POST",
+			body: {
+				name,
+				rotate: true
+			}
+		});
+		try {
+			await navigator.clipboard.writeText(body.key.publicKey);
+			showToast(`Rotated ${name} — new public key copied`);
+		} catch {
+			showToast(`Rotated ${name}`);
+		}
+		await renderAgentKeys(agentGroupId);
+	} catch (err) {
+		showToast(err?.body?.error || "Could not rotate key", { kind: "error" });
 	}
 }
 async function removeAgentKey(agentGroupId, key) {
@@ -24781,19 +24869,33 @@ function wireMobileBack() {
 		$("#app")?.classList.remove("in-room");
 	});
 }
-/** Composer paste: multi-line text is wrapped in a code fence so it renders verbatim
-* (no Markdown or mention decoration); files fall through to the document listener. */
-function wireComposerPaste() {
+/** Composer paste: multi-line text is wrapped in a ```text fence so it renders verbatim
+* and wrapped (no Markdown or mention decoration); a long paste goes to `onLongPaste`
+* as a .txt file instead; Ctrl/Cmd+Shift+V pastes as typed, with neither; files fall
+* through to the document listener. */
+function wireComposerPaste(onLongPaste) {
+	let plainPaste = false;
+	$("#message-input")?.addEventListener("keydown", (e) => {
+		plainPaste = isPlainPasteKey(e);
+	});
 	$("#message-input")?.addEventListener("paste", (e) => {
+		const plain = plainPaste;
+		plainPaste = false;
+		if (plain) return;
 		if (e.clipboardData?.files?.length) return;
 		const text = e.clipboardData?.getData("text/plain") ?? "";
+		if (onLongPaste && pasteKind(text) === "attach") {
+			e.preventDefault();
+			onLongPaste(new File([text], "pasted-text.txt", { type: "text/plain" }));
+			return;
+		}
 		if (!text.includes("\n")) return;
 		e.preventDefault();
 		const input = e.currentTarget;
 		const longestTicks = (text.match(/`+/g) || []).reduce((m, r) => Math.max(m, r.length), 0);
 		const fence = "`".repeat(Math.max(3, longestTicks + 1));
 		const before = input.value.slice(0, input.selectionStart);
-		const insert = `${before.length > 0 && !before.endsWith("\n") ? "\n" : ""}${fence}\n${text.replace(/\n+$/, "")}\n${fence}\n`;
+		const insert = `${before.length > 0 && !before.endsWith("\n") ? "\n" : ""}${fence}text\n${text.replace(/\n+$/, "")}\n${fence}\n`;
 		const valBefore = input.value;
 		document.execCommand("insertText", false, insert);
 		if (input.value === valBefore) {
@@ -28730,7 +28832,7 @@ document.addEventListener("paste", (e) => {
 		stageFiles(files);
 	}
 });
-wireComposerPaste();
+wireComposerPaste((file) => stageFiles([file]));
 wireFileControls3();
 $("#camera-btn").addEventListener("click", () => {
 	const input = document.createElement("input");

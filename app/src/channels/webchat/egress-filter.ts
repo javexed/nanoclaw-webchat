@@ -43,6 +43,7 @@ import {
   recordBlocked,
   type EgressMode,
 } from './egress-policy.js';
+import { keyTargetFor } from './egress-key-targets.js';
 import { connectThroughGateway, connectToGateway } from './gateway-connect.js';
 import { serveOllamaFiltered } from './ollama-filter.js';
 import { workloadTunnel } from './workload-tunnel.js';
@@ -165,11 +166,13 @@ const DIRECT_CONNECT_TIMEOUT_MS = 10_000;
  * point there), and connect to that same address, so a second lookup cannot
  * swap it.
  */
-async function connectDirect(host: string, port: number, pinned?: string): Promise<net.Socket> {
+async function connectDirect(host: string, port: number, pinned?: string, privateOk?: boolean): Promise<net.Socket> {
   const bare = host.replace(/^\[|\]$/g, '');
   // Already resolved (ollamaPin): that answer is the one checked, so it is the one dialled.
   const address = pinned ?? (await dns.lookup(bare)).address;
-  if (!directAddressAllowed(address, net.isIP(bare) !== 0))
+  // A private address: allowed when the caller says so (a deploy key's
+  // target), else only when the entry names the address itself.
+  if (!directAddressAllowed(address, privateOk ?? net.isIP(bare) !== 0))
     throw new Error(
       `${host} resolves to ${address}, which is not allowed directly (a private address: list the address itself)`,
     );
@@ -397,6 +400,27 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
     return spliceDirect(client, req, head.rest, own);
   }
   const mode = await deps.mode(caller.agentGroupId);
+  // A deploy key's target, for the agent holding the key (Allowlist mode).
+  const keyTarget =
+    !building && req.kind === 'connect' && mode === 'host-only'
+      ? await keyTargetFor(caller.agentGroupId, req.host, req.port)
+      : null;
+  if (keyTarget) {
+    let upstream: net.Socket;
+    try {
+      upstream = deps.direct
+        ? await deps.direct(req.host, req.port, pinned)
+        : await connectDirect(req.host, req.port, pinned, keyTarget.allowPrivate);
+    } catch (err) {
+      return answer(
+        client,
+        '502 Bad Gateway',
+        `could not reach ${req.host}:${req.port}: ${String((err as Error).message).slice(0, 200)}`,
+      );
+    }
+    log.info('Egress filter: deploy key tunnel', { agentGroupId: caller.agentGroupId, host: req.host, port: req.port });
+    return spliceDirect(client, req, head.rest, upstream);
+  }
   const alwaysBase = deps.always ? await deps.always(caller.agentGroupId) : undefined;
   const always =
     building && deps.buildRegistries

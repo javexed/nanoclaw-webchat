@@ -386,8 +386,9 @@ import {
   listDeployKeys,
   createDeployKey,
   deleteDeployKey,
+  rotateDeployKey,
   setDeployKeyTarget,
-} from '../../modules/deploy-keys/index.js';
+} from '../../modules/deploy-keys/keys.js';
 import {
   WORKSPACE,
   type Scope,
@@ -1398,11 +1399,10 @@ async function rToolSecretsIsolation(ctx: RouteCtx, _m: RegExpMatchArray): Promi
   }
 }
 
-// Deploy keys — per-agent SSH keypairs. Not vault-backed: OneCLI injects into
-// outbound HTTPS, and SSH is not HTTP, so these are files in the group folder
-// (which is mounted only into that group's container, so they are private to
-// the agent by construction). The PRIVATE half is never returned by any verb
-// here — only the public key, which is the half you paste into a server.
+// Deploy keys — per-agent SSH keypairs, held on the host (modules/deploy-keys):
+// the agent signs through a host ssh-agent limited to the key's target and
+// never sees the key. The PRIVATE half is never returned by any verb here —
+// only the public key, which is the half you paste into a server.
 async function rDeployKeys(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, url, method, userId } = ctx;
   const agentGroupId = url.searchParams.get('agentGroupId') ?? '';
@@ -1422,14 +1422,21 @@ async function rDeployKeys(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
     }
     const raw = await readJsonBody(req, res);
     if (raw === null) return;
-    const body = JSON.parse(raw) as { name?: string; target?: string };
+    const body = JSON.parse(raw) as { name?: string; target?: string; rotate?: boolean };
     const name = (body.name ?? '').trim().toLowerCase();
     const target = (body.target ?? '').trim() || undefined;
+    // An owner's or global admin's target may resolve to a private address
+    // (egress filter); a scoped admin's may not.
+    const setBy = (await isOwner(userId)) || (await isGlobalAdmin(userId)) ? 'install' : 'agent';
+    const exists = (await listDeployKeys(agentGroupId)).some((k) => k.name === name);
     // Re-stamping an existing key's target must not regenerate it — anything
-    // already trusting the public half would break.
-    const key = (await listDeployKeys(agentGroupId)).some((k) => k.name === name)
-      ? await setDeployKeyTarget(agentGroupId, name, target ?? '')
-      : await createDeployKey(agentGroupId, name, target);
+    // already trusting the public half would break. Rotating does, on purpose.
+    const key =
+      body.rotate === true
+        ? await rotateDeployKey(agentGroupId, name)
+        : exists
+          ? await setDeployKeyTarget(agentGroupId, name, target ?? '', setBy)
+          : await createDeployKey(agentGroupId, name, target, setBy);
     await refreshCredentialNote(realOnecliAdmin, agentGroupId);
     return json(res, 200, { ok: true, key });
   } catch (err) {
