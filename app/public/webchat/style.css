@@ -2442,29 +2442,68 @@ a.lightbox-btn {
   word-break: break-word;
 }
 
-.msg .bubble pre .code-toolbar {
-  position: absolute;
+/* The Wrap / Copy strip sits in the .code-block wrapper, not the <pre>, so it can
+   stick to the top of the view while a long block scrolls past. Zero height: it
+   takes no space and its buttons hang over the block's top-right corner. */
+.msg .bubble .code-block {
+  position: relative;
+}
+.msg .bubble .code-block > .code-toolbar {
+  position: sticky;
   top: 4px;
-  right: 4px;
+  z-index: 2;
+  height: 0;
   display: flex;
   gap: 4px;
   align-items: center;
+  justify-content: flex-end;
+  padding-right: 4px;
+  transform: translateY(calc(0.5em + 4px));
   opacity: 0;
   transition: opacity 0.15s ease;
   pointer-events: none;
 }
-.msg .bubble pre:hover .code-toolbar,
-.msg .bubble pre:focus-within .code-toolbar {
+.msg .bubble .code-block > .code-toolbar > * {
+  height: auto;
+}
+.msg .bubble .code-block:hover > .code-toolbar,
+.msg .bubble .code-block:focus-within > .code-toolbar {
   opacity: 1;
+}
+.msg .bubble .code-block:hover > .code-toolbar > *,
+.msg .bubble .code-block:focus-within > .code-toolbar > * {
   pointer-events: auto;
 }
 @media (hover: none) {
-  .msg .bubble pre .code-toolbar {
+  .msg .bubble .code-block > .code-toolbar {
     opacity: 1;
+  }
+  .msg .bubble .code-block > .code-toolbar > * {
     pointer-events: auto;
   }
 }
-.msg .bubble pre .code-lang {
+/* Long blocks start collapsed with a "Show all (N lines)" button under them. */
+.msg .bubble .code-block.clamped.collapsed pre {
+  max-height: 15em;
+  overflow-y: hidden; /* sideways scrolling stays (overflow-x from the base rule) */
+  -webkit-mask-image: linear-gradient(to bottom, #000 75%, transparent);
+  mask-image: linear-gradient(to bottom, #000 75%, transparent);
+}
+.msg .bubble .code-more {
+  display: block;
+  margin: -0.25em 0 0.5em;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+.msg .bubble .code-more:hover {
+  text-decoration: underline;
+}
+.msg .bubble .code-toolbar .code-lang {
   font-size: 0.7em;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -2472,7 +2511,7 @@ a.lightbox-btn {
   padding: 0 4px;
   user-select: none;
 }
-.msg .bubble pre .code-btn {
+.msg .bubble .code-toolbar .code-btn {
   font: inherit;
   font-size: 0.7em;
   letter-spacing: 0.02em;
@@ -2483,20 +2522,20 @@ a.lightbox-btn {
   color: var(--text);
   border: 1px solid var(--border);
 }
-.msg .bubble pre .code-btn:hover {
+.msg .bubble .code-toolbar .code-btn:hover {
   background: var(--surface2);
 }
-.msg .bubble pre .code-btn.active {
+.msg .bubble .code-toolbar .code-btn.active {
   background: var(--accent);
   color: var(--on-accent);
   border-color: var(--accent);
 }
-.msg .bubble pre .code-btn.copied {
+.msg .bubble .code-toolbar .code-btn.copied {
   background: var(--success);
   color: #fff;
   border-color: var(--success);
 }
-.msg .bubble pre .code-btn.error {
+.msg .bubble .code-toolbar .code-btn.error {
   background: var(--danger);
   color: #fff;
   border-color: var(--danger);

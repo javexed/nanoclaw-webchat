@@ -828,7 +828,7 @@ document.addEventListener('paste', (e) => {
   }
 });
 
-wireComposerPaste();
+wireComposerPaste((file) => stageFiles([file]));
 
 wireFileControls3();
 

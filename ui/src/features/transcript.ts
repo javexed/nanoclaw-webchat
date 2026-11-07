@@ -11,6 +11,7 @@ import { createApp } from 'vue';
 import Transcript from './Transcript.vue';
 import CodeToolbar from './CodeToolbar.vue';
 import { $ } from '../core/dom.js';
+import { CODE_CLAMP_LINES, lineCount } from '../core/long-text.js';
 import { mountIsland } from '../core/island.js';
 import { state } from '../core/state.js';
 import { showToast } from '../core/toast.js';
@@ -44,7 +45,10 @@ export function provideTranscriptDeps(provided: Partial<TranscriptDeps>): void {
 }
 
 /**
- * Give every fenced block a Wrap / Copy strip by mounting CodeToolbar. The
+ * Give every fenced block a Wrap / Copy strip by mounting CodeToolbar, in a
+ * .code-block wrapper so the strip can stick to the top of the view while a
+ * long block scrolls past (inside the <pre>, its overflow would pin it there).
+ * Pasted text (```text) starts wrapped; a long block starts collapsed. The
  * has-code-toolbar guard keeps it idempotent across markdown re-renders. Apps
  * are not tracked for unmount: each lives exactly as long as its v-html <pre>.
  */
@@ -57,11 +61,36 @@ function decorateCodeBlocks(container?: any) {
     const langClass = code && [...code.classList].find((c: string) => c.startsWith('language-'));
     const lang = langClass ? langClass.slice('language-'.length) : '';
 
+    const block = document.createElement('div');
+    block.className = 'code-block';
+    pre.parentNode.insertBefore(block, pre);
     const toolbar = document.createElement('div');
     toolbar.className = 'code-toolbar';
-    pre.insertBefore(toolbar, pre.firstChild);
-    createApp(CodeToolbar, { lang, pre }).mount(toolbar);
+    block.append(toolbar, pre);
+    createApp(CodeToolbar, { lang, pre, wrap: lang === 'text' }).mount(toolbar);
+
+    const lines = lineCount((code ?? pre).textContent ?? '');
+    if (lines > CODE_CLAMP_LINES) clampCodeBlock(block, lines);
   });
+}
+
+function clampCodeBlock(block: HTMLElement, lines: number) {
+  block.classList.add('clamped', 'collapsed');
+  const more = document.createElement('button');
+  more.type = 'button';
+  more.className = 'code-more';
+  const label = () => {
+    const collapsed = block.classList.contains('collapsed');
+    more.textContent = collapsed ? `Show all (${lines} lines)` : 'Show less';
+    more.setAttribute('aria-expanded', String(!collapsed));
+  };
+  label();
+  more.addEventListener('click', () => {
+    const collapsed = block.classList.toggle('collapsed');
+    label();
+    if (collapsed) block.scrollIntoView({ block: 'nearest' });
+  });
+  block.appendChild(more);
 }
 
 // True when `text` contains an @-mention of the current user's handle. Mirrors

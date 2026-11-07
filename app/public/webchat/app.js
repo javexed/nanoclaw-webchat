@@ -139,6 +139,19 @@ function cssEscape(s) {
 	if (window.CSS && CSS.escape) return CSS.escape(String(s));
 	return String(s).replace(/["\\\]]/g, "\\$&");
 }
+/** What a paste into the composer becomes: a file, a ```text block, or plain inline text. */
+function pasteKind(text) {
+	if (text.length > 4e3 || lineCount(text) > 40) return "attach";
+	return text.includes("\n") ? "block" : "inline";
+}
+/** Lines in a block of text, not counting one trailing newline. */
+function lineCount(text) {
+	return text.replace(/\n$/, "").split("\n").length;
+}
+/** Ctrl/Cmd+Shift+V: paste as plain text, never as a file or a fenced block. */
+function isPlainPasteKey(e) {
+	return e.shiftKey && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v";
+}
 //#endregion
 //#region src/core/state.ts
 /**
@@ -3675,20 +3688,22 @@ var CodeToolbar_default = /* @__PURE__ */ defineComponent({
 	__name: "CodeToolbar",
 	props: {
 		lang: {},
-		pre: {}
+		pre: {},
+		wrap: { type: Boolean }
 	},
 	setup(__props) {
 		/**
 		* The Wrap / Copy strip on a fenced code block, mounted INTO the .code-toolbar div, one
 		* app per <pre>, so the opaque v-html markdown subtree is otherwise untouched. Button
 		* feedback is component state, so the copy timer is cleared on unmount. Wrap toggles a
-		* class on the parent <pre> (the CSS rule is `.msg .bubble pre.wrap code`) — the one
-		* element it touches outside its own tree.
+		* class on the <pre> (the CSS rule is `.msg .bubble pre.wrap code`), on from the start
+		* when `wrap` is set — the one element it touches outside its own tree.
 		*/
 		const props = __props;
 		const copyState = ref("idle");
-		const wrapping = ref(false);
+		const wrapping = ref(Boolean(props.wrap));
 		let timer = null;
+		onMounted(() => props.pre.classList.toggle("wrap", wrapping.value));
 		onUnmounted(() => {
 			if (timer) clearTimeout(timer);
 		});
@@ -3732,7 +3747,10 @@ function provideTranscriptDeps(provided) {
 	Object.assign(deps$16, provided);
 }
 /**
-* Give every fenced block a Wrap / Copy strip by mounting CodeToolbar. The
+* Give every fenced block a Wrap / Copy strip by mounting CodeToolbar, in a
+* .code-block wrapper so the strip can stick to the top of the view while a
+* long block scrolls past (inside the <pre>, its overflow would pin it there).
+* Pasted text (```text) starts wrapped; a long block starts collapsed. The
 * has-code-toolbar guard keeps it idempotent across markdown re-renders. Apps
 * are not tracked for unmount: each lives exactly as long as its v-html <pre>.
 */
@@ -3743,14 +3761,38 @@ function decorateCodeBlocks(container) {
 		const code = pre.querySelector("code");
 		const langClass = code && [...code.classList].find((c) => c.startsWith("language-"));
 		const lang = langClass ? langClass.slice(9) : "";
+		const block = document.createElement("div");
+		block.className = "code-block";
+		pre.parentNode.insertBefore(block, pre);
 		const toolbar = document.createElement("div");
 		toolbar.className = "code-toolbar";
-		pre.insertBefore(toolbar, pre.firstChild);
+		block.append(toolbar, pre);
 		createApp(CodeToolbar_default, {
 			lang,
-			pre
+			pre,
+			wrap: lang === "text"
 		}).mount(toolbar);
+		const lines = lineCount((code ?? pre).textContent ?? "");
+		if (lines > 25) clampCodeBlock(block, lines);
 	});
+}
+function clampCodeBlock(block, lines) {
+	block.classList.add("clamped", "collapsed");
+	const more = document.createElement("button");
+	more.type = "button";
+	more.className = "code-more";
+	const label = () => {
+		const collapsed = block.classList.contains("collapsed");
+		more.textContent = collapsed ? `Show all (${lines} lines)` : "Show less";
+		more.setAttribute("aria-expanded", String(!collapsed));
+	};
+	label();
+	more.addEventListener("click", () => {
+		const collapsed = block.classList.toggle("collapsed");
+		label();
+		if (collapsed) block.scrollIntoView({ block: "nearest" });
+	});
+	block.appendChild(more);
 }
 function messageMentionsMe(text) {
 	if (!state.myHandle || typeof text !== "string") return false;
@@ -24781,19 +24823,33 @@ function wireMobileBack() {
 		$("#app")?.classList.remove("in-room");
 	});
 }
-/** Composer paste: multi-line text is wrapped in a code fence so it renders verbatim
-* (no Markdown or mention decoration); files fall through to the document listener. */
-function wireComposerPaste() {
+/** Composer paste: multi-line text is wrapped in a ```text fence so it renders verbatim
+* and wrapped (no Markdown or mention decoration); a long paste goes to `onLongPaste`
+* as a .txt file instead; Ctrl/Cmd+Shift+V pastes as typed, with neither; files fall
+* through to the document listener. */
+function wireComposerPaste(onLongPaste) {
+	let plainPaste = false;
+	$("#message-input")?.addEventListener("keydown", (e) => {
+		plainPaste = isPlainPasteKey(e);
+	});
 	$("#message-input")?.addEventListener("paste", (e) => {
+		const plain = plainPaste;
+		plainPaste = false;
+		if (plain) return;
 		if (e.clipboardData?.files?.length) return;
 		const text = e.clipboardData?.getData("text/plain") ?? "";
+		if (onLongPaste && pasteKind(text) === "attach") {
+			e.preventDefault();
+			onLongPaste(new File([text], "pasted-text.txt", { type: "text/plain" }));
+			return;
+		}
 		if (!text.includes("\n")) return;
 		e.preventDefault();
 		const input = e.currentTarget;
 		const longestTicks = (text.match(/`+/g) || []).reduce((m, r) => Math.max(m, r.length), 0);
 		const fence = "`".repeat(Math.max(3, longestTicks + 1));
 		const before = input.value.slice(0, input.selectionStart);
-		const insert = `${before.length > 0 && !before.endsWith("\n") ? "\n" : ""}${fence}\n${text.replace(/\n+$/, "")}\n${fence}\n`;
+		const insert = `${before.length > 0 && !before.endsWith("\n") ? "\n" : ""}${fence}text\n${text.replace(/\n+$/, "")}\n${fence}\n`;
 		const valBefore = input.value;
 		document.execCommand("insertText", false, insert);
 		if (input.value === valBefore) {
@@ -27970,7 +28026,7 @@ document.addEventListener("paste", (e) => {
 		stageFiles(files);
 	}
 });
-wireComposerPaste();
+wireComposerPaste((file) => stageFiles([file]));
 wireFileControls3();
 $("#camera-btn").addEventListener("click", () => {
 	const input = document.createElement("input");
