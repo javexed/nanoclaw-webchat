@@ -19,7 +19,7 @@ import { promisify } from 'util';
 import { CONTAINER_RUNTIME_BIN } from '../../container-runtime.js';
 import { backupRoot } from './backup.js';
 import { builderCacheVolume } from './builder.js';
-import { dockerEnv, projectName } from './docker.js';
+import { dockerEnv, LOCAL_NODE, projectName } from './docker.js';
 import type { Workload } from './store.js';
 
 const run = promisify(execFile);
@@ -163,10 +163,9 @@ async function inspectAll<T>(listArgs: string[], inspect: string[]): Promise<T[]
   return JSON.parse(await docker([...inspect, ...names])) as T[];
 }
 
-export async function measureDisk(
-  workloads: Workload[],
-  images: (w: Workload) => string[],
-): Promise<Map<string, number>> {
+export async function measureDisk(all: Workload[], images: (w: Workload) => string[]): Promise<Map<string, number>> {
+  // Docker's own use is measured on central; a stack on a worker counts its backups (kept here).
+  const workloads = all.filter((w) => w.node === LOCAL_NODE);
   const df = JSON.parse(await docker(['system', 'df', '-v', '--format', 'json'])) as DfJson;
   const volumes = await inspectAll<VolumeInspect>(
     ['volume', 'ls', '-q', '--filter', 'label=com.docker.compose.project'],
@@ -180,7 +179,7 @@ export async function measureDisk(
     images,
     builderVolume: builderCacheVolume,
   });
-  for (const w of workloads) out.set(w.id, out.get(w.id)! + folderBytes(backupRoot(w.id)));
+  for (const w of all) out.set(w.id, (out.get(w.id) ?? 0) + folderBytes(backupRoot(w.id)));
   return out;
 }
 

@@ -53,6 +53,10 @@ workload network (`198.19.255.0/24`) and asks a listener on the host's address
 there. If it gets an answer, workloads are refused **and every running
 workload is stopped** until the rules are back.
 
+Worker machines get the same rules from their installer and run the same
+check themselves; central places nothing on a worker whose check has not
+passed recently. See [scaling.md](scaling.md).
+
 ## 3. Confined builds (optional)
 
 Without them, `build:` is refused and only published images run. With

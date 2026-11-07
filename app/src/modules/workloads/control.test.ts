@@ -154,6 +154,51 @@ describe('a redeploy without a card', () => {
   });
 });
 
+describe('an up that changes nothing approved', () => {
+  it('needs no card; a new image, more memory or the build limit does', async () => {
+    const c = await control.checkWorkload('ag-1', 'notes', 'compose.yml');
+    expect(await control.withinApproval('ag-1', c)).toBe(false);
+    await control.upWorkload('ag-1', 'notes', 'compose.yml', 'agent:ag-1', control.approvalPin(c));
+    write('services:\n  web:\n    image: nginx:1.27\n    environment: { A: "1" }\n');
+    expect(await control.withinApproval('ag-1', await control.checkWorkload('ag-1', 'notes', 'compose.yml'))).toBe(
+      true,
+    );
+    digest = D2;
+    expect(await control.withinApproval('ag-1', await control.checkWorkload('ag-1', 'notes', 'compose.yml'))).toBe(
+      false,
+    );
+    digest = D1;
+    write('services:\n  web:\n    image: nginx:1.27\n    mem_limit: 1g\n');
+    expect(await control.withinApproval('ag-1', await control.checkWorkload('ag-1', 'notes', 'compose.yml'))).toBe(
+      false,
+    );
+  });
+});
+
+describe('an up without a card is exactly what redeploy would take', () => {
+  it('env and command are not pinned by either; shape and size are pinned by both', async () => {
+    const c = await control.checkWorkload('ag-1', 'notes', 'compose.yml');
+    await control.upWorkload('ag-1', 'notes', 'compose.yml', 'agent:ag-1', control.approvalPin(c));
+    const cases: Array<[string, string]> = [
+      ['env', 'services:\n  web:\n    image: nginx:1.27\n    environment: { MODE: debug }\n'],
+      ['command', 'services:\n  web:\n    image: nginx:1.27\n    command: ["nginx", "-g", "daemon off;"]\n'],
+      ['capability', 'services:\n  web:\n    image: nginx:1.27\n    cap_add: [SETUID]\n'],
+      ['memory', 'services:\n  web:\n    image: nginx:1.27\n    mem_limit: 1g\n'],
+      ['image', 'services:\n  web:\n    image: nginx:1.28\n'],
+    ];
+    for (const [what, text] of cases) {
+      write(text);
+      const within = await control.withinApproval('ag-1', await control.checkWorkload('ag-1', 'notes', 'compose.yml'));
+      const redeploys = await control.redeployWorkload('ag-1', 'notes', 'compose.yml').then(
+        () => true,
+        () => false,
+      );
+      expect(within, what).toBe(redeploys);
+      expect(within, what).toBe(what === 'env' || what === 'command');
+    }
+  });
+});
+
 describe('confined builds', () => {
   const BUILD = 'services:\n  api:\n    build: { context: ./api, args: { MODE: prod } }\n';
 

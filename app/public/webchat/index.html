@@ -1375,7 +1375,7 @@
           <aside id="runner-detail" class="agent-detail" hidden>
             <div class="agent-detail-header">
               <span id="runner-detail-badge" class="model-kind-badge"></span>
-              <span id="runner-detail-title">Machine</span>
+              <span id="runner-detail-title">Runner</span>
               <button id="runner-detail-close" class="members-close" aria-label="Close">
                 <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
               </button>
@@ -2190,6 +2190,12 @@
                 <div id="pi-install-progress" hidden>
                   <pre id="pi-install-log" class="roster-refresh-log"></pre>
                 </div>
+              </div>
+              <!-- Scaling (owners and global admins): machines that joined NanoClaw.
+                   ui/src/features/MachinesPanel.vue. -->
+              <div id="settings-scaling" class="settings-credentials" hidden>
+                <h3 class="settings-section-title">Machines</h3>
+                <div id="machines-panel"></div>
               </div>
               <div id="settings-secrets" class="settings-credentials" hidden>
                 <h3 class="settings-section-title">Secrets for all agents</h3>

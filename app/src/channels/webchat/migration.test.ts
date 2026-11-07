@@ -127,6 +127,9 @@ describe('moduleWebchat migration', () => {
       'webchat-fit-context',
       'webchat-initial',
       'webchat-limit-retries',
+      'webchat-machine-isolation',
+      'webchat-machine-members',
+      'webchat-machines',
       'webchat-marketplace-toggle',
       'webchat-mcp-hardening',
       'webchat-mcp-servers',
@@ -169,6 +172,7 @@ describe('moduleWebchat migration', () => {
       'webchat-workload-app-routes',
       'webchat-workload-builds',
       'webchat-workload-expiry-notice',
+      'webchat-workload-placement',
       'webchat-workload-shape',
       'webchat-workloads',
     ]);

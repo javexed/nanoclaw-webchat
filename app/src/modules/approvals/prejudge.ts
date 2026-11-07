@@ -97,6 +97,9 @@ const NEVER_PAYLOAD_SHAPES: ReadonlyArray<{ re: RegExp; flag: TriageFlag }> = [
   { re: /\bworkloads[\s-]+(delete|restore)\b/i, flag: 'destructive' },
   // Publishing opens an agent's app to people; the approver becomes its "only me".
   { re: /\bworkloads[\s-]+expose\b/i, flag: 'capability' },
+  // Agent machines: cost money, or destroy a disk.
+  { re: /\bmachines[\s-]+(create|resize)\b/i, flag: 'capability' },
+  { re: /\bmachines[\s-]+delete\b/i, flag: 'destructive' },
 ];
 
 export const NEVER_AUTO_APPROVE_PATTERNS: readonly RegExp[] = NEVER_PAYLOAD_SHAPES.map((s) => s.re);

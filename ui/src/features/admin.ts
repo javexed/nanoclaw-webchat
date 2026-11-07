@@ -12,6 +12,7 @@ import { renderAutoLearnSetting } from './learn.js';
 import { renderToolSecrets } from './agents.js';
 import { loadAuditLog } from './audit-log.js';
 import { renderPublishingSettings } from './publishing.js';
+import { renderScalingSettings } from './scaling.js';
 import {
   renderAboutSettings,
   renderAgentActivitySettings,
@@ -62,6 +63,7 @@ function openAdmin(): void {
       renderAgentActivitySettings(),
       loadAuditLog(),
       renderAboutSettings(),
+      renderScalingSettings(),
     ]).then(syncAdminGroups);
     openView('admin', teardownAdmin);
   });

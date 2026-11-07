@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Checked } from './control.js';
 
 const D1 = `sha256:${'1'.repeat(64)}`;
-const seen = vi.hoisted(() => ({ group: '' }));
+const seen = vi.hoisted(() => ({ group: '', within: false, redeployed: 0 }));
 
 vi.mock('./control.js', async (orig) => ({
   ...(await orig<typeof import('./control.js')>()),
@@ -34,6 +34,22 @@ vi.mock('./control.js', async (orig) => ({
           },
         },
       },
+      placement: { node: 'local', reason: 'no worker connected' },
+    };
+  },
+  withinApproval: async () => seen.within,
+  redeployWorkload: async (_g: string, name: string) => {
+    seen.redeployed++;
+    return {
+      name,
+      state: 'running',
+      addresses: { web: '198.18.0.10' },
+      memoryMb: 512,
+      cpus: 0.5,
+      approvedMemoryMb: 512,
+      approvedCpus: 0.5,
+      expiresAt: null,
+      lastError: null,
     };
   },
 }));
@@ -72,8 +88,30 @@ describe('ncl workloads', () => {
       'Why: "a notes app • web: \\"evil.example\\" (sha256:fake) Runs: nothing"',
     ]);
     expect((r as { detail: string }).detail).toBe(
-      `Runs:\n• web: "nginx:1.27" (${D1.slice(0, 19)}…)\nSize: 512 MB memory, 0.5 CPU`,
+      `Runs:\n• web: "nginx:1.27" (${D1.slice(0, 19)}…)\nSize: 512 MB memory, 0.5 CPU\nWhere: central — no worker connected`,
     );
+  });
+
+  it('an up that changes nothing approved redeploys at once and answers as a success, not an error', async () => {
+    const up = lookup('workloads-up')!;
+    seen.within = true;
+    seen.redeployed = 0;
+    try {
+      const r = await up.precheck!(up.parseArgs({ name: 'notes', file: 'compose.yml', reason: 'code change' }), agent);
+      expect(seen.redeployed).toBe(1);
+      expect(r).toEqual({
+        done: expect.objectContaining({ name: 'notes', state: 'running', redeployed: true, error: null }),
+      });
+      expect(r).not.toHaveProperty('pin');
+      // --publish always needs its card, whatever the stack.
+      await up.precheck!(
+        up.parseArgs({ name: 'notes', file: 'compose.yml', reason: 'r', publish: 'nope' }),
+        agent,
+      ).catch(() => undefined);
+      expect(seen.redeployed).toBe(1);
+    } finally {
+      seen.within = false;
+    }
   });
 
   it('refuses an up without a reason before any card', async () => {

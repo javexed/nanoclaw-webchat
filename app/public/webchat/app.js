@@ -481,33 +481,33 @@ var approvalBusy = ref(/* @__PURE__ */ new Set());
 var approvalErrors = ref({});
 //#endregion
 //#region src/features/ApprovalCard.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$82 = ["data-question-id"];
-var _hoisted_2$71 = { class: "approval-title" };
-var _hoisted_3$67 = {
+var _hoisted_1$84 = ["data-question-id"];
+var _hoisted_2$73 = { class: "approval-title" };
+var _hoisted_3$69 = {
 	key: 0,
 	class: "approval-triage"
 };
-var _hoisted_4$57 = ["title"];
-var _hoisted_5$46 = {
+var _hoisted_4$59 = ["title"];
+var _hoisted_5$48 = {
 	key: 0,
 	class: "triage-note"
 };
-var _hoisted_6$40 = {
+var _hoisted_6$42 = {
 	key: 1,
 	class: "approval-text"
 };
-var _hoisted_7$31 = {
+var _hoisted_7$33 = {
 	key: 2,
 	class: "approval-details"
 };
-var _hoisted_8$22 = { class: "approval-payload" };
-var _hoisted_9$18 = ["disabled"];
-var _hoisted_10$18 = {
+var _hoisted_8$24 = { class: "approval-payload" };
+var _hoisted_9$20 = ["disabled"];
+var _hoisted_10$20 = {
 	key: 4,
 	class: "approval-actions"
 };
-var _hoisted_11$13 = ["disabled", "onClick"];
-var _hoisted_12$11 = {
+var _hoisted_11$15 = ["disabled", "onClick"];
+var _hoisted_12$13 = {
 	key: 5,
 	class: "approval-error"
 };
@@ -594,16 +594,16 @@ var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 				class: "approval-card",
 				"data-question-id": __props.approval.questionId
 			}, [
-				createElementVNode("div", _hoisted_2$71, toDisplayString(__props.approval.title || __props.approval.action || "Approval requested"), 1),
-				triageChips().length || triageNote() ? (openBlock(), createElementBlock("div", _hoisted_3$67, [(openBlock(true), createElementBlock(Fragment, null, renderList(triageChips(), (c) => {
+				createElementVNode("div", _hoisted_2$73, toDisplayString(__props.approval.title || __props.approval.action || "Approval requested"), 1),
+				triageChips().length || triageNote() ? (openBlock(), createElementBlock("div", _hoisted_3$69, [(openBlock(true), createElementBlock(Fragment, null, renderList(triageChips(), (c) => {
 					return openBlock(), createElementBlock("span", {
 						key: c.flag,
 						class: normalizeClass(["triage-flag", { authoritative: c.authoritative }]),
 						title: chipTitle(c.authoritative)
-					}, toDisplayString(c.flag), 11, _hoisted_4$57);
-				}), 128)), triageNote() ? (openBlock(), createElementBlock("span", _hoisted_5$46, toDisplayString(triageNote()), 1)) : createCommentVNode("", true)])) : createCommentVNode("", true),
-				cardText() ? (openBlock(), createElementBlock("p", _hoisted_6$40, toDisplayString(cardText()), 1)) : createCommentVNode("", true),
-				rawPayload() ? (openBlock(), createElementBlock("details", _hoisted_7$31, [_cache[3] || (_cache[3] = createElementVNode("summary", null, "Details", -1)), createElementVNode("pre", _hoisted_8$22, toDisplayString(payloadText(rawPayload())), 1)])) : createCommentVNode("", true),
+					}, toDisplayString(c.flag), 11, _hoisted_4$59);
+				}), 128)), triageNote() ? (openBlock(), createElementBlock("span", _hoisted_5$48, toDisplayString(triageNote()), 1)) : createCommentVNode("", true)])) : createCommentVNode("", true),
+				cardText() ? (openBlock(), createElementBlock("p", _hoisted_6$42, toDisplayString(cardText()), 1)) : createCommentVNode("", true),
+				rawPayload() ? (openBlock(), createElementBlock("details", _hoisted_7$33, [_cache[3] || (_cache[3] = createElementVNode("summary", null, "Details", -1)), createElementVNode("pre", _hoisted_8$24, toDisplayString(payloadText(rawPayload())), 1)])) : createCommentVNode("", true),
 				askingReason.value ? (openBlock(), createElementBlock("form", {
 					key: 3,
 					class: "approval-actions approval-reason",
@@ -626,17 +626,17 @@ var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 						type: "submit",
 						class: "reject",
 						disabled: !reason.value.trim() || unref(approvalBusy).has(__props.approval.questionId) || void 0
-					}, "Reject", 8, _hoisted_9$18)
-				], 32)) : (openBlock(), createElementBlock("div", _hoisted_10$18, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
+					}, "Reject", 8, _hoisted_9$20)
+				], 32)) : (openBlock(), createElementBlock("div", _hoisted_10$20, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
 					return openBlock(), createElementBlock("button", {
 						key: i,
 						class: normalizeClass(btnClass(o.value)),
 						disabled: unref(approvalBusy).has(__props.approval.questionId) || void 0,
 						onClick: ($event) => pick(o.value)
-					}, toDisplayString(o.label || o.value), 11, _hoisted_11$13);
+					}, toDisplayString(o.label || o.value), 11, _hoisted_11$15);
 				}), 128))])),
-				unref(approvalErrors)[__props.approval.questionId] ? (openBlock(), createElementBlock("div", _hoisted_12$11, toDisplayString(unref(approvalErrors)[__props.approval.questionId]), 1)) : createCommentVNode("", true)
-			], 8, _hoisted_1$82);
+				unref(approvalErrors)[__props.approval.questionId] ? (openBlock(), createElementBlock("div", _hoisted_12$13, toDisplayString(unref(approvalErrors)[__props.approval.questionId]), 1)) : createCommentVNode("", true)
+			], 8, _hoisted_1$84);
 		};
 	}
 });
@@ -663,9 +663,9 @@ var ApprovalsList_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/ApprovalToast.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$81 = { class: "approval-title" };
-var _hoisted_2$70 = { class: "approval-actions" };
-var _hoisted_3$66 = ["disabled", "onClick"];
+var _hoisted_1$83 = { class: "approval-title" };
+var _hoisted_2$72 = { class: "approval-actions" };
+var _hoisted_3$68 = ["disabled", "onClick"];
 //#endregion
 //#region src/features/ApprovalToast.vue
 var ApprovalToast_default = /* @__PURE__ */ defineComponent({
@@ -692,13 +692,13 @@ var ApprovalToast_default = /* @__PURE__ */ defineComponent({
 		const options = () => (Array.isArray(props.approval.options) && props.approval.options.length ? props.approval.options : FALLBACK).filter((o) => o.value !== "reject_with_reason");
 		const btnClass = (v) => v === "approve" ? "approve" : v === "reject" ? "reject" : "";
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [createElementVNode("div", _hoisted_1$81, toDisplayString(__props.approval.title || __props.approval.action || "Approval requested"), 1), createElementVNode("div", _hoisted_2$70, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
+			return openBlock(), createElementBlock(Fragment, null, [createElementVNode("div", _hoisted_1$83, toDisplayString(__props.approval.title || __props.approval.action || "Approval requested"), 1), createElementVNode("div", _hoisted_2$72, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
 				return openBlock(), createElementBlock("button", {
 					key: i,
 					class: normalizeClass(btnClass(o.value)),
 					disabled: unref(approvalBusy).has(__props.approval.questionId) || void 0,
 					onClick: ($event) => props.onRespond(__props.approval.questionId, o.value)
-				}, toDisplayString(o.label || o.value), 11, _hoisted_3$66);
+				}, toDisplayString(o.label || o.value), 11, _hoisted_3$68);
 			}), 128))])], 64);
 		};
 	}
@@ -1098,19 +1098,19 @@ function forgetTrace(messageId) {
 }
 //#endregion
 //#region src/features/TraceView.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$80 = { class: "trace-view" };
-var _hoisted_2$69 = {
+var _hoisted_1$82 = { class: "trace-view" };
+var _hoisted_2$71 = {
 	key: 0,
 	class: "trace-meta"
 };
-var _hoisted_3$65 = ["aria-label"];
-var _hoisted_4$56 = { class: "trace-tool-name" };
-var _hoisted_5$45 = ["title"];
-var _hoisted_6$39 = {
+var _hoisted_3$67 = ["aria-label"];
+var _hoisted_4$58 = { class: "trace-tool-name" };
+var _hoisted_5$47 = ["title"];
+var _hoisted_6$41 = {
 	key: 2,
 	class: "trace-tool-ms"
 };
-var _hoisted_7$30 = {
+var _hoisted_7$32 = {
 	key: 3,
 	class: "trace-truncated"
 };
@@ -1133,8 +1133,8 @@ var TraceView_default = /* @__PURE__ */ defineComponent({
 		const props = __props;
 		const meta = computed(() => metaLine(props.view));
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock("div", _hoisted_1$80, [
-				meta.value ? (openBlock(), createElementBlock("div", _hoisted_2$69, toDisplayString(meta.value), 1)) : createCommentVNode("", true),
+			return openBlock(), createElementBlock("div", _hoisted_1$82, [
+				meta.value ? (openBlock(), createElementBlock("div", _hoisted_2$71, toDisplayString(meta.value), 1)) : createCommentVNode("", true),
 				__props.view.tools.length ? (openBlock(), createElementBlock("ul", {
 					key: 1,
 					class: "trace-tools",
@@ -1149,14 +1149,14 @@ var TraceView_default = /* @__PURE__ */ defineComponent({
 							class: normalizeClass(t.ok ? "trace-tool-ok" : "trace-tool-failed"),
 							role: "img",
 							"aria-label": t.ok ? OK : FAILED$3
-						}, toDisplayString(t.ok ? "✓" : "✗"), 11, _hoisted_3$65)) : createCommentVNode("", true),
-						createElementVNode("span", _hoisted_4$56, toDisplayString(t.name), 1),
+						}, toDisplayString(t.ok ? "✓" : "✗"), 11, _hoisted_3$67)) : createCommentVNode("", true),
+						createElementVNode("span", _hoisted_4$58, toDisplayString(t.name), 1),
 						t.target ? (openBlock(), createElementBlock("span", {
 							key: 1,
 							class: "trace-tool-target",
 							title: t.target
-						}, toDisplayString(t.target), 9, _hoisted_5$45)) : createCommentVNode("", true),
-						t.ms !== null ? (openBlock(), createElementBlock("span", _hoisted_6$39, toDisplayString(unref(formatMs)(t.ms)), 1)) : createCommentVNode("", true)
+						}, toDisplayString(t.target), 9, _hoisted_5$47)) : createCommentVNode("", true),
+						t.ms !== null ? (openBlock(), createElementBlock("span", _hoisted_6$41, toDisplayString(unref(formatMs)(t.ms)), 1)) : createCommentVNode("", true)
 					]);
 				}), 128))])) : createCommentVNode("", true),
 				(openBlock(true), createElementBlock(Fragment, null, renderList(__props.view.notes, (n, i) => {
@@ -1176,24 +1176,24 @@ var TraceView_default = /* @__PURE__ */ defineComponent({
 						class: "trace-reasoning-line"
 					}, toDisplayString(l), 1);
 				}), 128))])) : createCommentVNode("", true),
-				__props.view.truncated ? (openBlock(), createElementBlock("div", _hoisted_7$30, toDisplayString(TRUNCATED$1))) : createCommentVNode("", true)
+				__props.view.truncated ? (openBlock(), createElementBlock("div", _hoisted_7$32, toDisplayString(TRUNCATED$1))) : createCommentVNode("", true)
 			]);
 		};
 	}
 });
 //#endregion
 //#region src/features/ThinkingBubble.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$79 = ["data-agent"];
-var _hoisted_2$68 = { class: "sender" };
-var _hoisted_3$64 = { class: "thinking-verb" };
-var _hoisted_4$55 = { class: "thinking-elapsed" };
-var _hoisted_5$44 = ["aria-expanded"];
-var _hoisted_6$38 = { class: "bubble" };
-var _hoisted_7$29 = ["hidden"];
-var _hoisted_8$21 = ["hidden"];
-var _hoisted_9$17 = ["hidden"];
-var _hoisted_10$17 = ["hidden"];
-var _hoisted_11$12 = {
+var _hoisted_1$81 = ["data-agent"];
+var _hoisted_2$70 = { class: "sender" };
+var _hoisted_3$66 = { class: "thinking-verb" };
+var _hoisted_4$57 = { class: "thinking-elapsed" };
+var _hoisted_5$46 = ["aria-expanded"];
+var _hoisted_6$40 = { class: "bubble" };
+var _hoisted_7$31 = ["hidden"];
+var _hoisted_8$23 = ["hidden"];
+var _hoisted_9$19 = ["hidden"];
+var _hoisted_10$19 = ["hidden"];
+var _hoisted_11$14 = {
 	ref: "trace",
 	class: "thinking-fulltrace"
 };
@@ -1241,14 +1241,14 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 			return openBlock(), createElementBlock("div", mergeProps({
 				class: __props.turn.expanded ? "msg agent thinking-bubble expanded" : "msg agent thinking-bubble",
 				"data-agent": __props.turn.name
-			}, __props.turn.statusLive ? { "data-status-live": "1" } : {}, { onClick }), [createElementVNode("div", _hoisted_2$68, [
+			}, __props.turn.statusLive ? { "data-status-live": "1" } : {}, { onClick }), [createElementVNode("div", _hoisted_2$70, [
 				_cache[4] || (_cache[4] = createElementVNode("svg", {
 					class: "icon",
 					"aria-hidden": "true"
 				}, [createElementVNode("use", { href: "#i-bot" })], -1)),
 				createTextVNode(toDisplayString(` ${__props.turn.name} — `), 1),
-				createElementVNode("span", _hoisted_3$64, toDisplayString(__props.turn.verb), 1),
-				createElementVNode("span", _hoisted_4$55, toDisplayString(__props.turn.elapsed), 1),
+				createElementVNode("span", _hoisted_3$66, toDisplayString(__props.turn.verb), 1),
+				createElementVNode("span", _hoisted_4$57, toDisplayString(__props.turn.elapsed), 1),
 				createElementVNode("button", {
 					type: "button",
 					class: "thinking-chevron",
@@ -1259,7 +1259,7 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 				}, [..._cache[2] || (_cache[2] = [createElementVNode("svg", {
 					class: "icon",
 					"aria-hidden": "true"
-				}, [createElementVNode("use", { href: "#i-chevron-right" })], -1)])], 8, _hoisted_5$44),
+				}, [createElementVNode("use", { href: "#i-chevron-right" })], -1)])], 8, _hoisted_5$46),
 				createElementVNode("button", {
 					type: "button",
 					class: "thinking-stop",
@@ -1270,15 +1270,15 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 					class: "stop-square",
 					"aria-hidden": "true"
 				}, null, -1)), createTextVNode(toDisplayString(STOP))])
-			]), createElementVNode("div", _hoisted_6$38, [
+			]), createElementVNode("div", _hoisted_6$40, [
 				createElementVNode("div", {
 					class: "thinking-milestone",
 					hidden: !__props.turn.milestone
-				}, toDisplayString(__props.turn.milestone), 9, _hoisted_7$29),
+				}, toDisplayString(__props.turn.milestone), 9, _hoisted_7$31),
 				createElementVNode("div", {
 					class: "thinking-target",
 					hidden: !__props.turn.detail
-				}, toDisplayString(__props.turn.detail), 9, _hoisted_8$21),
+				}, toDisplayString(__props.turn.detail), 9, _hoisted_8$23),
 				createElementVNode("div", {
 					ref: "feed",
 					class: "thinking-feed",
@@ -1288,12 +1288,12 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 						key: l.key,
 						class: normalizeClass(l.fading ? "thinking-feed-line fading" : "thinking-feed-line")
 					}, toDisplayString(l.text), 3);
-				}), 128))], 8, _hoisted_9$17),
+				}), 128))], 8, _hoisted_9$19),
 				createElementVNode("div", {
 					class: "thinking-preview",
 					hidden: !__props.turn.preview
-				}, toDisplayString(__props.turn.preview), 9, _hoisted_10$17),
-				createElementVNode("div", _hoisted_11$12, [createTextVNode(toDisplayString(traceEmpty.value), 1), liveView.value && !traceEmpty.value ? (openBlock(), createBlock(TraceView_default, {
+				}, toDisplayString(__props.turn.preview), 9, _hoisted_10$19),
+				createElementVNode("div", _hoisted_11$14, [createTextVNode(toDisplayString(traceEmpty.value), 1), liveView.value && !traceEmpty.value ? (openBlock(), createBlock(TraceView_default, {
 					key: 0,
 					view: liveView.value
 				}, null, 8, ["view"])) : createCommentVNode("", true)], 512),
@@ -1302,7 +1302,7 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 					createElementVNode("span"),
 					createElementVNode("span")
 				], -1))
-			])], 16, _hoisted_1$79);
+			])], 16, _hoisted_1$81);
 		};
 	}
 });
@@ -2004,7 +2004,7 @@ function isDictationActive() {
 }
 //#endregion
 //#region src/features/TtsButton.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$78 = [
+var _hoisted_1$80 = [
 	"aria-label",
 	"title",
 	"innerHTML"
@@ -2041,7 +2041,7 @@ var TtsButton_default = /* @__PURE__ */ defineComponent({
 				title: title.value,
 				innerHTML: phase.value === "playing" ? SQUARE : VOLUME,
 				onClick: _cache[0] || (_cache[0] = withModifiers(($event) => unref(toggleTts)(props.msgKey, props.getText), ["stop"]))
-			}, null, 10, _hoisted_1$78);
+			}, null, 10, _hoisted_1$80);
 		};
 	}
 });
@@ -2756,26 +2756,26 @@ function attachmentDrawerPopstate(state) {
 }
 //#endregion
 //#region src/features/MessageBubble.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$77 = { class: "file-bubble" };
-var _hoisted_2$67 = ["src", "alt"];
-var _hoisted_3$63 = { class: "file-info" };
-var _hoisted_4$54 = ["innerHTML"];
-var _hoisted_5$43 = ["title"];
-var _hoisted_6$37 = {
+var _hoisted_1$79 = { class: "file-bubble" };
+var _hoisted_2$69 = ["src", "alt"];
+var _hoisted_3$65 = { class: "file-info" };
+var _hoisted_4$56 = ["innerHTML"];
+var _hoisted_5$45 = ["title"];
+var _hoisted_6$39 = {
 	key: 1,
 	class: "file-name"
 };
-var _hoisted_7$28 = { class: "file-size" };
-var _hoisted_8$20 = [
+var _hoisted_7$30 = { class: "file-size" };
+var _hoisted_8$22 = [
 	"href",
 	"download",
 	"aria-label"
 ];
-var _hoisted_9$16 = {
+var _hoisted_9$18 = {
 	key: 0,
 	class: "file-caption"
 };
-var _hoisted_10$16 = ["innerHTML"];
+var _hoisted_10$18 = ["innerHTML"];
 var DOWNLOAD = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-download\"></use></svg>";
 var IMAGE = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-image\"></use></svg>";
 var FILE_TEXT = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-file-text\"></use></svg>";
@@ -2827,26 +2827,26 @@ var MessageBubble_default = /* @__PURE__ */ defineComponent({
 				ref_key: "bubbleEl",
 				ref: bubbleEl,
 				class: "bubble"
-			}, [createElementVNode("div", _hoisted_1$77, [__props.row.file.mime?.startsWith("image/") ? (openBlock(), createElementBlock("img", {
+			}, [createElementVNode("div", _hoisted_1$79, [__props.row.file.mime?.startsWith("image/") ? (openBlock(), createElementBlock("img", {
 				key: 0,
 				src: __props.row.file.url,
 				alt: __props.row.file.filename,
 				class: "file-image-preview",
 				loading: "lazy",
 				onClick: _cache[0] || (_cache[0] = ($event) => props.onOpenLightbox(__props.row.file.url, __props.row.file.filename))
-			}, null, 8, _hoisted_2$67)) : createCommentVNode("", true), createElementVNode("div", _hoisted_3$63, [
+			}, null, 8, _hoisted_2$69)) : createCommentVNode("", true), createElementVNode("div", _hoisted_3$65, [
 				createElementVNode("span", {
 					class: "file-icon",
 					innerHTML: fileIcon(__props.row.file)
-				}, null, 8, _hoisted_4$54),
+				}, null, 8, _hoisted_4$56),
 				previewable(__props.row.file) ? (openBlock(), createElementBlock("button", {
 					key: 0,
 					type: "button",
 					class: "file-name file-open",
 					title: __props.row.file.filename,
 					onClick: openPreview
-				}, toDisplayString(__props.row.file.filename), 9, _hoisted_5$43)) : (openBlock(), createElementBlock("span", _hoisted_6$37, toDisplayString(__props.row.file.filename), 1)),
-				createElementVNode("span", _hoisted_7$28, toDisplayString(fileSize(__props.row.file.size)), 1),
+				}, toDisplayString(__props.row.file.filename), 9, _hoisted_5$45)) : (openBlock(), createElementBlock("span", _hoisted_6$39, toDisplayString(__props.row.file.filename), 1)),
+				createElementVNode("span", _hoisted_7$30, toDisplayString(fileSize(__props.row.file.size)), 1),
 				createElementVNode("a", {
 					href: __props.row.file.url,
 					download: __props.row.file.filename,
@@ -2854,13 +2854,13 @@ var MessageBubble_default = /* @__PURE__ */ defineComponent({
 					title: DOWNLOAD_TITLE,
 					"aria-label": `${DOWNLOAD_TITLE} ${__props.row.file.filename}`,
 					innerHTML: DOWNLOAD
-				}, null, 8, _hoisted_8$20)
-			])]), __props.row.caption ? (openBlock(), createElementBlock("div", _hoisted_9$16, toDisplayString(__props.row.caption), 1)) : createCommentVNode("", true)], 512)) : __props.row.html ? (openBlock(), createElementBlock("div", {
+				}, null, 8, _hoisted_8$22)
+			])]), __props.row.caption ? (openBlock(), createElementBlock("div", _hoisted_9$18, toDisplayString(__props.row.caption), 1)) : createCommentVNode("", true)], 512)) : __props.row.html ? (openBlock(), createElementBlock("div", {
 				key: 1,
 				ref: bind,
 				class: "bubble",
 				innerHTML: __props.row.html
-			}, null, 8, _hoisted_10$16)) : (openBlock(), createElementBlock("div", {
+			}, null, 8, _hoisted_10$18)) : (openBlock(), createElementBlock("div", {
 				key: 2,
 				ref: bind,
 				class: "bubble"
@@ -3064,47 +3064,47 @@ var roomSkillsReviewing = ref(/* @__PURE__ */ new Set());
 var draftAction = ref({});
 //#endregion
 //#region src/features/SkillDraftCard.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$76 = {
+var _hoisted_1$78 = {
 	key: 0,
 	class: "skill-draft-card resolved"
 };
-var _hoisted_2$66 = { class: "skill-head" };
-var _hoisted_3$62 = { class: "skill-name" };
-var _hoisted_4$53 = { class: "skill-draft-actions" };
-var _hoisted_5$42 = ["disabled"];
-var _hoisted_6$36 = {
+var _hoisted_2$68 = { class: "skill-head" };
+var _hoisted_3$64 = { class: "skill-name" };
+var _hoisted_4$55 = { class: "skill-draft-actions" };
+var _hoisted_5$44 = ["disabled"];
+var _hoisted_6$38 = {
 	key: 1,
 	class: "approval-inroom-note resolved"
 };
-var _hoisted_7$27 = ["disabled"];
-var _hoisted_8$19 = {
+var _hoisted_7$29 = ["disabled"];
+var _hoisted_8$21 = {
 	key: 2,
 	class: "approval-inroom-note resolved"
 };
-var _hoisted_9$15 = {
+var _hoisted_9$17 = {
 	key: 3,
 	class: "approval-inroom-note resolved"
 };
-var _hoisted_10$15 = {
+var _hoisted_10$17 = {
 	key: 4,
 	class: "skill-draft-card"
 };
-var _hoisted_11$11 = { class: "skill-head" };
-var _hoisted_12$10 = { class: "skill-name" };
-var _hoisted_13$10 = { class: "skill-desc" };
-var _hoisted_14$10 = { class: "skill-draft-actions" };
-var _hoisted_15$9 = ["onClick"];
-var _hoisted_16$9 = {
+var _hoisted_11$13 = { class: "skill-head" };
+var _hoisted_12$12 = { class: "skill-name" };
+var _hoisted_13$12 = { class: "skill-desc" };
+var _hoisted_14$12 = { class: "skill-draft-actions" };
+var _hoisted_15$11 = ["onClick"];
+var _hoisted_16$11 = {
 	key: 1,
 	class: "skill-draft-actions"
 };
-var _hoisted_17$8 = [
+var _hoisted_17$10 = [
 	"title",
 	"data-draft-id",
 	"disabled"
 ];
-var _hoisted_18$7 = ["disabled"];
-var _hoisted_19$6 = {
+var _hoisted_18$8 = ["disabled"];
+var _hoisted_19$7 = {
 	key: 2,
 	class: "import-warning"
 };
@@ -3155,13 +3155,13 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 			return p?.phase === "undoing" ? p.from : p;
 		});
 		return (_ctx, _cache) => {
-			return shown.value?.phase === "kept" ? (openBlock(), createElementBlock("div", _hoisted_1$76, [createElementVNode("div", _hoisted_2$66, [createElementVNode("span", _hoisted_3$62, "✅ " + toDisplayString(shown.value.patched ? "Updated" : "Kept as") + " " + toDisplayString(shown.value.name), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
+			return shown.value?.phase === "kept" ? (openBlock(), createElementBlock("div", _hoisted_1$78, [createElementVNode("div", _hoisted_2$68, [createElementVNode("span", _hoisted_3$64, "✅ " + toDisplayString(shown.value.patched ? "Updated" : "Kept as") + " " + toDisplayString(shown.value.name), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
 				key: 0,
 				origin: {
 					label: `wired to ${__props.agentName}`,
 					official: false
 				}
-			}, null, 8, ["origin"])) : createCommentVNode("", true)]), createElementVNode("div", _hoisted_4$53, [createElementVNode("button", {
+			}, null, 8, ["origin"])) : createCommentVNode("", true)]), createElementVNode("div", _hoisted_4$55, [createElementVNode("button", {
 				type: "button",
 				class: "btn btn-ghost",
 				onClick: _cache[0] || (_cache[0] = ($event) => props.onView())
@@ -3174,7 +3174,7 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 				busy: undoing.value,
 				label: UNDO$1,
 				"busy-label": UNDOING
-			}, null, 8, ["busy"])], 8, _hoisted_5$42)])])) : shown.value?.phase === "discarded" ? (openBlock(), createElementBlock("div", _hoisted_6$36, [createElementVNode("span", null, "🗑 " + toDisplayString(shown.value.skillName || __props.title) + " — discarded", 1), createElementVNode("button", {
+			}, null, 8, ["busy"])], 8, _hoisted_5$44)])])) : shown.value?.phase === "discarded" ? (openBlock(), createElementBlock("div", _hoisted_6$38, [createElementVNode("span", null, "🗑 " + toDisplayString(shown.value.skillName || __props.title) + " — discarded", 1), createElementVNode("button", {
 				type: "button",
 				class: "btn btn-ghost",
 				disabled: undoing.value || void 0,
@@ -3183,21 +3183,21 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 				busy: undoing.value,
 				label: UNDO$1,
 				"busy-label": UNDOING
-			}, null, 8, ["busy"])], 8, _hoisted_7$27)])) : unref(draftAction)[__props.draftId]?.phase === "undone" ? (openBlock(), createElementBlock("div", _hoisted_8$19, " ↩ " + toDisplayString(unref(draftAction)[__props.draftId].name) + " — undone ", 1)) : __props.resolved ? (openBlock(), createElementBlock("div", _hoisted_9$15, toDisplayString(__props.status === "kept" ? `✅ ${__props.title} — kept` : `🗑 ${__props.title} — discarded`), 1)) : (openBlock(), createElementBlock("div", _hoisted_10$15, [
-				createElementVNode("div", _hoisted_11$11, [createElementVNode("span", _hoisted_12$10, toDisplayString(__props.title), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
+			}, null, 8, ["busy"])], 8, _hoisted_7$29)])) : unref(draftAction)[__props.draftId]?.phase === "undone" ? (openBlock(), createElementBlock("div", _hoisted_8$21, " ↩ " + toDisplayString(unref(draftAction)[__props.draftId].name) + " — undone ", 1)) : __props.resolved ? (openBlock(), createElementBlock("div", _hoisted_9$17, toDisplayString(__props.status === "kept" ? `✅ ${__props.title} — kept` : `🗑 ${__props.title} — discarded`), 1)) : (openBlock(), createElementBlock("div", _hoisted_10$17, [
+				createElementVNode("div", _hoisted_11$13, [createElementVNode("span", _hoisted_12$12, toDisplayString(__props.title), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
 					key: 0,
 					origin: {
 						label: `loads in every ${__props.agentName} session`,
 						official: false
 					}
 				}, null, 8, ["origin"])) : createCommentVNode("", true)]),
-				createElementVNode("div", _hoisted_13$10, toDisplayString(__props.desc), 1),
+				createElementVNode("div", _hoisted_13$12, toDisplayString(__props.desc), 1),
 				unref(draftAction)[__props.draftId]?.phase === "overlaps" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(draftAction)[__props.draftId].overlaps, (o) => {
 					return openBlock(), createElementBlock("div", {
 						key: o.name,
 						class: "import-warning"
 					}, " ⚠ " + toDisplayString(o.name) + " (" + toDisplayString(o.source === "pending-draft" ? "pending draft" : o.source) + ") — " + toDisplayString(o.reason), 1);
-				}), 128)), createElementVNode("div", _hoisted_14$10, [
+				}), 128)), createElementVNode("div", _hoisted_14$12, [
 					(openBlock(true), createElementBlock(Fragment, null, renderList(unref(draftAction)[__props.draftId].overlaps.filter((x) => x.source !== "pending-draft"), (o) => {
 						return openBlock(), createElementBlock("button", {
 							key: o.name,
@@ -3207,7 +3207,7 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 								action: "update",
 								target: o.name
 							})
-						}, " Update " + toDisplayString(o.name), 9, _hoisted_15$9);
+						}, " Update " + toDisplayString(o.name), 9, _hoisted_15$11);
 					}), 128)),
 					createElementVNode("button", {
 						type: "button",
@@ -3219,7 +3219,7 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 						class: "skill-delete",
 						onClick: _cache[4] || (_cache[4] = ($event) => props.onOverlapChoice({ action: "discard" }))
 					}, toDisplayString(DISCARD$2))
-				])], 64)) : (openBlock(), createElementBlock("div", _hoisted_16$9, [
+				])], 64)) : (openBlock(), createElementBlock("div", _hoisted_16$11, [
 					createElementVNode("button", {
 						type: "button",
 						class: "btn btn-ghost",
@@ -3236,7 +3236,7 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 						busy: unref(draftAction)[__props.draftId]?.phase === "saving" || unref(draftAction)[__props.draftId]?.phase === "checking",
 						label: KEEP$2,
 						"busy-label": keepBusyLabel.value
-					}, null, 8, ["busy", "busy-label"])], 8, _hoisted_17$8),
+					}, null, 8, ["busy", "busy-label"])], 8, _hoisted_17$10),
 					createElementVNode("button", {
 						type: "button",
 						class: "skill-delete",
@@ -3246,30 +3246,30 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 						busy: unref(draftAction)[__props.draftId]?.phase === "discarding",
 						label: DISCARD$2,
 						"busy-label": DISCARDING
-					}, null, 8, ["busy"])], 8, _hoisted_18$7)
+					}, null, 8, ["busy"])], 8, _hoisted_18$8)
 				])),
-				unref(draftAction)[__props.draftId]?.phase === "error" ? (openBlock(), createElementBlock("div", _hoisted_19$6, " ⚠ " + toDisplayString(unref(draftAction)[__props.draftId].error), 1)) : createCommentVNode("", true)
+				unref(draftAction)[__props.draftId]?.phase === "error" ? (openBlock(), createElementBlock("div", _hoisted_19$7, " ⚠ " + toDisplayString(unref(draftAction)[__props.draftId].error), 1)) : createCommentVNode("", true)
 			]));
 		};
 	}
 });
 //#endregion
 //#region src/features/TurnThoughts.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$75 = {
+var _hoisted_1$77 = {
 	key: 0,
 	class: "thoughts-preview"
 };
-var _hoisted_2$65 = ["aria-busy"];
-var _hoisted_3$61 = {
+var _hoisted_2$67 = ["aria-busy"];
+var _hoisted_3$63 = {
 	key: 0,
 	class: "thoughts-line"
 };
-var _hoisted_4$52 = {
+var _hoisted_4$54 = {
 	key: 0,
 	class: "btn-spinner",
 	"aria-hidden": "true"
 };
-var _hoisted_5$41 = {
+var _hoisted_5$43 = {
 	key: 2,
 	class: "thoughts-line"
 };
@@ -3347,19 +3347,19 @@ var TurnThoughts_default = /* @__PURE__ */ defineComponent({
 					"aria-hidden": "true"
 				}, [createElementVNode("use", { href: "#i-sparkles" })], -1)),
 				createTextVNode(toDisplayString(` ${THOUGHTS}${count.value}`), 1),
-				preview.value ? (openBlock(), createElementBlock("span", _hoisted_1$75, toDisplayString(preview.value), 1)) : createCommentVNode("", true)
+				preview.value ? (openBlock(), createElementBlock("span", _hoisted_1$77, toDisplayString(preview.value), 1)) : createCommentVNode("", true)
 			]), createElementVNode("div", {
 				class: "thoughts-body",
 				tabindex: "0",
 				"aria-busy": load.value?.status === "loading" ? "true" : void 0
 			}, [
-				status.value ? (openBlock(), createElementBlock("div", _hoisted_3$61, [status.value === LOADING$5 ? (openBlock(), createElementBlock("span", _hoisted_4$52)) : createCommentVNode("", true), createTextVNode(toDisplayString(status.value), 1)])) : createCommentVNode("", true),
+				status.value ? (openBlock(), createElementBlock("div", _hoisted_3$63, [status.value === LOADING$5 ? (openBlock(), createElementBlock("span", _hoisted_4$54)) : createCommentVNode("", true), createTextVNode(toDisplayString(status.value), 1)])) : createCommentVNode("", true),
 				view.value && (unref(traceHasContent)(view.value) || empty.value) ? (openBlock(), createBlock(TraceView_default, {
 					key: 1,
 					view: view.value
 				}, null, 8, ["view"])) : createCommentVNode("", true),
-				empty.value ? (openBlock(), createElementBlock("div", _hoisted_5$41, toDisplayString(NO_ACTIVITY))) : createCommentVNode("", true)
-			], 8, _hoisted_2$65)], 32)) : createCommentVNode("", true);
+				empty.value ? (openBlock(), createElementBlock("div", _hoisted_5$43, toDisplayString(NO_ACTIVITY))) : createCommentVNode("", true)
+			], 8, _hoisted_2$67)], 32)) : createCommentVNode("", true);
 		};
 	}
 });
@@ -3404,14 +3404,14 @@ function conflictRetry(body) {
 }
 //#endregion
 //#region src/features/LimitRetry.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$74 = {
+var _hoisted_1$76 = {
 	key: 0,
 	class: "limit-retry",
 	"aria-live": "polite"
 };
-var _hoisted_2$64 = ["disabled"];
-var _hoisted_3$60 = { class: "limit-retry-at" };
-var _hoisted_4$51 = ["disabled"];
+var _hoisted_2$66 = ["disabled"];
+var _hoisted_3$62 = { class: "limit-retry-at" };
+var _hoisted_4$53 = ["disabled"];
 //#endregion
 //#region src/features/LimitRetry.vue
 var LimitRetry_default = /* @__PURE__ */ defineComponent({
@@ -3473,19 +3473,19 @@ var LimitRetry_default = /* @__PURE__ */ defineComponent({
 			}
 		}
 		return (_ctx, _cache) => {
-			return view.value ? (openBlock(), createElementBlock("div", _hoisted_1$74, [view.value === "offer" ? (openBlock(), createElementBlock("button", {
+			return view.value ? (openBlock(), createElementBlock("div", _hoisted_1$76, [view.value === "offer" ? (openBlock(), createElementBlock("button", {
 				key: 0,
 				type: "button",
 				class: "btn btn-secondary",
 				disabled: busy.value,
 				onClick: schedule
-			}, toDisplayString(label.value), 9, _hoisted_2$64)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [createElementVNode("span", _hoisted_3$60, toDisplayString(label.value), 1), canCancel.value ? (openBlock(), createElementBlock("button", {
+			}, toDisplayString(label.value), 9, _hoisted_2$66)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [createElementVNode("span", _hoisted_3$62, toDisplayString(label.value), 1), canCancel.value ? (openBlock(), createElementBlock("button", {
 				key: 0,
 				type: "button",
 				class: "btn btn-ghost",
 				disabled: busy.value,
 				onClick: cancel
-			}, "Cancel", 8, _hoisted_4$51)) : createCommentVNode("", true)], 64))])) : createCommentVNode("", true);
+			}, "Cancel", 8, _hoisted_4$53)) : createCommentVNode("", true)], 64))])) : createCommentVNode("", true);
 		};
 	}
 });
@@ -3497,41 +3497,41 @@ function servedModelShown(row, settings) {
 }
 //#endregion
 //#region src/features/Transcript.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$73 = {
+var _hoisted_1$75 = {
 	key: 0,
 	class: "empty-state"
 };
-var _hoisted_2$63 = {
+var _hoisted_2$65 = {
 	key: 0,
 	class: "msg system"
 };
-var _hoisted_3$59 = ["data-question-id"];
-var _hoisted_4$50 = {
+var _hoisted_3$61 = ["data-question-id"];
+var _hoisted_4$52 = {
 	key: 0,
 	class: "approval-result"
 };
-var _hoisted_5$40 = {
+var _hoisted_5$42 = {
 	key: 1,
 	class: "approval-details"
 };
-var _hoisted_6$35 = { class: "approval-payload" };
-var _hoisted_7$26 = ["data-message-id"];
-var _hoisted_8$18 = {
+var _hoisted_6$37 = { class: "approval-payload" };
+var _hoisted_7$28 = ["data-message-id"];
+var _hoisted_8$20 = {
 	key: 0,
 	class: "approval-notice-done"
 };
-var _hoisted_9$14 = ["disabled", "onClick"];
-var _hoisted_10$14 = {
+var _hoisted_9$16 = ["disabled", "onClick"];
+var _hoisted_10$16 = {
 	key: 2,
 	class: "approval-error"
 };
-var _hoisted_11$10 = ["data-draft-id"];
-var _hoisted_12$9 = {
+var _hoisted_11$12 = ["data-draft-id"];
+var _hoisted_12$11 = {
 	key: 0,
 	class: "msg-body"
 };
-var _hoisted_13$9 = ["title"];
-var _hoisted_14$9 = {
+var _hoisted_13$11 = ["title"];
+var _hoisted_14$11 = {
 	key: 0,
 	class: "served-model"
 };
@@ -3557,8 +3557,8 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 		*/
 		const props = __props;
 		return (_ctx, _cache) => {
-			return unref(transcriptEmpty) && !unref(messages).length && !unref(thinkingTurns).length ? (openBlock(), createElementBlock("div", _hoisted_1$73, toDisplayString(unref(transcriptEmpty)), 1)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(messages), (row) => {
-				return openBlock(), createElementBlock(Fragment, { key: row.key }, [row.kind === "system" ? (openBlock(), createElementBlock("div", _hoisted_2$63, toDisplayString(row.text), 1)) : row.kind === "divider" ? (openBlock(), createElementBlock("div", {
+			return unref(transcriptEmpty) && !unref(messages).length && !unref(thinkingTurns).length ? (openBlock(), createElementBlock("div", _hoisted_1$75, toDisplayString(unref(transcriptEmpty)), 1)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(messages), (row) => {
+				return openBlock(), createElementBlock(Fragment, { key: row.key }, [row.kind === "system" ? (openBlock(), createElementBlock("div", _hoisted_2$65, toDisplayString(row.text), 1)) : row.kind === "divider" ? (openBlock(), createElementBlock("div", {
 					key: 1,
 					class: normalizeClass(["context-divider", row.cls])
 				}, [createElementVNode("span", null, toDisplayString(row.text), 1)], 2)) : row.kind === "approval" ? (openBlock(), createElementBlock("div", {
@@ -3577,27 +3577,27 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 					}])
 				}, [
 					createElementVNode("div", null, toDisplayString(row.note), 1),
-					row.approvalResult ? (openBlock(), createElementBlock("div", _hoisted_4$50, toDisplayString(row.approvalResult.line), 1)) : createCommentVNode("", true),
-					row.approvalResult?.details ? (openBlock(), createElementBlock("details", _hoisted_5$40, [_cache[0] || (_cache[0] = createElementVNode("summary", null, "Details", -1)), createElementVNode("pre", _hoisted_6$35, toDisplayString(row.approvalResult.details), 1)])) : createCommentVNode("", true)
-				], 2))], 8, _hoisted_3$59)) : row.kind === "approval-notice" && row.notice ? (openBlock(), createElementBlock("div", {
+					row.approvalResult ? (openBlock(), createElementBlock("div", _hoisted_4$52, toDisplayString(row.approvalResult.line), 1)) : createCommentVNode("", true),
+					row.approvalResult?.details ? (openBlock(), createElementBlock("details", _hoisted_5$42, [_cache[0] || (_cache[0] = createElementVNode("summary", null, "Details", -1)), createElementVNode("pre", _hoisted_6$37, toDisplayString(row.approvalResult.details), 1)])) : createCommentVNode("", true)
+				], 2))], 8, _hoisted_3$61)) : row.kind === "approval-notice" && row.notice ? (openBlock(), createElementBlock("div", {
 					key: 3,
 					class: "msg approval-msg",
 					"data-message-id": row.id || ""
 				}, [createElementVNode("div", { class: normalizeClass(["approval-inroom-note approval-notice", row.notice.kind]) }, [
 					createElementVNode("span", null, toDisplayString(row.notice.text), 1),
-					row.notice.resentByName ? (openBlock(), createElementBlock("span", _hoisted_8$18, "Sent again by " + toDisplayString(row.notice.resentByName), 1)) : row.notice.kind === "expired" ? (openBlock(), createElementBlock("button", {
+					row.notice.resentByName ? (openBlock(), createElementBlock("span", _hoisted_8$20, "Sent again by " + toDisplayString(row.notice.resentByName), 1)) : row.notice.kind === "expired" ? (openBlock(), createElementBlock("button", {
 						key: 1,
 						type: "button",
 						class: "btn btn-secondary",
 						disabled: unref(approvalBusy).has(`resend:${row.notice.questionId}`) || void 0,
 						onClick: ($event) => unref(resendApproval)(row.notice.questionId)
-					}, "Send again", 8, _hoisted_9$14)) : createCommentVNode("", true),
-					unref(approvalErrors)[`resend:${row.notice.questionId}`] ? (openBlock(), createElementBlock("span", _hoisted_10$14, toDisplayString(unref(approvalErrors)[`resend:${row.notice.questionId}`]), 1)) : createCommentVNode("", true)
-				], 2)], 8, _hoisted_7$26)) : row.kind === "draft" ? (openBlock(), createElementBlock("div", {
+					}, "Send again", 8, _hoisted_9$16)) : createCommentVNode("", true),
+					unref(approvalErrors)[`resend:${row.notice.questionId}`] ? (openBlock(), createElementBlock("span", _hoisted_10$16, toDisplayString(unref(approvalErrors)[`resend:${row.notice.questionId}`]), 1)) : createCommentVNode("", true)
+				], 2)], 8, _hoisted_7$28)) : row.kind === "draft" ? (openBlock(), createElementBlock("div", {
 					key: 4,
 					class: "msg skill-draft-msg",
 					"data-draft-id": row.id || ""
-				}, [createVNode(SkillDraftCard_default, mergeProps({ ref_for: true }, row.payload), null, 16)], 8, _hoisted_11$10)) : (openBlock(), createElementBlock("div", mergeProps({
+				}, [createVNode(SkillDraftCard_default, mergeProps({ ref_for: true }, row.payload), null, 16)], 8, _hoisted_11$12)) : (openBlock(), createElementBlock("div", mergeProps({
 					key: 5,
 					class: row.cls
 				}, { ref_for: true }, row.id ? { "data-message-id": row.id } : {}, { style: row.isA2a ? { "--a2a-accent": row.a2aAccent } : void 0 }), [
@@ -3611,7 +3611,7 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 						class: "icon",
 						"aria-hidden": "true"
 					}, [createElementVNode("use", { href: "#i-bot" })], -1)), createTextVNode(toDisplayString(" " + row.sender), 1)], 64)) : (openBlock(), createElementBlock(Fragment, { key: 2 }, [createTextVNode(toDisplayString(row.isMine ? "You" : row.sender), 1)], 64))], 2),
-					row.body ? (openBlock(), createElementBlock("div", _hoisted_12$9, [row.id ? (openBlock(), createBlock(MsgDeleteButton_default, {
+					row.body ? (openBlock(), createElementBlock("div", _hoisted_12$11, [row.id ? (openBlock(), createBlock(MsgDeleteButton_default, {
 						key: 0,
 						"message-id": row.id
 					}, null, 8, ["message-id"])) : createCommentVNode("", true), createVNode(MessageBubble_default, {
@@ -3648,7 +3648,7 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 						key: 4,
 						class: "timestamp",
 						title: row.timeTitle || void 0
-					}, [createTextVNode(toDisplayString(row.timeStr), 1), unref(servedModelShown)(row, unref(state).settings) ? (openBlock(), createElementBlock("span", _hoisted_14$9, toDisplayString(" · " + unref(servedModelShown)(row, unref(state).settings)), 1)) : createCommentVNode("", true)], 8, _hoisted_13$9)) : createCommentVNode("", true),
+					}, [createTextVNode(toDisplayString(row.timeStr), 1), unref(servedModelShown)(row, unref(state).settings) ? (openBlock(), createElementBlock("span", _hoisted_14$11, toDisplayString(" · " + unref(servedModelShown)(row, unref(state).settings)), 1)) : createCommentVNode("", true)], 8, _hoisted_13$11)) : createCommentVNode("", true),
 					row.isMine && row.status ? (openBlock(), createElementBlock("div", {
 						key: 5,
 						class: normalizeClass(row.status === "✓✓" ? "status delivered" : "status")
@@ -3671,7 +3671,7 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/CodeToolbar.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$72 = {
+var _hoisted_1$74 = {
 	key: 0,
 	class: "code-lang"
 };
@@ -3722,7 +3722,7 @@ var CodeToolbar_default = /* @__PURE__ */ defineComponent({
 		}
 		return (_ctx, _cache) => {
 			return openBlock(), createElementBlock(Fragment, null, [
-				__props.lang ? (openBlock(), createElementBlock("span", _hoisted_1$72, toDisplayString(__props.lang), 1)) : createCommentVNode("", true),
+				__props.lang ? (openBlock(), createElementBlock("span", _hoisted_1$74, toDisplayString(__props.lang), 1)) : createCommentVNode("", true),
 				createElementVNode("button", {
 					type: "button",
 					class: normalizeClass(wrapping.value ? "code-btn wrap-code-btn active" : "code-btn wrap-code-btn"),
@@ -4412,14 +4412,14 @@ function applyMarketplaceNav() {
 var toolSecretRows = ref([]);
 //#endregion
 //#region src/features/ToolSecretList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$71 = {
+var _hoisted_1$73 = {
 	key: 0,
 	class: "skill-desc"
 };
-var _hoisted_2$62 = { class: "skill-info" };
-var _hoisted_3$58 = { class: "skill-head" };
-var _hoisted_4$49 = ["onClick"];
-var _hoisted_5$39 = ["onClick"];
+var _hoisted_2$64 = { class: "skill-info" };
+var _hoisted_3$60 = { class: "skill-head" };
+var _hoisted_4$51 = ["onClick"];
+var _hoisted_5$41 = ["onClick"];
 var EMPTY$18 = "No all-agents secrets yet";
 var SHARED = "all agents";
 var REMOVE$6 = "Remove";
@@ -4440,22 +4440,22 @@ var ToolSecretList_default = /* @__PURE__ */ defineComponent({
 		*/
 		const props = __props;
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [unref(toolSecretRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$71, toDisplayString(EMPTY$18))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(toolSecretRows), (s, i) => {
+			return openBlock(), createElementBlock(Fragment, null, [unref(toolSecretRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$73, toDisplayString(EMPTY$18))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(toolSecretRows), (s, i) => {
 				return openBlock(), createElementBlock("li", {
 					key: i,
 					class: "skill-source-row secret-row"
 				}, [
-					createElementVNode("div", _hoisted_2$62, [createElementVNode("div", _hoisted_3$58, [createElementVNode("span", null, toDisplayString(s.hostPattern), 1), createElementVNode("span", { class: "skill-badge secret-scope" }, toDisplayString(SHARED))])]),
+					createElementVNode("div", _hoisted_2$64, [createElementVNode("div", _hoisted_3$60, [createElementVNode("span", null, toDisplayString(s.hostPattern), 1), createElementVNode("span", { class: "skill-badge secret-scope" }, toDisplayString(SHARED))])]),
 					createElementVNode("button", {
 						class: "btn btn-secondary",
 						type: "button",
 						onClick: ($event) => props.onUpdate(s)
-					}, toDisplayString(UPDATE$2), 8, _hoisted_4$49),
+					}, toDisplayString(UPDATE$2), 8, _hoisted_4$51),
 					createElementVNode("button", {
 						class: "btn btn-danger",
 						type: "button",
 						onClick: ($event) => props.onRemove(s)
-					}, toDisplayString(REMOVE$6), 8, _hoisted_5$39)
+					}, toDisplayString(REMOVE$6), 8, _hoisted_5$41)
 				]);
 			}), 128))], 64);
 		};
@@ -4620,21 +4620,21 @@ var permsCreateChannelTouched = ref(false);
 var roomWiredRows = ref([]);
 //#endregion
 //#region src/features/RoomWiredAgents.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$70 = [
+var _hoisted_1$72 = [
 	"title",
 	"innerHTML",
 	"onClick"
 ];
-var _hoisted_2$61 = [
+var _hoisted_2$63 = [
 	"title",
 	"onClick",
 	"onKeydown"
 ];
-var _hoisted_3$57 = {
+var _hoisted_3$59 = {
 	key: 0,
 	class: "room-wired-prime-badge"
 };
-var _hoisted_4$48 = [
+var _hoisted_4$50 = [
 	"title",
 	"disabled",
 	"innerHTML",
@@ -4669,7 +4669,7 @@ var RoomWiredAgents_default = /* @__PURE__ */ defineComponent({
 						title: primeTitle(agent),
 						innerHTML: starIcon(agent.is_prime),
 						onClick: ($event) => emit("prime", agent)
-					}, null, 10, _hoisted_1$70),
+					}, null, 10, _hoisted_1$72),
 					createElementVNode("span", {
 						class: "room-wired-name room-wired-name-link",
 						role: "button",
@@ -4677,7 +4677,7 @@ var RoomWiredAgents_default = /* @__PURE__ */ defineComponent({
 						title: `Open ${agent.name} settings`,
 						onClick: ($event) => emit("open", agent),
 						onKeydown: [withKeys(withModifiers(($event) => emit("open", agent), ["prevent"]), ["enter"]), withKeys(withModifiers(($event) => emit("open", agent), ["prevent"]), ["space"])]
-					}, [createTextVNode(toDisplayString(agent.name ?? ""), 1), agent.is_prime ? (openBlock(), createElementBlock("span", _hoisted_3$57, " default")) : createCommentVNode("", true)], 40, _hoisted_2$61),
+					}, [createTextVNode(toDisplayString(agent.name ?? ""), 1), agent.is_prime ? (openBlock(), createElementBlock("span", _hoisted_3$59, " default")) : createCommentVNode("", true)], 40, _hoisted_2$63),
 					createElementVNode("button", {
 						type: "button",
 						class: "room-wired-remove",
@@ -4685,7 +4685,7 @@ var RoomWiredAgents_default = /* @__PURE__ */ defineComponent({
 						disabled: onlyOne(),
 						innerHTML: unref(xIcon),
 						onClick: ($event) => emit("remove", agent)
-					}, null, 8, _hoisted_4$48)
+					}, null, 8, _hoisted_4$50)
 				]);
 			}), 128);
 		};
@@ -4693,25 +4693,25 @@ var RoomWiredAgents_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/AgentList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$69 = [
+var _hoisted_1$71 = [
 	"data-agent-id",
 	"onClick",
 	"onKeydown"
 ];
-var _hoisted_2$60 = ["innerHTML"];
-var _hoisted_3$56 = { class: "agent-info" };
-var _hoisted_4$47 = { class: "agent-info-name" };
-var _hoisted_5$38 = {
+var _hoisted_2$62 = ["innerHTML"];
+var _hoisted_3$58 = { class: "agent-info" };
+var _hoisted_4$49 = { class: "agent-info-name" };
+var _hoisted_5$40 = {
 	key: 1,
 	class: "agent-harness-badge",
 	title: "Runs on the OpenCode harness"
 };
-var _hoisted_6$34 = {
+var _hoisted_6$36 = {
 	key: 2,
 	class: "agent-harness-badge",
 	title: "Runs on the Grok harness"
 };
-var _hoisted_7$25 = {
+var _hoisted_7$27 = {
 	key: 3,
 	class: "agent-harness-badge",
 	title: "Runs on GitHub Copilot"
@@ -4750,14 +4750,14 @@ var AgentList_default = /* @__PURE__ */ defineComponent({
 				}), [createElementVNode("span", {
 					class: "agent-icon",
 					innerHTML: unref(botIcon)
-				}, null, 8, _hoisted_2$60), createElementVNode("span", _hoisted_3$56, [
-					createElementVNode("span", _hoisted_4$47, toDisplayString(agent.name ?? ""), 1),
+				}, null, 8, _hoisted_2$62), createElementVNode("span", _hoisted_3$58, [
+					createElementVNode("span", _hoisted_4$49, toDisplayString(agent.name ?? ""), 1),
 					(agent.status || "active") !== "active" ? (openBlock(), createElementBlock("span", {
 						key: 0,
 						class: normalizeClass(["agent-status-badge", "status-" + (agent.status || "active")])
 					}, toDisplayString(agent.status), 3)) : createCommentVNode("", true),
-					agent.provider === "opencode" ? (openBlock(), createElementBlock("span", _hoisted_5$38, "OpenCode")) : agent.provider === "grok" ? (openBlock(), createElementBlock("span", _hoisted_6$34, "Grok")) : agent.provider === "copilot" ? (openBlock(), createElementBlock("span", _hoisted_7$25, "Copilot")) : createCommentVNode("", true)
-				])], 16, _hoisted_1$69);
+					agent.provider === "opencode" ? (openBlock(), createElementBlock("span", _hoisted_5$40, "OpenCode")) : agent.provider === "grok" ? (openBlock(), createElementBlock("span", _hoisted_6$36, "Grok")) : agent.provider === "copilot" ? (openBlock(), createElementBlock("span", _hoisted_7$27, "Copilot")) : createCommentVNode("", true)
+				])], 16, _hoisted_1$71);
 			}), 128);
 		};
 	}
@@ -4864,20 +4864,20 @@ var archivedAgentsCount = ref(0);
 var turnElapsedTimer = ref(null);
 //#endregion
 //#region src/features/AgentWiredRooms.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$68 = {
+var _hoisted_1$70 = {
 	key: 0,
 	class: "empty-note"
 };
-var _hoisted_2$59 = [
+var _hoisted_2$61 = [
 	"title",
 	"onClick",
 	"onKeydown"
 ];
-var _hoisted_3$55 = {
+var _hoisted_3$57 = {
 	key: 0,
 	class: "room-wired-prime-badge"
 };
-var _hoisted_4$46 = [
+var _hoisted_4$48 = [
 	"title",
 	"disabled",
 	"innerHTML",
@@ -4918,7 +4918,7 @@ var AgentWiredRooms_default = /* @__PURE__ */ defineComponent({
 			}
 		}
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$68, toDisplayString(EMPTY$17))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
+			return openBlock(), createElementBlock(Fragment, null, [rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$70, toDisplayString(EMPTY$17))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
 				return openBlock(), createElementBlock("li", { key: r.id }, [createElementVNode("span", {
 					class: "room-wired-name room-wired-name-link",
 					role: "button",
@@ -4926,7 +4926,7 @@ var AgentWiredRooms_default = /* @__PURE__ */ defineComponent({
 					title: r.openTitle,
 					onClick: ($event) => props.onOpenRoom(r.id),
 					onKeydown: ($event) => onKey($event, r.id)
-				}, [createTextVNode(toDisplayString(r.name), 1), r.isPrime ? (openBlock(), createElementBlock("span", _hoisted_3$55, " default")) : createCommentVNode("", true)], 40, _hoisted_2$59), unref(canManageRooms) ? (openBlock(), createElementBlock("button", {
+				}, [createTextVNode(toDisplayString(r.name), 1), r.isPrime ? (openBlock(), createElementBlock("span", _hoisted_3$57, " default")) : createCommentVNode("", true)], 40, _hoisted_2$61), unref(canManageRooms) ? (openBlock(), createElementBlock("button", {
 					key: 0,
 					type: "button",
 					class: "room-wired-remove",
@@ -4934,29 +4934,29 @@ var AgentWiredRooms_default = /* @__PURE__ */ defineComponent({
 					disabled: r.onlyAgent,
 					innerHTML: unref(XICON),
 					onClick: ($event) => props.onRemoveRoom(r.id, r.name)
-				}, null, 8, _hoisted_4$46)) : createCommentVNode("", true)]);
+				}, null, 8, _hoisted_4$48)) : createCommentVNode("", true)]);
 			}), 128))], 64);
 		};
 	}
 });
 //#endregion
 //#region src/features/AgentSessions.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$67 = {
+var _hoisted_1$69 = {
 	key: 0,
 	class: "agent-session-row muted"
 };
-var _hoisted_2$58 = {
+var _hoisted_2$60 = {
 	key: 1,
 	class: "agent-session-row muted"
 };
-var _hoisted_3$54 = {
+var _hoisted_3$56 = {
 	key: 2,
 	class: "agent-session-row muted"
 };
-var _hoisted_4$45 = { class: "agent-session-meta" };
-var _hoisted_5$37 = { class: "agent-session-label" };
-var _hoisted_6$33 = { class: "agent-session-sub" };
-var _hoisted_7$24 = ["onClick"];
+var _hoisted_4$47 = { class: "agent-session-meta" };
+var _hoisted_5$39 = { class: "agent-session-label" };
+var _hoisted_6$35 = { class: "agent-session-sub" };
+var _hoisted_7$26 = ["onClick"];
 var LOADING$4 = "Loading…";
 var EMPTY$16 = "No active sessions.";
 var RESET_TITLE = "Reset this session (inject /clear — drops context, next turn starts fresh)";
@@ -4983,19 +4983,19 @@ var AgentSessions_default = /* @__PURE__ */ defineComponent({
 			props.onReset(id, e.currentTarget);
 		}
 		return (_ctx, _cache) => {
-			return unref(sessionsPhase) === "loading" ? (openBlock(), createElementBlock("li", _hoisted_1$67, [_cache[0] || (_cache[0] = createElementVNode("span", {
+			return unref(sessionsPhase) === "loading" ? (openBlock(), createElementBlock("li", _hoisted_1$69, [_cache[0] || (_cache[0] = createElementVNode("span", {
 				class: "btn-spinner",
 				"aria-hidden": "true"
-			}, null, -1)), createTextVNode(toDisplayString(LOADING$4))])) : unref(sessionsPhase) === "error" ? (openBlock(), createElementBlock("li", _hoisted_2$58, toDisplayString(unref(sessionsError)), 1)) : rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_3$54, toDisplayString(EMPTY$16))) : (openBlock(true), createElementBlock(Fragment, { key: 3 }, renderList(rows.value, (r) => {
+			}, null, -1)), createTextVNode(toDisplayString(LOADING$4))])) : unref(sessionsPhase) === "error" ? (openBlock(), createElementBlock("li", _hoisted_2$60, toDisplayString(unref(sessionsError)), 1)) : rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_3$56, toDisplayString(EMPTY$16))) : (openBlock(true), createElementBlock(Fragment, { key: 3 }, renderList(rows.value, (r) => {
 				return openBlock(), createElementBlock("li", {
 					key: r.id,
 					class: "agent-session-row"
-				}, [createElementVNode("div", _hoisted_4$45, [createElementVNode("span", _hoisted_5$37, toDisplayString(r.label), 1), createElementVNode("span", _hoisted_6$33, toDisplayString(r.sub), 1)]), createElementVNode("button", {
+				}, [createElementVNode("div", _hoisted_4$47, [createElementVNode("span", _hoisted_5$39, toDisplayString(r.label), 1), createElementVNode("span", _hoisted_6$35, toDisplayString(r.sub), 1)]), createElementVNode("button", {
 					type: "button",
 					class: "btn btn-ghost agent-session-reset",
 					title: RESET_TITLE,
 					onClick: ($event) => reset(r.id, $event)
-				}, toDisplayString(RESET_LABEL), 8, _hoisted_7$24)]);
+				}, toDisplayString(RESET_LABEL), 8, _hoisted_7$26)]);
 			}), 128));
 		};
 	}
@@ -5033,18 +5033,18 @@ function clearListSearch(sel, query) {
 }
 //#endregion
 //#region src/features/AddAgentPicker.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$66 = {
+var _hoisted_1$68 = {
 	key: 0,
 	class: "empty-note"
 };
-var _hoisted_2$57 = {
+var _hoisted_2$59 = {
 	key: 0,
 	class: "empty-note"
 };
-var _hoisted_3$53 = ["value", "id"];
-var _hoisted_4$44 = ["for"];
-var _hoisted_5$36 = { class: "room-add-agent-name" };
-var _hoisted_6$32 = { class: "room-add-agent-sub" };
+var _hoisted_3$55 = ["value", "id"];
+var _hoisted_4$46 = ["for"];
+var _hoisted_5$38 = { class: "room-add-agent-name" };
+var _hoisted_6$34 = { class: "room-add-agent-sub" };
 var EMPTY$15 = "No unwired agents — switch to \"New\" to create one.";
 //#endregion
 //#region src/features/AddAgentPicker.vue
@@ -5068,7 +5068,7 @@ var AddAgentPicker_default = /* @__PURE__ */ defineComponent({
 		const shown = (r) => matchesQuery(addAgentQuery.value, r.name, r.sub);
 		const noMatch = computed(() => rows.value.length > 0 && !rows.value.some(shown));
 		return (_ctx, _cache) => {
-			return rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$66, toDisplayString(EMPTY$15))) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [noMatch.value ? (openBlock(), createElementBlock("li", _hoisted_2$57, toDisplayString(unref(NO_MATCH$3)), 1)) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
+			return rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$68, toDisplayString(EMPTY$15))) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [noMatch.value ? (openBlock(), createElementBlock("li", _hoisted_2$59, toDisplayString(unref(NO_MATCH$3)), 1)) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
 				return withDirectives((openBlock(), createElementBlock("li", {
 					key: r.id,
 					class: "room-add-agent-row"
@@ -5077,26 +5077,26 @@ var AddAgentPicker_default = /* @__PURE__ */ defineComponent({
 					value: r.id,
 					id: r.cbId,
 					onChange: _cache[0] || (_cache[0] = ($event) => props.onToggle())
-				}, null, 40, _hoisted_3$53), createElementVNode("label", {
+				}, null, 40, _hoisted_3$55), createElementVNode("label", {
 					for: r.cbId,
 					class: "room-add-agent-label"
-				}, [createElementVNode("span", _hoisted_5$36, toDisplayString(r.name), 1), createElementVNode("span", _hoisted_6$32, toDisplayString(r.sub), 1)], 8, _hoisted_4$44)])), [[vShow, shown(r)]]);
+				}, [createElementVNode("span", _hoisted_5$38, toDisplayString(r.name), 1), createElementVNode("span", _hoisted_6$34, toDisplayString(r.sub), 1)], 8, _hoisted_4$46)])), [[vShow, shown(r)]]);
 			}), 128))], 64));
 		};
 	}
 });
 //#endregion
 //#region src/features/RoomCreateAgentChecklist.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$65 = {
+var _hoisted_1$67 = {
 	key: 0,
 	class: "empty-note"
 };
-var _hoisted_2$56 = {
+var _hoisted_2$58 = {
 	key: 0,
 	class: "empty-note"
 };
-var _hoisted_3$52 = ["value", "id"];
-var _hoisted_4$43 = ["for"];
+var _hoisted_3$54 = ["value", "id"];
+var _hoisted_4$45 = ["for"];
 var EMPTY$14 = "No agents yet — create one inline below.";
 //#endregion
 //#region src/features/RoomCreateAgentChecklist.vue
@@ -5119,43 +5119,43 @@ var RoomCreateAgentChecklist_default = /* @__PURE__ */ defineComponent({
 		const shown = (r) => matchesQuery(createAgentQuery.value, r.label);
 		const noMatch = computed(() => rows.value.length > 0 && !rows.value.some(shown));
 		return (_ctx, _cache) => {
-			return !unref(createAgentAnyExist) ? (openBlock(), createElementBlock("li", _hoisted_1$65, toDisplayString(EMPTY$14))) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [noMatch.value ? (openBlock(), createElementBlock("li", _hoisted_2$56, toDisplayString(unref(NO_MATCH$3)), 1)) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
+			return !unref(createAgentAnyExist) ? (openBlock(), createElementBlock("li", _hoisted_1$67, toDisplayString(EMPTY$14))) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [noMatch.value ? (openBlock(), createElementBlock("li", _hoisted_2$58, toDisplayString(unref(NO_MATCH$3)), 1)) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
 				return withDirectives((openBlock(), createElementBlock("li", { key: r.id }, [createElementVNode("input", {
 					type: "checkbox",
 					value: r.id,
 					id: r.cbId
-				}, null, 8, _hoisted_3$52), createElementVNode("label", { for: r.cbId }, toDisplayString(r.label), 9, _hoisted_4$43)])), [[vShow, shown(r)]]);
+				}, null, 8, _hoisted_3$54), createElementVNode("label", { for: r.cbId }, toDisplayString(r.label), 9, _hoisted_4$45)])), [[vShow, shown(r)]]);
 			}), 128))], 64));
 		};
 	}
 });
 //#endregion
 //#region src/features/AgentSecretList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$64 = {
+var _hoisted_1$66 = {
 	key: 0,
 	class: "secret-effective"
 };
-var _hoisted_2$55 = {
+var _hoisted_2$57 = {
 	key: 1,
 	class: "skill-desc"
 };
-var _hoisted_3$51 = { class: "secret-section-head" };
-var _hoisted_4$42 = { class: "skill-info" };
-var _hoisted_5$35 = { class: "skill-head" };
-var _hoisted_6$31 = {
+var _hoisted_3$53 = { class: "secret-section-head" };
+var _hoisted_4$44 = { class: "skill-info" };
+var _hoisted_5$37 = { class: "skill-head" };
+var _hoisted_6$33 = {
 	key: 0,
 	class: "skill-badge secret-scope"
 };
-var _hoisted_7$23 = {
+var _hoisted_7$25 = {
 	key: 1,
 	class: "skill-badge secret-scope skill-badge-user"
 };
-var _hoisted_8$17 = {
+var _hoisted_8$19 = {
 	key: 0,
 	class: "skill-desc"
 };
-var _hoisted_9$13 = ["onClick"];
-var _hoisted_10$13 = ["onClick"];
+var _hoisted_9$15 = ["onClick"];
+var _hoisted_10$15 = ["onClick"];
 var REMOVE$5 = "Remove";
 var UPDATE$1 = "Update";
 var EMPTY$13 = "No secrets yet";
@@ -5200,22 +5200,22 @@ var AgentSecretList_default = /* @__PURE__ */ defineComponent({
 		})).filter((s) => s.rows.length > 0));
 		return (_ctx, _cache) => {
 			return openBlock(), createElementBlock(Fragment, null, [
-				unref(agentSecretEffective) ? (openBlock(), createElementBlock("li", _hoisted_1$64, toDisplayString(unref(agentSecretEffective)), 1)) : createCommentVNode("", true),
-				sections.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_2$55, toDisplayString(EMPTY$13))) : createCommentVNode("", true),
+				unref(agentSecretEffective) ? (openBlock(), createElementBlock("li", _hoisted_1$66, toDisplayString(unref(agentSecretEffective)), 1)) : createCommentVNode("", true),
+				sections.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_2$57, toDisplayString(EMPTY$13))) : createCommentVNode("", true),
 				(openBlock(true), createElementBlock(Fragment, null, renderList(sections.value, (s) => {
-					return openBlock(), createElementBlock(Fragment, { key: s.reach }, [createElementVNode("li", _hoisted_3$51, toDisplayString(s.title), 1), (openBlock(true), createElementBlock(Fragment, null, renderList(s.rows, (r) => {
+					return openBlock(), createElementBlock(Fragment, { key: s.reach }, [createElementVNode("li", _hoisted_3$53, toDisplayString(s.title), 1), (openBlock(true), createElementBlock(Fragment, null, renderList(s.rows, (r) => {
 						return openBlock(), createElementBlock("li", {
 							key: r.key,
 							class: "skill-source-row secret-row"
-						}, [createElementVNode("div", _hoisted_4$42, [createElementVNode("div", _hoisted_5$35, [createElementVNode("span", null, toDisplayString(r.host), 1), r.reach === "other" ? (openBlock(), createElementBlock("span", _hoisted_6$31, toDisplayString(r.ownerLabel), 1)) : r.reach === "mine" ? (openBlock(), createElementBlock("span", _hoisted_7$23, toDisplayString(MINE))) : createCommentVNode("", true)]), r.note ? (openBlock(), createElementBlock("span", _hoisted_8$17, toDisplayString(r.note), 1)) : createCommentVNode("", true)]), r.canRemove ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("button", {
+						}, [createElementVNode("div", _hoisted_4$44, [createElementVNode("div", _hoisted_5$37, [createElementVNode("span", null, toDisplayString(r.host), 1), r.reach === "other" ? (openBlock(), createElementBlock("span", _hoisted_6$33, toDisplayString(r.ownerLabel), 1)) : r.reach === "mine" ? (openBlock(), createElementBlock("span", _hoisted_7$25, toDisplayString(MINE))) : createCommentVNode("", true)]), r.note ? (openBlock(), createElementBlock("span", _hoisted_8$19, toDisplayString(r.note), 1)) : createCommentVNode("", true)]), r.canRemove ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("button", {
 							class: "btn btn-secondary",
 							type: "button",
 							onClick: ($event) => props.onUpdate(r)
-						}, toDisplayString(UPDATE$1), 8, _hoisted_9$13), createElementVNode("button", {
+						}, toDisplayString(UPDATE$1), 8, _hoisted_9$15), createElementVNode("button", {
 							class: "btn btn-danger",
 							type: "button",
 							onClick: ($event) => props.onRemove(r)
-						}, toDisplayString(REMOVE$5), 8, _hoisted_10$13)], 64)) : createCommentVNode("", true)]);
+						}, toDisplayString(REMOVE$5), 8, _hoisted_10$15)], 64)) : createCommentVNode("", true)]);
 					}), 128))], 64);
 				}), 128))
 			], 64);
@@ -5224,7 +5224,7 @@ var AgentSecretList_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/AgentEnvList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$63 = ["disabled", "onClick"];
+var _hoisted_1$65 = ["disabled", "onClick"];
 var REMOVE$4 = "Remove";
 //#endregion
 //#region src/features/AgentEnvList.vue
@@ -5248,19 +5248,19 @@ var AgentEnvList_default = /* @__PURE__ */ defineComponent({
 					type: "button",
 					disabled: unref(agentEnvDeleting).has(name) || void 0,
 					onClick: ($event) => props.onRemove(name)
-				}, toDisplayString(REMOVE$4), 8, _hoisted_1$63)]);
+				}, toDisplayString(REMOVE$4), 8, _hoisted_1$65)]);
 			}), 128);
 		};
 	}
 });
 //#endregion
 //#region src/features/CopyIconButton.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$62 = ["aria-label", "title"];
-var _hoisted_2$54 = {
+var _hoisted_1$64 = ["aria-label", "title"];
+var _hoisted_2$56 = {
 	class: "icon",
 	"aria-hidden": "true"
 };
-var _hoisted_3$50 = ["href"];
+var _hoisted_3$52 = ["href"];
 //#endregion
 //#region src/features/CopyIconButton.vue
 var CopyIconButton_default = /* @__PURE__ */ defineComponent({
@@ -5298,26 +5298,26 @@ var CopyIconButton_default = /* @__PURE__ */ defineComponent({
 				"aria-label": aria(),
 				title: aria(),
 				onClick: copy
-			}, [(openBlock(), createElementBlock("svg", _hoisted_2$54, [createElementVNode("use", { href: state.value === "copied" ? "#i-check" : "#i-copy" }, null, 8, _hoisted_3$50)]))], 10, _hoisted_1$62);
+			}, [(openBlock(), createElementBlock("svg", _hoisted_2$56, [createElementVNode("use", { href: state.value === "copied" ? "#i-check" : "#i-copy" }, null, 8, _hoisted_3$52)]))], 10, _hoisted_1$64);
 		};
 	}
 });
 //#endregion
 //#region src/features/AgentKeyList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$61 = { class: "skill-info" };
-var _hoisted_2$53 = { class: "skill-head" };
-var _hoisted_3$49 = ["title"];
-var _hoisted_4$41 = ["onSubmit"];
-var _hoisted_5$34 = ["placeholder", "aria-label"];
-var _hoisted_6$30 = {
+var _hoisted_1$63 = { class: "skill-info" };
+var _hoisted_2$55 = { class: "skill-head" };
+var _hoisted_3$51 = ["title"];
+var _hoisted_4$43 = ["onSubmit"];
+var _hoisted_5$36 = ["placeholder", "aria-label"];
+var _hoisted_6$32 = {
 	key: 1,
 	class: "skill-desc"
 };
-var _hoisted_7$22 = { class: "secret-actions" };
-var _hoisted_8$16 = ["disabled", "onClick"];
-var _hoisted_9$12 = ["onClick"];
-var _hoisted_10$12 = ["onClick"];
-var _hoisted_11$9 = ["onClick"];
+var _hoisted_7$24 = { class: "secret-actions" };
+var _hoisted_8$18 = ["disabled", "onClick"];
+var _hoisted_9$14 = ["onClick"];
+var _hoisted_10$14 = ["onClick"];
+var _hoisted_11$11 = ["onClick"];
 //#endregion
 //#region src/features/AgentKeyList.vue
 var AgentKeyList_default = /* @__PURE__ */ defineComponent({
@@ -5372,11 +5372,11 @@ var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("li", {
 					key: r.name,
 					class: "skill-source-row secret-row"
-				}, [createElementVNode("div", _hoisted_1$61, [createElementVNode("div", _hoisted_2$53, [createTextVNode(toDisplayString(r.name), 1), r.exposed ? (openBlock(), createElementBlock("span", {
+				}, [createElementVNode("div", _hoisted_1$63, [createElementVNode("div", _hoisted_2$55, [createTextVNode(toDisplayString(r.name), 1), r.exposed ? (openBlock(), createElementBlock("span", {
 					key: 0,
 					class: "skill-badge skill-badge-warn",
 					title: T.exposedTip
-				}, toDisplayString(T.exposed), 9, _hoisted_3$49)) : createCommentVNode("", true)]), editing.value === r.name ? (openBlock(), createElementBlock("form", {
+				}, toDisplayString(T.exposed), 9, _hoisted_3$51)) : createCommentVNode("", true)]), editing.value === r.name ? (openBlock(), createElementBlock("form", {
 					key: 0,
 					class: "agent-key-edit",
 					onSubmit: withModifiers(($event) => save(r.name), ["prevent"])
@@ -5388,12 +5388,12 @@ var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 					autocomplete: "off",
 					spellcheck: "false",
 					onKeydown: _cache[1] || (_cache[1] = withKeys(($event) => editing.value = null, ["esc"]))
-				}, null, 40, _hoisted_5$34), [[vModelText, draft.value]])], 40, _hoisted_4$41)) : (openBlock(), createElementBlock("span", _hoisted_6$30, toDisplayString(r.meta), 1))]), createElementVNode("div", _hoisted_7$22, [editing.value === r.name ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("button", {
+				}, null, 40, _hoisted_5$36), [[vModelText, draft.value]])], 40, _hoisted_4$43)) : (openBlock(), createElementBlock("span", _hoisted_6$32, toDisplayString(r.meta), 1))]), createElementVNode("div", _hoisted_7$24, [editing.value === r.name ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("button", {
 					class: "btn btn-primary",
 					type: "button",
 					disabled: !draft.value.trim() || saving.value,
 					onClick: ($event) => save(r.name)
-				}, toDisplayString(T.save), 9, _hoisted_8$16), createElementVNode("button", {
+				}, toDisplayString(T.save), 9, _hoisted_8$18), createElementVNode("button", {
 					class: "btn btn-secondary",
 					type: "button",
 					onClick: _cache[2] || (_cache[2] = ($event) => editing.value = null)
@@ -5407,17 +5407,17 @@ var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 						class: "btn btn-secondary",
 						type: "button",
 						onClick: ($event) => props.onRotate(r)
-					}, toDisplayString(T.rotate), 9, _hoisted_9$12)) : createCommentVNode("", true),
+					}, toDisplayString(T.rotate), 9, _hoisted_9$14)) : createCommentVNode("", true),
 					createElementVNode("button", {
 						class: "btn btn-secondary",
 						type: "button",
 						onClick: ($event) => startEdit(r)
-					}, toDisplayString(T.edit), 9, _hoisted_10$12),
+					}, toDisplayString(T.edit), 9, _hoisted_10$14),
 					createElementVNode("button", {
 						class: "btn btn-danger",
 						type: "button",
 						onClick: ($event) => props.onRemove(r)
-					}, toDisplayString(T.remove), 9, _hoisted_11$9)
+					}, toDisplayString(T.remove), 9, _hoisted_11$11)
 				], 64))])]);
 			}), 128);
 		};
@@ -5604,12 +5604,12 @@ var appsBuildsError = ref("");
 var previewRows = ref([]);
 //#endregion
 //#region src/features/FilePreview.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$60 = ["data-id"];
-var _hoisted_2$52 = ["src"];
-var _hoisted_3$48 = ["innerHTML"];
-var _hoisted_4$40 = { class: "file-preview-name" };
-var _hoisted_5$33 = { class: "file-preview-size" };
-var _hoisted_6$29 = [
+var _hoisted_1$62 = ["data-id"];
+var _hoisted_2$54 = ["src"];
+var _hoisted_3$50 = ["innerHTML"];
+var _hoisted_4$42 = { class: "file-preview-name" };
+var _hoisted_5$35 = { class: "file-preview-size" };
+var _hoisted_6$31 = [
 	"data-remove-id",
 	"innerHTML",
 	"onClick"
@@ -5640,35 +5640,35 @@ var FilePreview_default = /* @__PURE__ */ defineComponent({
 						src: r.thumbUrl,
 						class: "file-preview-thumb",
 						alt: ""
-					}, null, 8, _hoisted_2$52)) : (openBlock(), createElementBlock("span", {
+					}, null, 8, _hoisted_2$54)) : (openBlock(), createElementBlock("span", {
 						key: 1,
 						class: "file-preview-icon",
 						innerHTML: unref(clipIcon)
-					}, null, 8, _hoisted_3$48)),
-					createElementVNode("span", _hoisted_4$40, toDisplayString(r.name), 1),
-					createElementVNode("span", _hoisted_5$33, toDisplayString(r.size), 1),
+					}, null, 8, _hoisted_3$50)),
+					createElementVNode("span", _hoisted_4$42, toDisplayString(r.name), 1),
+					createElementVNode("span", _hoisted_5$35, toDisplayString(r.size), 1),
 					createElementVNode("button", {
 						class: "file-preview-remove",
 						"data-remove-id": r.id,
 						innerHTML: unref(xIcon),
 						onClick: ($event) => emit("remove", r.id)
-					}, null, 8, _hoisted_6$29)
-				], 8, _hoisted_1$60);
+					}, null, 8, _hoisted_6$31)
+				], 8, _hoisted_1$62);
 			}), 128);
 		};
 	}
 });
 //#endregion
 //#region src/features/AttachPicker.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$59 = {
+var _hoisted_1$61 = {
 	key: 0,
 	class: "model-picker-empty"
 };
-var _hoisted_2$51 = ["onClick", "onKeydown"];
-var _hoisted_3$47 = { class: "model-picker-row-top" };
-var _hoisted_4$39 = { class: "model-picker-row-name" };
-var _hoisted_5$32 = { class: "attach-picker-toggle" };
-var _hoisted_6$28 = {
+var _hoisted_2$53 = ["onClick", "onKeydown"];
+var _hoisted_3$49 = { class: "model-picker-row-top" };
+var _hoisted_4$41 = { class: "model-picker-row-name" };
+var _hoisted_5$34 = { class: "attach-picker-toggle" };
+var _hoisted_6$30 = {
 	key: 0,
 	class: "model-picker-row-sub"
 };
@@ -5691,14 +5691,14 @@ var AttachPicker_default = /* @__PURE__ */ defineComponent({
 			emit("toggle", r.key, r.attached, li);
 		}
 		return (_ctx, _cache) => {
-			return unref(attachRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$59, toDisplayString(unref(attachEmptyText)), 1)) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(unref(attachRows), (r) => {
+			return unref(attachRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$61, toDisplayString(unref(attachEmptyText)), 1)) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(unref(attachRows), (r) => {
 				return openBlock(), createElementBlock("li", {
 					key: r.key,
 					class: normalizeClass("model-picker-row attach-picker-row" + (r.attached ? " selected" : "")),
 					tabindex: "0",
 					onClick: ($event) => act($event, r),
 					onKeydown: [withKeys(withModifiers(($event) => act($event, r), ["prevent"]), ["enter"]), withKeys(withModifiers(($event) => act($event, r), ["prevent"]), ["space"])]
-				}, [createElementVNode("div", _hoisted_3$47, [createElementVNode("span", _hoisted_4$39, toDisplayString(r.name), 1), createElementVNode("span", _hoisted_5$32, toDisplayString(r.attached ? "−" : "+"), 1)]), r.meta ? (openBlock(), createElementBlock("div", _hoisted_6$28, toDisplayString(r.meta), 1)) : createCommentVNode("", true)], 42, _hoisted_2$51);
+				}, [createElementVNode("div", _hoisted_3$49, [createElementVNode("span", _hoisted_4$41, toDisplayString(r.name), 1), createElementVNode("span", _hoisted_5$34, toDisplayString(r.attached ? "−" : "+"), 1)]), r.meta ? (openBlock(), createElementBlock("div", _hoisted_6$30, toDisplayString(r.meta), 1)) : createCommentVNode("", true)], 42, _hoisted_2$53);
 			}), 128));
 		};
 	}
@@ -5708,19 +5708,19 @@ var AttachPicker_default = /* @__PURE__ */ defineComponent({
 var searchRows = ref([]);
 //#endregion
 //#region src/features/SearchResults.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$58 = {
+var _hoisted_1$60 = {
 	key: 0,
 	class: "search-empty"
 };
-var _hoisted_2$50 = [
+var _hoisted_2$52 = [
 	"data-room-id",
 	"data-room-name",
 	"data-message-id"
 ];
-var _hoisted_3$46 = { class: "search-result-head" };
-var _hoisted_4$38 = { class: "search-result-room" };
-var _hoisted_5$31 = { class: "search-result-time" };
-var _hoisted_6$27 = ["innerHTML"];
+var _hoisted_3$48 = { class: "search-result-head" };
+var _hoisted_4$40 = { class: "search-result-room" };
+var _hoisted_5$33 = { class: "search-result-time" };
+var _hoisted_6$29 = ["innerHTML"];
 var EMPTY$12 = "No matches";
 //#endregion
 //#region src/features/SearchResults.vue
@@ -5734,17 +5734,17 @@ var SearchResults_default = /* @__PURE__ */ defineComponent({
 		* the XSS guarantee, so it stays next to the escaping; this component never builds HTML.
 		*/
 		return (_ctx, _cache) => {
-			return unref(searchRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$58, toDisplayString(EMPTY$12))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(unref(searchRows), (r) => {
+			return unref(searchRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$60, toDisplayString(EMPTY$12))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(unref(searchRows), (r) => {
 				return openBlock(), createElementBlock("li", {
 					key: r.id,
 					class: "search-result",
 					"data-room-id": r.roomId,
 					"data-room-name": r.roomName,
 					"data-message-id": r.id
-				}, [createElementVNode("div", _hoisted_3$46, [createElementVNode("span", _hoisted_4$38, "#" + toDisplayString(r.roomName), 1), createElementVNode("span", _hoisted_5$31, toDisplayString(r.time), 1)]), createElementVNode("div", {
+				}, [createElementVNode("div", _hoisted_3$48, [createElementVNode("span", _hoisted_4$40, "#" + toDisplayString(r.roomName), 1), createElementVNode("span", _hoisted_5$33, toDisplayString(r.time), 1)]), createElementVNode("div", {
 					class: "search-result-snip",
 					innerHTML: r.snipHtml
-				}, null, 8, _hoisted_6$27)], 8, _hoisted_2$50);
+				}, null, 8, _hoisted_6$29)], 8, _hoisted_2$52);
 			}), 128));
 		};
 	}
@@ -5789,16 +5789,16 @@ function userCredsWords(provider) {
 }
 //#endregion
 //#region src/features/MembersList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$57 = {
+var _hoisted_1$59 = {
 	key: 0,
 	class: "member-empty"
 };
-var _hoisted_2$49 = { class: "member-name" };
-var _hoisted_3$45 = {
+var _hoisted_2$51 = { class: "member-name" };
+var _hoisted_3$47 = {
 	key: 0,
 	class: "member-tag"
 };
-var _hoisted_4$37 = {
+var _hoisted_4$39 = {
 	key: 1,
 	class: "member-handle"
 };
@@ -5822,11 +5822,11 @@ var MembersList_default = /* @__PURE__ */ defineComponent({
 		/** The member's identity, with a " (you)" suffix for the viewer. */
 		const label = (m) => m.identity === state.myIdentity ? `${m.identity} (you)` : m.identity;
 		return (_ctx, _cache) => {
-			return sorted.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$57, toDisplayString(EMPTY$11))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(sorted.value, (m) => {
+			return sorted.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$59, toDisplayString(EMPTY$11))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(sorted.value, (m) => {
 				return openBlock(), createElementBlock("li", { key: m.identity }, [
 					createElementVNode("span", { class: normalizeClass(`member-dot ${m.identity_type}`) }, null, 2),
-					createElementVNode("span", _hoisted_2$49, toDisplayString(label(m)), 1),
-					m.identity_type === "agent" ? (openBlock(), createElementBlock("span", _hoisted_3$45, "AGENT")) : m.handle ? (openBlock(), createElementBlock("span", _hoisted_4$37, "@" + toDisplayString(m.handle), 1)) : createCommentVNode("", true)
+					createElementVNode("span", _hoisted_2$51, toDisplayString(label(m)), 1),
+					m.identity_type === "agent" ? (openBlock(), createElementBlock("span", _hoisted_3$47, "AGENT")) : m.handle ? (openBlock(), createElementBlock("span", _hoisted_4$39, "@" + toDisplayString(m.handle), 1)) : createCommentVNode("", true)
 				]);
 			}), 128));
 		};
@@ -5834,24 +5834,24 @@ var MembersList_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/PermsUserList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$56 = {
+var _hoisted_1$58 = {
 	key: 0,
 	class: "perms-empty"
 };
-var _hoisted_2$48 = {
+var _hoisted_2$50 = {
 	key: 1,
 	class: "perms-empty",
 	style: { "padding": "16px" }
 };
-var _hoisted_3$44 = ["onClick", "onKeydown"];
-var _hoisted_4$36 = { class: "perms-user-name" };
-var _hoisted_5$30 = { class: "perms-name-text" };
-var _hoisted_6$26 = {
+var _hoisted_3$46 = ["onClick", "onKeydown"];
+var _hoisted_4$38 = { class: "perms-user-name" };
+var _hoisted_5$32 = { class: "perms-name-text" };
+var _hoisted_6$28 = {
 	key: 0,
 	class: "perms-you-tag"
 };
-var _hoisted_7$21 = { class: "perms-user-id-sub" };
-var _hoisted_8$15 = { class: "perms-user-summary" };
+var _hoisted_7$23 = { class: "perms-user-id-sub" };
+var _hoisted_8$17 = { class: "perms-user-summary" };
 var NO_USERS = "No users yet — anyone who authenticates will appear here.";
 var NO_MATCH$2 = "No users match.";
 //#endregion
@@ -5894,7 +5894,7 @@ var PermsUserList_default = /* @__PURE__ */ defineComponent({
 			}
 		}
 		return (_ctx, _cache) => {
-			return unref(usersError) ? (openBlock(), createElementBlock("li", _hoisted_1$56, toDisplayString(unref(usersError)), 1)) : rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_2$48, toDisplayString(emptyText.value), 1)) : (openBlock(true), createElementBlock(Fragment, { key: 2 }, renderList(rows.value, (u) => {
+			return unref(usersError) ? (openBlock(), createElementBlock("li", _hoisted_1$58, toDisplayString(unref(usersError)), 1)) : rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_2$50, toDisplayString(emptyText.value), 1)) : (openBlock(true), createElementBlock(Fragment, { key: 2 }, renderList(rows.value, (u) => {
 				return openBlock(), createElementBlock("li", mergeProps({
 					key: u.id,
 					tabindex: "0"
@@ -5902,10 +5902,10 @@ var PermsUserList_default = /* @__PURE__ */ defineComponent({
 					onClick: ($event) => activate(u),
 					onKeydown: ($event) => onKey($event, u)
 				}), [
-					createElementVNode("div", _hoisted_4$36, [createElementVNode("span", _hoisted_5$30, toDisplayString(unref(userDisplayName)(u)), 1), u.id === unref(permsMyUserId) ? (openBlock(), createElementBlock("span", _hoisted_6$26, "YOU")) : createCommentVNode("", true)]),
-					createElementVNode("div", _hoisted_7$21, toDisplayString(u.id), 1),
-					createElementVNode("div", _hoisted_8$15, toDisplayString(unref(userRoleSummary)(u)), 1)
-				], 16, _hoisted_3$44);
+					createElementVNode("div", _hoisted_4$38, [createElementVNode("span", _hoisted_5$32, toDisplayString(unref(userDisplayName)(u)), 1), u.id === unref(permsMyUserId) ? (openBlock(), createElementBlock("span", _hoisted_6$28, "YOU")) : createCommentVNode("", true)]),
+					createElementVNode("div", _hoisted_7$23, toDisplayString(u.id), 1),
+					createElementVNode("div", _hoisted_8$17, toDisplayString(unref(userRoleSummary)(u)), 1)
+				], 16, _hoisted_3$46);
 			}), 128));
 		};
 	}
@@ -6264,10 +6264,10 @@ async function saveHandle() {
 var agentMcpRows = ref([]);
 //#endregion
 //#region src/features/AgentMcpList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$55 = { class: "agent-mcp-info" };
-var _hoisted_2$47 = { class: "agent-mcp-name" };
-var _hoisted_3$43 = { class: "agent-mcp-meta" };
-var _hoisted_4$35 = [
+var _hoisted_1$57 = { class: "agent-mcp-info" };
+var _hoisted_2$49 = { class: "agent-mcp-name" };
+var _hoisted_3$45 = { class: "agent-mcp-meta" };
+var _hoisted_4$37 = [
 	"aria-label",
 	"innerHTML",
 	"onClick"
@@ -6289,34 +6289,34 @@ var AgentMcpList_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("li", {
 					key: s.id,
 					class: "agent-mcp-row"
-				}, [createElementVNode("div", _hoisted_1$55, [createElementVNode("span", _hoisted_2$47, toDisplayString(s.name), 1), createElementVNode("span", _hoisted_3$43, toDisplayString(s.transport) + " · " + toDisplayString(s.target), 1)]), createElementVNode("button", {
+				}, [createElementVNode("div", _hoisted_1$57, [createElementVNode("span", _hoisted_2$49, toDisplayString(s.name), 1), createElementVNode("span", _hoisted_3$45, toDisplayString(s.transport) + " · " + toDisplayString(s.target), 1)]), createElementVNode("button", {
 					type: "button",
 					class: "agent-mcp-remove",
 					"aria-label": `Detach ${s.name}`,
 					innerHTML: unref(xIcon),
 					onClick: ($event) => emit("detach", s)
-				}, null, 8, _hoisted_4$35)]);
+				}, null, 8, _hoisted_4$37)]);
 			}), 128);
 		};
 	}
 });
 //#endregion
 //#region src/features/McpList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$54 = {
+var _hoisted_1$56 = {
 	key: 0,
 	style: {
 		cursor: "default",
 		opacity: .6
 	}
 };
-var _hoisted_2$46 = [
+var _hoisted_2$48 = [
 	"data-mcp-id",
 	"onClick",
 	"onKeydown"
 ];
-var _hoisted_3$42 = ["title"];
-var _hoisted_4$34 = { class: "model-row-name" };
-var _hoisted_5$29 = {
+var _hoisted_3$44 = ["title"];
+var _hoisted_4$36 = { class: "model-row-name" };
+var _hoisted_5$31 = {
 	key: 1,
 	class: "model-row-uses"
 };
@@ -6342,7 +6342,7 @@ var McpList_default = /* @__PURE__ */ defineComponent({
 			return `Unreachable${h.reason ? `: ${h.reason}` : ""}`;
 		}
 		return (_ctx, _cache) => {
-			return sorted.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$54, toDisplayString(emptyMessage))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(sorted.value, (server) => {
+			return sorted.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$56, toDisplayString(emptyMessage))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(sorted.value, (server) => {
 				return openBlock(), createElementBlock("li", mergeProps({
 					key: server.id,
 					"data-mcp-id": server.id
@@ -6357,10 +6357,10 @@ var McpList_default = /* @__PURE__ */ defineComponent({
 						key: 0,
 						class: normalizeClass(`mcp-health-dot mcp-health-${server.health.status}`),
 						title: healthTitle(server.health)
-					}, null, 10, _hoisted_3$42)) : createCommentVNode("", true),
-					createElementVNode("span", _hoisted_4$34, toDisplayString(server.name), 1),
-					server.agents_assigned > 0 ? (openBlock(), createElementBlock("span", _hoisted_5$29, toDisplayString(server.agents_assigned) + "×", 1)) : createCommentVNode("", true)
-				], 16, _hoisted_2$46);
+					}, null, 10, _hoisted_3$44)) : createCommentVNode("", true),
+					createElementVNode("span", _hoisted_4$36, toDisplayString(server.name), 1),
+					server.agents_assigned > 0 ? (openBlock(), createElementBlock("span", _hoisted_5$31, toDisplayString(server.agents_assigned) + "×", 1)) : createCommentVNode("", true)
+				], 16, _hoisted_2$48);
 			}), 128));
 		};
 	}
@@ -6383,10 +6383,10 @@ var mcpCatalogPhase = ref("loading");
 var mcpCatalogQuery = ref("");
 //#endregion
 //#region src/features/McpSources.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$53 = { class: "skill-info" };
-var _hoisted_2$45 = { class: "skill-head" };
-var _hoisted_3$41 = { class: "skill-desc" };
-var _hoisted_4$33 = ["onClick"];
+var _hoisted_1$55 = { class: "skill-info" };
+var _hoisted_2$47 = { class: "skill-head" };
+var _hoisted_3$43 = { class: "skill-desc" };
+var _hoisted_4$35 = ["onClick"];
 var BUILT_IN$1 = "built-in";
 var REMOVED_NOTE = "Removed from Add MCP server";
 //#endregion
@@ -6423,13 +6423,13 @@ var McpSources_default = /* @__PURE__ */ defineComponent({
 					key: r.id,
 					class: normalizeClass(r.off ? "skill-source-row source-disabled" : "skill-source-row")
 				}, [
-					createElementVNode("div", _hoisted_1$53, [createElementVNode("div", _hoisted_2$45, [createVNode(OriginBadge_default, { origin: r.origin }, null, 8, ["origin"])]), createElementVNode("span", _hoisted_3$41, toDisplayString(r.meta), 1)]),
+					createElementVNode("div", _hoisted_1$55, [createElementVNode("div", _hoisted_2$47, [createVNode(OriginBadge_default, { origin: r.origin }, null, 8, ["origin"])]), createElementVNode("span", _hoisted_3$43, toDisplayString(r.meta), 1)]),
 					createElementVNode("span", { class: "skill-badge" }, toDisplayString(BUILT_IN$1)),
 					createElementVNode("button", {
 						type: "button",
 						class: normalizeClass(r.toggleClass),
 						onClick: ($event) => props.onToggle(r.id, r.off)
-					}, toDisplayString(r.toggleLabel), 11, _hoisted_4$33)
+					}, toDisplayString(r.toggleLabel), 11, _hoisted_4$35)
 				], 2);
 			}), 128);
 		};
@@ -6437,7 +6437,7 @@ var McpSources_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/McpProbeTools.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$52 = {
+var _hoisted_1$54 = {
 	key: 0,
 	class: "empty-note"
 };
@@ -6458,7 +6458,7 @@ var McpProbeTools_default = /* @__PURE__ */ defineComponent({
 			desc: t.description ? ` — ${t.description}` : ""
 		})));
 		return (_ctx, _cache) => {
-			return rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$52, toDisplayString(EMPTY$10))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(rows.value, (r) => {
+			return rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$54, toDisplayString(EMPTY$10))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(rows.value, (r) => {
 				return openBlock(), createElementBlock("li", { key: r.key }, [createElementVNode("b", null, toDisplayString(r.name), 1), r.desc ? (openBlock(), createElementBlock("span", {
 					key: 0,
 					style: DIM
@@ -6469,21 +6469,21 @@ var McpProbeTools_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/McpHardening.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$51 = {
+var _hoisted_1$53 = {
 	key: 1,
 	class: "mcp-drift-banner"
 };
-var _hoisted_2$44 = { key: 2 };
-var _hoisted_3$40 = { class: "form-label" };
-var _hoisted_4$32 = { class: "mcp-tools-list" };
-var _hoisted_5$28 = [
+var _hoisted_2$46 = { key: 2 };
+var _hoisted_3$42 = { class: "form-label" };
+var _hoisted_4$34 = { class: "mcp-tools-list" };
+var _hoisted_5$30 = [
 	"checked",
 	"data-tool",
 	"disabled"
 ];
-var _hoisted_6$25 = ["title"];
-var _hoisted_7$20 = ["disabled"];
-var _hoisted_8$14 = {
+var _hoisted_6$27 = ["title"];
+var _hoisted_7$22 = ["disabled"];
+var _hoisted_8$16 = {
 	key: 4,
 	class: "room-prime-note"
 };
@@ -6547,7 +6547,7 @@ var McpHardening_default = /* @__PURE__ */ defineComponent({
 					key: 0,
 					class: normalizeClass(`room-prime-note mcp-health-text-${s.value.health.status}`)
 				}, toDisplayString(healthText.value), 3)) : createCommentVNode("", true),
-				s.value.drift ? (openBlock(), createElementBlock("div", _hoisted_1$51, [
+				s.value.drift ? (openBlock(), createElementBlock("div", _hoisted_1$53, [
 					createElementVNode("div", { style: BOLD }, toDisplayString(DRIFT_HEAD)),
 					createElementVNode("div", null, toDisplayString(driftParts.value.join(" · ")), 1),
 					unref(isWorkspaceAdminView) ? (openBlock(), createElementBlock("button", {
@@ -6557,9 +6557,9 @@ var McpHardening_default = /* @__PURE__ */ defineComponent({
 						onClick: _cache[0] || (_cache[0] = ($event) => props.onApprove())
 					}, toDisplayString(APPROVE))) : createCommentVNode("", true)
 				])) : createCommentVNode("", true),
-				tools.value ? (openBlock(), createElementBlock("div", _hoisted_2$44, [
-					createElementVNode("span", _hoisted_3$40, "Tools (" + toDisplayString(tools.value.length) + ")", 1),
-					createElementVNode("div", _hoisted_4$32, [(openBlock(true), createElementBlock(Fragment, null, renderList(tools.value, (t) => {
+				tools.value ? (openBlock(), createElementBlock("div", _hoisted_2$46, [
+					createElementVNode("span", _hoisted_3$42, "Tools (" + toDisplayString(tools.value.length) + ")", 1),
+					createElementVNode("div", _hoisted_4$34, [(openBlock(true), createElementBlock(Fragment, null, renderList(tools.value, (t) => {
 						return openBlock(), createElementBlock("label", {
 							key: t.name,
 							class: "mcp-tool-row"
@@ -6568,7 +6568,7 @@ var McpHardening_default = /* @__PURE__ */ defineComponent({
 							checked: t.checked,
 							"data-tool": t.name,
 							disabled: !unref(isWorkspaceAdminView) || void 0
-						}, null, 8, _hoisted_5$28), createElementVNode("span", { title: t.desc }, toDisplayString(t.name), 9, _hoisted_6$25)]);
+						}, null, 8, _hoisted_5$30), createElementVNode("span", { title: t.desc }, toDisplayString(t.name), 9, _hoisted_6$27)]);
 					}), 128))]),
 					unref(isWorkspaceAdminView) ? (openBlock(), createElementBlock("button", {
 						key: 0,
@@ -6583,24 +6583,24 @@ var McpHardening_default = /* @__PURE__ */ defineComponent({
 					class: "btn btn-ghost",
 					disabled: unref(oauthBusy) || void 0,
 					onClick: _cache[2] || (_cache[2] = ($event) => props.onOauth())
-				}, toDisplayString(oauthLabel.value), 9, _hoisted_7$20)) : createCommentVNode("", true),
-				s.value.auth ? (openBlock(), createElementBlock("p", _hoisted_8$14, toDisplayString(authNote.value), 1)) : createCommentVNode("", true)
+				}, toDisplayString(oauthLabel.value), 9, _hoisted_7$22)) : createCommentVNode("", true),
+				s.value.auth ? (openBlock(), createElementBlock("p", _hoisted_8$16, toDisplayString(authNote.value), 1)) : createCommentVNode("", true)
 			], 64)) : createCommentVNode("", true);
 		};
 	}
 });
 //#endregion
 //#region src/features/McpCatalog.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$50 = {
+var _hoisted_1$52 = {
 	key: 0,
 	class: "skills-empty"
 };
-var _hoisted_2$43 = { class: "mcp-catalog-head" };
-var _hoisted_3$39 = { class: "mcp-catalog-title" };
-var _hoisted_4$31 = { class: "mcp-catalog-desc" };
-var _hoisted_5$27 = { class: "mcp-catalog-target" };
-var _hoisted_6$24 = { class: "mcp-catalog-actions" };
-var _hoisted_7$19 = ["onClick"];
+var _hoisted_2$45 = { class: "mcp-catalog-head" };
+var _hoisted_3$41 = { class: "mcp-catalog-title" };
+var _hoisted_4$33 = { class: "mcp-catalog-desc" };
+var _hoisted_5$29 = { class: "mcp-catalog-target" };
+var _hoisted_6$26 = { class: "mcp-catalog-actions" };
+var _hoisted_7$21 = ["onClick"];
 var USE = "Use";
 //#endregion
 //#region src/features/McpCatalog.vue
@@ -6616,7 +6616,7 @@ var McpCatalog_default = /* @__PURE__ */ defineComponent({
 		const props = __props;
 		const waitLabel = computed(() => mcpCatalogQuery.value ? "Searching…" : "Loading catalog…");
 		return (_ctx, _cache) => {
-			return unref(mcpCatalogPhase) === "loading" ? (openBlock(), createElementBlock("li", _hoisted_1$50, [_cache[0] || (_cache[0] = createElementVNode("span", {
+			return unref(mcpCatalogPhase) === "loading" ? (openBlock(), createElementBlock("li", _hoisted_1$52, [_cache[0] || (_cache[0] = createElementVNode("span", {
 				class: "btn-spinner",
 				"aria-hidden": "true"
 			}, null, -1)), createTextVNode(toDisplayString(waitLabel.value), 1)])) : unref(mcpCatalogPhase) === "ready" ? (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(unref(mcpCatalog), (s, i) => {
@@ -6624,21 +6624,21 @@ var McpCatalog_default = /* @__PURE__ */ defineComponent({
 					key: i,
 					class: "mcp-catalog-row"
 				}, [
-					createElementVNode("div", _hoisted_2$43, [
-						createElementVNode("span", _hoisted_3$39, toDisplayString(s.title), 1),
+					createElementVNode("div", _hoisted_2$45, [
+						createElementVNode("span", _hoisted_3$41, toDisplayString(s.title), 1),
 						s.origin ? (openBlock(), createBlock(OriginBadge_default, {
 							key: 0,
 							origin: s.origin
 						}, null, 8, ["origin"])) : createCommentVNode("", true),
 						createElementVNode("span", { class: normalizeClass(s.kindClass) }, toDisplayString(s.kindText), 3)
 					]),
-					createElementVNode("div", _hoisted_4$31, toDisplayString(s.desc), 1),
-					createElementVNode("div", _hoisted_5$27, toDisplayString(s.target), 1),
-					createElementVNode("div", _hoisted_6$24, [createElementVNode("button", {
+					createElementVNode("div", _hoisted_4$33, toDisplayString(s.desc), 1),
+					createElementVNode("div", _hoisted_5$29, toDisplayString(s.target), 1),
+					createElementVNode("div", _hoisted_6$26, [createElementVNode("button", {
 						type: "button",
 						class: "btn btn-secondary",
 						onClick: ($event) => props.onUse(s.raw)
-					}, toDisplayString(USE), 8, _hoisted_7$19)])
+					}, toDisplayString(USE), 8, _hoisted_7$21)])
 				]);
 			}), 128)) : createCommentVNode("", true);
 		};
@@ -7214,7 +7214,7 @@ function firstUnreadIndex(msgs, lastReadAt, me) {
 }
 //#endregion
 //#region src/features/ThreadNameInput.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$49 = ["aria-label"];
+var _hoisted_1$51 = ["aria-label"];
 //#endregion
 //#region src/features/ThreadNameInput.vue
 var ThreadNameInput_default = /* @__PURE__ */ defineComponent({
@@ -7284,14 +7284,14 @@ var ThreadNameInput_default = /* @__PURE__ */ defineComponent({
 				onClick: _cache[0] || (_cache[0] = withModifiers(() => {}, ["stop"])),
 				onKeydown: onKey,
 				onBlur: _cache[1] || (_cache[1] = ($event) => __props.blurSubmits ? submit() : cancel())
-			}), null, 16, _hoisted_1$49);
+			}), null, 16, _hoisted_1$51);
 		};
 	}
 });
 //#endregion
 //#region src/features/ThreadSwitcher.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$48 = ["onClick"];
-var _hoisted_2$42 = { class: "thread-switcher-label" };
+var _hoisted_1$50 = ["onClick"];
+var _hoisted_2$44 = { class: "thread-switcher-label" };
 var NEW_THREAD$2 = "+ New thread";
 //#endregion
 //#region src/features/ThreadSwitcher.vue
@@ -7325,7 +7325,7 @@ var ThreadSwitcher_default = /* @__PURE__ */ defineComponent({
 					key: 0,
 					class: "thread-switcher-dot",
 					style: normalizeStyle({ background: r.color })
-				}, null, 4)) : createCommentVNode("", true), createElementVNode("span", _hoisted_2$42, toDisplayString(r.label), 1)], 10, _hoisted_1$48);
+				}, null, 4)) : createCommentVNode("", true), createElementVNode("span", _hoisted_2$44, toDisplayString(r.label), 1)], 10, _hoisted_1$50);
 			}), 128)), creating.value ? (openBlock(), createBlock(ThreadNameInput_default, {
 				key: 0,
 				"aria-label": "New thread name",
@@ -7607,9 +7607,9 @@ var threadActions = {
 };
 //#endregion
 //#region src/features/UndoTimer.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$47 = { class: "undo-timer" };
-var _hoisted_2$41 = { class: "undo-timer-label" };
-var _hoisted_3$38 = { class: "undo-timer-bar" };
+var _hoisted_1$49 = { class: "undo-timer" };
+var _hoisted_2$43 = { class: "undo-timer-label" };
+var _hoisted_3$40 = { class: "undo-timer-bar" };
 var UNDO = "Undo";
 //#endregion
 //#region src/features/UndoTimer.vue
@@ -7647,9 +7647,9 @@ var UndoTimer_default = /* @__PURE__ */ defineComponent({
 			emit("undo");
 		}
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock("span", _hoisted_1$47, [
-				createElementVNode("span", _hoisted_2$41, toDisplayString(__props.label), 1),
-				createElementVNode("span", _hoisted_3$38, [createElementVNode("span", {
+			return openBlock(), createElementBlock("span", _hoisted_1$49, [
+				createElementVNode("span", _hoisted_2$43, toDisplayString(__props.label), 1),
+				createElementVNode("span", _hoisted_3$40, [createElementVNode("span", {
 					ref_key: "fill",
 					ref: fill
 				}, null, 512)]),
@@ -7664,33 +7664,33 @@ var UndoTimer_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/ThreadRows.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$46 = {
+var _hoisted_1$48 = {
 	key: 0,
 	class: "thread-loading"
 };
-var _hoisted_2$40 = ["data-thread-id"];
-var _hoisted_3$37 = [
+var _hoisted_2$42 = ["data-thread-id"];
+var _hoisted_3$39 = [
 	"data-thread-id",
 	"aria-label",
 	"onClick",
 	"onKeydown"
 ];
-var _hoisted_4$30 = {
+var _hoisted_4$32 = {
 	class: "thread-glyph",
 	"aria-hidden": "true"
 };
-var _hoisted_5$26 = { class: "thread-label" };
-var _hoisted_6$23 = {
+var _hoisted_5$28 = { class: "thread-label" };
+var _hoisted_6$25 = {
 	key: 0,
 	class: "unread-badge thread-unread"
 };
-var _hoisted_7$18 = ["onClick", "innerHTML"];
-var _hoisted_8$13 = {
+var _hoisted_7$20 = ["onClick", "innerHTML"];
+var _hoisted_8$15 = {
 	key: 3,
 	class: "thread-menu"
 };
-var _hoisted_9$11 = ["onClick"];
-var _hoisted_10$11 = ["onClick"];
+var _hoisted_9$13 = ["onClick"];
+var _hoisted_10$13 = ["onClick"];
 var RENAME = "Rename";
 var DELETE = "Delete";
 /** Read after the count by screen readers ("3 unread"). */
@@ -7738,7 +7738,7 @@ var ThreadRows_default = /* @__PURE__ */ defineComponent({
 			if (e.target?.closest("button")) e.stopPropagation();
 		}
 		return (_ctx, _cache) => {
-			return rows.value === null ? (openBlock(), createElementBlock("div", _hoisted_1$46, [..._cache[1] || (_cache[1] = [createElementVNode("span", {
+			return rows.value === null ? (openBlock(), createElementBlock("div", _hoisted_1$48, [..._cache[1] || (_cache[1] = [createElementVNode("span", {
 				class: "btn-spinner",
 				"aria-hidden": "true"
 			}, null, -1), createTextVNode("Loading…", -1)])])) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (t, i) => {
@@ -7757,7 +7757,7 @@ var ThreadRows_default = /* @__PURE__ */ defineComponent({
 					"value",
 					"onSubmit",
 					"onCancel"
-				])], 12, _hoisted_2$40)) : (openBlock(), createElementBlock("div", mergeProps({
+				])], 12, _hoisted_2$42)) : (openBlock(), createElementBlock("div", mergeProps({
 					key: 1,
 					class: [__props.active && t.thread_id === unref(state).currentThread ? "thread-row active" : "thread-row", unref(threadUndo)[t.thread_id] ? "deleting" : ""],
 					"data-thread-id": t.thread_id,
@@ -7790,9 +7790,9 @@ var ThreadRows_default = /* @__PURE__ */ defineComponent({
 					"onCommit",
 					"onUndo"
 				])) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [
-					createElementVNode("span", _hoisted_4$30, toDisplayString(__props.active ? glyph(t.kind) : "#"), 1),
-					createElementVNode("span", _hoisted_5$26, toDisplayString(t.title ?? ""), 1),
-					__props.active && t.thread_id !== unref(state).currentThread && unref(state).threadUnread.has(t.thread_id) ? (openBlock(), createElementBlock("span", _hoisted_6$23, [createTextVNode(toDisplayString(unref(formatUnreadCount)(unref(state).threadUnread.get(t.thread_id))), 1), createElementVNode("span", { class: "visually-hidden" }, toDisplayString(UNREAD$1))])) : createCommentVNode("", true),
+					createElementVNode("span", _hoisted_4$32, toDisplayString(__props.active ? glyph(t.kind) : "#"), 1),
+					createElementVNode("span", _hoisted_5$28, toDisplayString(t.title ?? ""), 1),
+					__props.active && t.thread_id !== unref(state).currentThread && unref(state).threadUnread.has(t.thread_id) ? (openBlock(), createElementBlock("span", _hoisted_6$25, [createTextVNode(toDisplayString(unref(formatUnreadCount)(unref(state).threadUnread.get(t.thread_id))), 1), createElementVNode("span", { class: "visually-hidden" }, toDisplayString(UNREAD$1))])) : createCommentVNode("", true),
 					__props.active && t.kind !== "main" ? (openBlock(), createElementBlock("button", {
 						key: 1,
 						class: "thread-kebab",
@@ -7800,7 +7800,7 @@ var ThreadRows_default = /* @__PURE__ */ defineComponent({
 						"aria-label": "Thread actions",
 						onClick: withModifiers(($event) => __props.onMenu(t.thread_id), ["stop"]),
 						innerHTML: unref(KEBAB)
-					}, null, 8, _hoisted_7$18)) : createCommentVNode("", true),
+					}, null, 8, _hoisted_7$20)) : createCommentVNode("", true),
 					__props.active && !unref(state).threadCreating && i === rows.value.length - 1 ? (openBlock(), createElementBlock("button", {
 						key: 2,
 						class: "thread-add-inline",
@@ -7809,12 +7809,12 @@ var ThreadRows_default = /* @__PURE__ */ defineComponent({
 						"aria-label": NEW_THREAD$1,
 						onClick: _cache[0] || (_cache[0] = withModifiers((...args) => __props.onStartCreate && __props.onStartCreate(...args), ["stop"]))
 					}, toDisplayString(PLUS$1))) : createCommentVNode("", true),
-					__props.active && unref(openThreadMenuId) === t.thread_id ? (openBlock(), createElementBlock("div", _hoisted_8$13, [createElementVNode("button", { onClick: withModifiers(($event) => __props.onStartRename(t.thread_id), ["stop"]) }, toDisplayString(RENAME), 8, _hoisted_9$11), t.can_delete ?? unref(state).isOwnerView ? (openBlock(), createElementBlock("button", {
+					__props.active && unref(openThreadMenuId) === t.thread_id ? (openBlock(), createElementBlock("div", _hoisted_8$15, [createElementVNode("button", { onClick: withModifiers(($event) => __props.onStartRename(t.thread_id), ["stop"]) }, toDisplayString(RENAME), 8, _hoisted_9$13), t.can_delete ?? unref(state).isOwnerView ? (openBlock(), createElementBlock("button", {
 						key: 0,
 						class: "danger",
 						onClick: withModifiers(($event) => __props.onDelete(t.thread_id), ["stop"])
-					}, toDisplayString(DELETE), 8, _hoisted_10$11)) : createCommentVNode("", true)])) : createCommentVNode("", true)
-				], 64))], 16, _hoisted_3$37))], 64);
+					}, toDisplayString(DELETE), 8, _hoisted_10$13)) : createCommentVNode("", true)])) : createCommentVNode("", true)
+				], 64))], 16, _hoisted_3$39))], 64);
 			}), 128)), __props.active && unref(state).threadCreating ? (openBlock(), createBlock(ThreadNameInput_default, {
 				key: 0,
 				"aria-label": "New thread name",
@@ -7826,16 +7826,16 @@ var ThreadRows_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/RoomList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$45 = {
+var _hoisted_1$47 = {
 	key: 0,
 	class: "room-list-empty"
 };
-var _hoisted_2$39 = {
+var _hoisted_2$41 = {
 	key: 0,
 	class: "room-divider",
 	role: "separator"
 };
-var _hoisted_3$36 = [
+var _hoisted_3$38 = [
 	"data-room-id",
 	"draggable",
 	"onClick",
@@ -7845,43 +7845,43 @@ var _hoisted_3$36 = [
 	"onDragleave",
 	"onDrop"
 ];
-var _hoisted_4$29 = [
+var _hoisted_4$31 = [
 	"title",
 	"aria-label",
 	"aria-expanded",
 	"onClick"
 ];
-var _hoisted_5$25 = { class: "room-row-name" };
-var _hoisted_6$22 = {
+var _hoisted_5$27 = { class: "room-row-name" };
+var _hoisted_6$24 = {
 	key: 1,
 	class: "mention-dot",
 	title: "You were mentioned here"
 };
-var _hoisted_7$17 = {
+var _hoisted_7$19 = {
 	key: 2,
 	class: "unread-badge"
 };
-var _hoisted_8$12 = ["innerHTML"];
-var _hoisted_9$10 = {
+var _hoisted_8$14 = ["innerHTML"];
+var _hoisted_9$12 = {
 	key: 4,
 	class: "thread-list"
 };
-var _hoisted_10$10 = { class: "room-actions" };
-var _hoisted_11$8 = ["onClick", "innerHTML"];
-var _hoisted_12$8 = ["aria-label", "onClick"];
-var _hoisted_13$8 = {
+var _hoisted_10$12 = { class: "room-actions" };
+var _hoisted_11$10 = ["onClick", "innerHTML"];
+var _hoisted_12$10 = ["aria-label", "onClick"];
+var _hoisted_13$10 = {
 	key: 5,
 	class: "thread-list"
 };
-var _hoisted_14$8 = {
+var _hoisted_14$10 = {
 	key: 6,
 	class: "room-menu"
 };
-var _hoisted_15$8 = ["onClick"];
-var _hoisted_16$8 = ["onClick"];
-var _hoisted_17$7 = ["onClick"];
-var _hoisted_18$6 = ["onClick"];
-var _hoisted_19$5 = ["onClick"];
+var _hoisted_15$10 = ["onClick"];
+var _hoisted_16$10 = ["onClick"];
+var _hoisted_17$9 = ["onClick"];
+var _hoisted_18$7 = ["onClick"];
+var _hoisted_19$6 = ["onClick"];
 var PLUS = "+";
 var NEW_THREAD = "New thread";
 var MENTION = "@";
@@ -8038,8 +8038,8 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 		/** The active room's "+" moves onto the last thread row once threads exist. */
 		const activeHasThreads = computed(() => (state.threadCache.get(state.currentRoom) ?? []).some((t) => t.kind !== "main"));
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [rendered.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$45, toDisplayString(unref(roomFilter).trim() ? NO_MATCH$1 : EMPTY$9), 1)) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(rendered.value, (room) => {
-				return openBlock(), createElementBlock(Fragment, { key: room.id }, [showDivider.value && room.id === groups.value.unpinned[0]?.id ? (openBlock(), createElementBlock("li", _hoisted_2$39)) : createCommentVNode("", true), createElementVNode("li", mergeProps({
+			return openBlock(), createElementBlock(Fragment, null, [rendered.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$47, toDisplayString(unref(roomFilter).trim() ? NO_MATCH$1 : EMPTY$9), 1)) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(rendered.value, (room) => {
+				return openBlock(), createElementBlock(Fragment, { key: room.id }, [showDivider.value && room.id === groups.value.unpinned[0]?.id ? (openBlock(), createElementBlock("li", _hoisted_2$41)) : createCommentVNode("", true), createElementVNode("li", mergeProps({
 					"data-room-id": room.id,
 					draggable: !room.archived || void 0,
 					role: "button",
@@ -8062,17 +8062,17 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 						"aria-label": `${expanded(room) ? "Collapse" : "Show"} ${room.thread_count} thread${room.thread_count === 1 ? "" : "s"}`,
 						"aria-expanded": expanded(room) ? "true" : "false",
 						onClick: withModifiers(($event) => __props.onToggleThreads(room.id), ["stop"])
-					}, toDisplayString(expanded(room) ? "▾" : "▸"), 9, _hoisted_4$29)) : createCommentVNode("", true),
-					createElementVNode("span", _hoisted_5$25, "#" + toDisplayString(room.id), 1),
-					unref(state).mentionedRooms.has(room.id) ? (openBlock(), createElementBlock("span", _hoisted_6$22, toDisplayString(MENTION))) : createCommentVNode("", true),
-					unref(state).unreadRooms.has(room.id) ? (openBlock(), createElementBlock("span", _hoisted_7$17, [createTextVNode(toDisplayString(unref(formatUnreadCount)(unref(state).unreadRooms.get(room.id))), 1), createElementVNode("span", { class: "visually-hidden" }, toDisplayString(UNREAD))])) : createCommentVNode("", true),
+					}, toDisplayString(expanded(room) ? "▾" : "▸"), 9, _hoisted_4$31)) : createCommentVNode("", true),
+					createElementVNode("span", _hoisted_5$27, "#" + toDisplayString(room.id), 1),
+					unref(state).mentionedRooms.has(room.id) ? (openBlock(), createElementBlock("span", _hoisted_6$24, toDisplayString(MENTION))) : createCommentVNode("", true),
+					unref(state).unreadRooms.has(room.id) ? (openBlock(), createElementBlock("span", _hoisted_7$19, [createTextVNode(toDisplayString(unref(formatUnreadCount)(unref(state).unreadRooms.get(room.id))), 1), createElementVNode("span", { class: "visually-hidden" }, toDisplayString(UNREAD))])) : createCommentVNode("", true),
 					room.pinned ? (openBlock(), createElementBlock("span", {
 						key: 3,
 						class: "room-pin-indicator",
 						"aria-label": "Pinned",
 						innerHTML: unref(PIN_ICON)
-					}, null, 8, _hoisted_8$12)) : createCommentVNode("", true),
-					adding(room) ? (openBlock(), createElementBlock("div", _hoisted_9$10, [createVNode(ThreadNameInput_default, {
+					}, null, 8, _hoisted_8$14)) : createCommentVNode("", true),
+					adding(room) ? (openBlock(), createElementBlock("div", _hoisted_9$12, [createVNode(ThreadNameInput_default, {
 						"aria-label": `New thread in #${room.id}`,
 						onSubmit: (title) => __props.onCreateThread(room.id, title),
 						onCancel: __props.onCancelAddThread
@@ -8081,20 +8081,20 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 						"onSubmit",
 						"onCancel"
 					])])) : createCommentVNode("", true),
-					createElementVNode("span", _hoisted_10$10, [createElementVNode("button", {
+					createElementVNode("span", _hoisted_10$12, [createElementVNode("button", {
 						class: "room-kebab",
 						type: "button",
 						"aria-label": "Room actions",
 						onClick: withModifiers(($event) => toggleMenu(room), ["stop"]),
 						innerHTML: unref(KEBAB)
-					}, null, 8, _hoisted_11$8), room.id !== unref(state).currentRoom && !adding(room) ? (openBlock(), createElementBlock("button", {
+					}, null, 8, _hoisted_11$10), room.id !== unref(state).currentRoom && !adding(room) ? (openBlock(), createElementBlock("button", {
 						key: 0,
 						class: "thread-add-inline",
 						type: "button",
 						title: NEW_THREAD,
 						"aria-label": `New thread in #${room.id}`,
 						onClick: withModifiers(($event) => __props.onStartAddThread(room.id), ["stop"])
-					}, toDisplayString(PLUS), 8, _hoisted_12$8)) : room.id === unref(state).currentRoom && expanded(room) && !unref(state).threadCreating && !activeHasThreads.value ? (openBlock(), createElementBlock("button", {
+					}, toDisplayString(PLUS), 8, _hoisted_12$10)) : room.id === unref(state).currentRoom && expanded(room) && !unref(state).threadCreating && !activeHasThreads.value ? (openBlock(), createElementBlock("button", {
 						key: 1,
 						class: "thread-add-inline",
 						type: "button",
@@ -8102,7 +8102,7 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 						"aria-label": "New thread",
 						onClick: _cache[0] || (_cache[0] = withModifiers(($event) => __props.thread.startCreate(), ["stop"]))
 					}, toDisplayString(PLUS))) : createCommentVNode("", true)]),
-					expanded(room) ? (openBlock(), createElementBlock("div", _hoisted_13$8, [createVNode(ThreadRows_default, {
+					expanded(room) ? (openBlock(), createElementBlock("div", _hoisted_13$10, [createVNode(ThreadRows_default, {
 						"room-id": room.id,
 						active: room.id === unref(state).currentRoom,
 						color: __props.color,
@@ -8133,7 +8133,7 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 						"undo-seconds",
 						"on-undo-delete"
 					])])) : createCommentVNode("", true),
-					unref(openMenuRoomId) === room.id ? (openBlock(), createElementBlock("div", _hoisted_14$8, [
+					unref(openMenuRoomId) === room.id ? (openBlock(), createElementBlock("div", _hoisted_14$10, [
 						room.pinned || unref(coarsePointer) ? (openBlock(), createElementBlock("button", {
 							key: 0,
 							type: "button",
@@ -8141,7 +8141,7 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 								openMenuRoomId.value = null;
 								__props.onPin(room.id, !room.pinned);
 							}, ["stop"])
-						}, toDisplayString(room.pinned ? "Unpin" : "Pin"), 9, _hoisted_15$8)) : createCommentVNode("", true),
+						}, toDisplayString(room.pinned ? "Unpin" : "Pin"), 9, _hoisted_15$10)) : createCommentVNode("", true),
 						room.pinned && groups.value.pinned.length > 1 && pinIndex(room.id) > 0 ? (openBlock(), createElementBlock("button", {
 							key: 1,
 							type: "button",
@@ -8149,7 +8149,7 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 								openMenuRoomId.value = null;
 								__props.onMovePin(room.id, -1);
 							}, ["stop"])
-						}, toDisplayString(MOVE_UP), 8, _hoisted_16$8)) : createCommentVNode("", true),
+						}, toDisplayString(MOVE_UP), 8, _hoisted_16$10)) : createCommentVNode("", true),
 						room.pinned && groups.value.pinned.length > 1 && pinIndex(room.id) < groups.value.pinned.length - 1 ? (openBlock(), createElementBlock("button", {
 							key: 2,
 							type: "button",
@@ -8157,14 +8157,14 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 								openMenuRoomId.value = null;
 								__props.onMovePin(room.id, 1);
 							}, ["stop"])
-						}, toDisplayString(MOVE_DOWN), 8, _hoisted_17$7)) : createCommentVNode("", true),
+						}, toDisplayString(MOVE_DOWN), 8, _hoisted_17$9)) : createCommentVNode("", true),
 						createElementVNode("button", {
 							type: "button",
 							onClick: withModifiers(($event) => {
 								openMenuRoomId.value = null;
 								__props.onHide(room.id, !room.hidden);
 							}, ["stop"])
-						}, toDisplayString(room.hidden ? "Unhide" : "Hide"), 9, _hoisted_18$6),
+						}, toDisplayString(room.hidden ? "Unhide" : "Hide"), 9, _hoisted_18$7),
 						room.canArchive ? (openBlock(), createElementBlock("button", {
 							key: 3,
 							type: "button",
@@ -8172,9 +8172,9 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 								openMenuRoomId.value = null;
 								__props.onArchive(room.id, !room.archived);
 							}, ["stop"])
-						}, toDisplayString(room.archived ? "Unarchive" : "Archive"), 9, _hoisted_19$5)) : createCommentVNode("", true)
+						}, toDisplayString(room.archived ? "Unarchive" : "Archive"), 9, _hoisted_19$6)) : createCommentVNode("", true)
 					])) : createCommentVNode("", true)
-				], 16, _hoisted_3$36)], 64);
+				], 16, _hoisted_3$38)], 64);
 			}), 128))], 64);
 		};
 	}
@@ -9134,9 +9134,9 @@ var slashRows = ref([]);
 var slashActiveIndex = ref(0);
 //#endregion
 //#region src/features/SlashMenu.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$44 = ["onMousedown"];
-var _hoisted_2$38 = { class: "slash-cmd" };
-var _hoisted_3$35 = { class: "slash-desc" };
+var _hoisted_1$46 = ["onMousedown"];
+var _hoisted_2$40 = { class: "slash-cmd" };
+var _hoisted_3$37 = { class: "slash-desc" };
 //#endregion
 //#region src/features/SlashMenu.vue
 var SlashMenu_default = /* @__PURE__ */ defineComponent({
@@ -9162,7 +9162,7 @@ var SlashMenu_default = /* @__PURE__ */ defineComponent({
 					class: normalizeClass(i === unref(slashActiveIndex) ? "slash-item active" : "slash-item"),
 					role: "option",
 					onMousedown: ($event) => pick($event, i)
-				}, [createElementVNode("span", _hoisted_2$38, toDisplayString(c.cmd), 1), createElementVNode("span", _hoisted_3$35, toDisplayString(c.desc), 1)], 42, _hoisted_1$44);
+				}, [createElementVNode("span", _hoisted_2$40, toDisplayString(c.cmd), 1), createElementVNode("span", _hoisted_3$37, toDisplayString(c.desc), 1)], 42, _hoisted_1$46);
 			}), 128);
 		};
 	}
@@ -9611,12 +9611,12 @@ var probeSingle = ref(false);
 var probeEmptyNote = ref("");
 //#endregion
 //#region src/features/ProbeResults.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$43 = {
+var _hoisted_1$45 = {
 	key: 0,
 	class: "empty-note"
 };
-var _hoisted_2$37 = ["value", "checked"];
-var _hoisted_3$34 = ["data-model-id"];
+var _hoisted_2$39 = ["value", "checked"];
+var _hoisted_3$36 = ["data-model-id"];
 var NAME_PLACEHOLDER = "Display name";
 //#endregion
 //#region src/features/ProbeResults.vue
@@ -9634,18 +9634,18 @@ var ProbeResults_default = /* @__PURE__ */ defineComponent({
 			if (el && el.value === "") el.value = name;
 		}
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [unref(probeRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$43, toDisplayString(unref(probeEmptyNote)), 1)) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(probeRows), (r) => {
+			return openBlock(), createElementBlock(Fragment, null, [unref(probeRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$45, toDisplayString(unref(probeEmptyNote)), 1)) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(probeRows), (r) => {
 				return openBlock(), createElementBlock("li", { key: r.modelId }, [createElementVNode("label", null, [createElementVNode("input", {
 					type: "checkbox",
 					value: r.modelId,
 					checked: unref(probeSingle)
-				}, null, 8, _hoisted_2$37), createElementVNode("span", { style: FLEX }, toDisplayString(r.modelId), 1)]), createElementVNode("input", {
+				}, null, 8, _hoisted_2$39), createElementVNode("span", { style: FLEX }, toDisplayString(r.modelId), 1)]), createElementVNode("input", {
 					type: "text",
 					ref_for: true,
 					ref: (el) => setName(el, r.name),
 					placeholder: NAME_PLACEHOLDER,
 					"data-model-id": r.modelId
-				}, null, 8, _hoisted_3$34)]);
+				}, null, 8, _hoisted_3$36)]);
 			}), 128))], 64);
 		};
 	}
@@ -9660,15 +9660,15 @@ var pickerSelected = ref("");
 var pickerEmptyNote = ref("");
 //#endregion
 //#region src/features/ModelPicker.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$42 = [
+var _hoisted_1$44 = [
 	"data-model-id",
 	"onClick",
 	"onKeydown"
 ];
-var _hoisted_2$36 = { class: "model-picker-row-top" };
-var _hoisted_3$33 = { class: "model-picker-row-name" };
-var _hoisted_4$28 = { class: "model-picker-row-sub" };
-var _hoisted_5$24 = {
+var _hoisted_2$38 = { class: "model-picker-row-top" };
+var _hoisted_3$35 = { class: "model-picker-row-name" };
+var _hoisted_4$30 = { class: "model-picker-row-sub" };
+var _hoisted_5$26 = {
 	key: 0,
 	class: "model-picker-empty"
 };
@@ -9705,7 +9705,7 @@ var ModelPicker_default = /* @__PURE__ */ defineComponent({
 					"data-model-id": r.id || "",
 					onClick: ($event) => props.onPick(r.id || ""),
 					onKeydown: ($event) => onKey($event, r.id || "")
-				}, [createElementVNode("div", _hoisted_2$36, [createElementVNode("span", _hoisted_3$33, toDisplayString(r.name), 1), createElementVNode("span", { class: normalizeClass(r.badgeClass) }, toDisplayString(r.badgeText), 3)]), createElementVNode("div", _hoisted_4$28, toDisplayString(r.sub), 1)], 42, _hoisted_1$42), r.isDefault && unref(pickerEmptyNote) ? (openBlock(), createElementBlock("li", _hoisted_5$24, toDisplayString(unref(pickerEmptyNote)), 1)) : createCommentVNode("", true)], 64);
+				}, [createElementVNode("div", _hoisted_2$38, [createElementVNode("span", _hoisted_3$35, toDisplayString(r.name), 1), createElementVNode("span", { class: normalizeClass(r.badgeClass) }, toDisplayString(r.badgeText), 3)]), createElementVNode("div", _hoisted_4$30, toDisplayString(r.sub), 1)], 42, _hoisted_1$44), r.isDefault && unref(pickerEmptyNote) ? (openBlock(), createElementBlock("li", _hoisted_5$26, toDisplayString(unref(pickerEmptyNote)), 1)) : createCommentVNode("", true)], 64);
 			}), 128);
 		};
 	}
@@ -9720,16 +9720,16 @@ var reachError = ref("");
 var reachOutcome = ref(null);
 //#endregion
 //#region src/features/Reachability.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$41 = {
+var _hoisted_1$43 = {
 	key: 0,
 	class: "model-reachability-result"
 };
-var _hoisted_2$35 = {
+var _hoisted_2$37 = {
 	key: 1,
 	class: "model-reachability-result warn"
 };
-var _hoisted_3$32 = { class: "model-reachability-verdict" };
-var _hoisted_4$27 = { class: "model-reachability-fix" };
+var _hoisted_3$34 = { class: "model-reachability-verdict" };
+var _hoisted_4$29 = { class: "model-reachability-fix" };
 var CHECKING = "Checking reachability…";
 var COPY$1 = "Copy fix";
 var COPIED$1 = "Copied";
@@ -9755,13 +9755,13 @@ var Reachability_default = /* @__PURE__ */ defineComponent({
 			timer = setTimeout(() => copyLabel.value = COPY$1, 1500);
 		}
 		return (_ctx, _cache) => {
-			return unref(reachPhase) === "checking" ? (openBlock(), createElementBlock("div", _hoisted_1$41, [_cache[1] || (_cache[1] = createElementVNode("span", {
+			return unref(reachPhase) === "checking" ? (openBlock(), createElementBlock("div", _hoisted_1$43, [_cache[1] || (_cache[1] = createElementVNode("span", {
 				class: "btn-spinner",
 				"aria-hidden": "true"
-			}, null, -1)), createTextVNode(toDisplayString(CHECKING))])) : unref(reachPhase) === "error" ? (openBlock(), createElementBlock("div", _hoisted_2$35, toDisplayString(unref(reachError)), 1)) : unref(reachOutcome) ? (openBlock(), createElementBlock("div", {
+			}, null, -1)), createTextVNode(toDisplayString(CHECKING))])) : unref(reachPhase) === "error" ? (openBlock(), createElementBlock("div", _hoisted_2$37, toDisplayString(unref(reachError)), 1)) : unref(reachOutcome) ? (openBlock(), createElementBlock("div", {
 				key: 2,
 				class: normalizeClass(unref(reachOutcome).warn ? "model-reachability-result warn" : "model-reachability-result")
-			}, [createElementVNode("div", _hoisted_3$32, toDisplayString(`${unref(reachOutcome).warn ? "✕" : "✓"} ${unref(reachOutcome).label} — ${unref(reachOutcome).detail}`), 1), unref(reachOutcome).fix ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("pre", _hoisted_4$27, toDisplayString(unref(reachOutcome).fix), 1), createElementVNode("button", {
+			}, [createElementVNode("div", _hoisted_3$34, toDisplayString(`${unref(reachOutcome).warn ? "✕" : "✓"} ${unref(reachOutcome).label} — ${unref(reachOutcome).detail}`), 1), unref(reachOutcome).fix ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("pre", _hoisted_4$29, toDisplayString(unref(reachOutcome).fix), 1), createElementVNode("button", {
 				type: "button",
 				class: "btn btn-ghost",
 				onClick: _cache[0] || (_cache[0] = ($event) => copy(unref(reachOutcome).fix))
@@ -9810,32 +9810,32 @@ var fitJobs = ref([]);
 var fitContext = ref(null);
 //#endregion
 //#region src/features/ModelList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$40 = {
+var _hoisted_1$42 = {
 	key: 0,
 	style: {
 		cursor: "default",
 		opacity: .6
 	}
 };
-var _hoisted_2$34 = [
+var _hoisted_2$36 = [
 	"data-model-id",
 	"onClick",
 	"onKeydown"
 ];
-var _hoisted_3$31 = { class: "model-row-name" };
-var _hoisted_4$26 = {
+var _hoisted_3$33 = { class: "model-row-name" };
+var _hoisted_4$28 = {
 	key: 0,
 	class: "model-row-hint"
 };
-var _hoisted_5$23 = {
+var _hoisted_5$25 = {
 	key: 1,
 	class: "model-row-host"
 };
-var _hoisted_6$21 = {
+var _hoisted_6$23 = {
 	key: 2,
 	class: "model-row-uses"
 };
-var _hoisted_7$16 = ["onClick"];
+var _hoisted_7$18 = ["onClick"];
 var REMOVE_GLYPH$1 = "−";
 var EMPTY$8 = "No models selected yet — use + on a server below, or “Add model endpoint…” for anything else.";
 var DOWN$1 = "Unreachable";
@@ -9856,7 +9856,7 @@ var ModelList_default = /* @__PURE__ */ defineComponent({
 			emit("remove", id, ev.currentTarget);
 		}
 		return (_ctx, _cache) => {
-			return rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$40, toDisplayString(unref(modelRows).length ? unref(NO_MATCH$3) : EMPTY$8), 1)) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(rows.value, (row) => {
+			return rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$42, toDisplayString(unref(modelRows).length ? unref(NO_MATCH$3) : EMPTY$8), 1)) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(rows.value, (row) => {
 				return openBlock(), createElementBlock("li", mergeProps({
 					key: row.id,
 					"data-model-id": row.id
@@ -9867,23 +9867,23 @@ var ModelList_default = /* @__PURE__ */ defineComponent({
 					onKeydown: [withKeys(withModifiers(($event) => emit("pick", row.id), ["prevent"]), ["enter"]), withKeys(withModifiers(($event) => emit("pick", row.id), ["prevent"]), ["space"])]
 				}), [
 					createElementVNode("span", { class: normalizeClass(`model-kind-badge kind-${row.badgeKind}`) }, toDisplayString(row.badgeText), 3),
-					createElementVNode("span", _hoisted_3$31, toDisplayString(row.title), 1),
-					row.hint ? (openBlock(), createElementBlock("span", _hoisted_4$26, toDisplayString(row.hint), 1)) : row.host ? (openBlock(), createElementBlock("span", _hoisted_5$23, [row.healthKey && unref(hostHealth)[row.healthKey]?.status === "down" ? (openBlock(), createElementBlock("span", {
+					createElementVNode("span", _hoisted_3$33, toDisplayString(row.title), 1),
+					row.hint ? (openBlock(), createElementBlock("span", _hoisted_4$28, toDisplayString(row.hint), 1)) : row.host ? (openBlock(), createElementBlock("span", _hoisted_5$25, [row.healthKey && unref(hostHealth)[row.healthKey]?.status === "down" ? (openBlock(), createElementBlock("span", {
 						key: 0,
 						class: "host-dot down",
 						role: "img",
 						title: DOWN$1,
 						"aria-label": DOWN$1
 					})) : createCommentVNode("", true), createTextVNode(toDisplayString(row.host), 1)])) : createCommentVNode("", true),
-					row.uses > 0 ? (openBlock(), createElementBlock("span", _hoisted_6$21, toDisplayString(row.uses) + "×", 1)) : createCommentVNode("", true),
+					row.uses > 0 ? (openBlock(), createElementBlock("span", _hoisted_6$23, toDisplayString(row.uses) + "×", 1)) : createCommentVNode("", true),
 					createElementVNode("button", {
 						type: "button",
 						class: "btn btn-ghost select-toggle on",
 						title: "Remove from selectable models",
 						"aria-label": "Remove from selectable models",
 						onClick: ($event) => onRemove($event, row.id)
-					}, toDisplayString(REMOVE_GLYPH$1), 8, _hoisted_7$16)
-				], 16, _hoisted_2$34);
+					}, toDisplayString(REMOVE_GLYPH$1), 8, _hoisted_7$18)
+				], 16, _hoisted_2$36);
 			}), 128));
 		};
 	}
@@ -10043,22 +10043,22 @@ var routeSuggestions = ref([]);
 var routeSuggestBusy = ref(/* @__PURE__ */ new Set());
 //#endregion
 //#region src/features/RouteList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$39 = {
+var _hoisted_1$41 = {
 	key: 0,
 	class: "ollama-muted"
 };
-var _hoisted_2$33 = ["onClick", "onKeydown"];
-var _hoisted_3$30 = { class: "route-row-top" };
-var _hoisted_4$25 = { class: "model-row-name" };
-var _hoisted_5$22 = {
+var _hoisted_2$35 = ["onClick", "onKeydown"];
+var _hoisted_3$32 = { class: "route-row-top" };
+var _hoisted_4$27 = { class: "model-row-name" };
+var _hoisted_5$24 = {
 	key: 0,
 	class: "model-kind-badge model-default-badge"
 };
-var _hoisted_6$20 = {
+var _hoisted_6$22 = {
 	key: 1,
 	class: "model-row-uses"
 };
-var _hoisted_7$15 = { class: "model-row-host" };
+var _hoisted_7$17 = { class: "model-row-host" };
 var EMPTY$7 = "No routes yet — add one, or a suggestion will offer to.";
 var NO_DESC = "No description — click to add the rule";
 var DEFAULT_CHIP = "default";
@@ -10083,7 +10083,7 @@ var RouteList_default = /* @__PURE__ */ defineComponent({
 			}
 		}
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [unref(routeRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$39, toDisplayString(EMPTY$7))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(routeRows), (r, i) => {
+			return openBlock(), createElementBlock(Fragment, null, [unref(routeRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$41, toDisplayString(EMPTY$7))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(routeRows), (r, i) => {
 				return openBlock(), createElementBlock("li", {
 					key: r.name,
 					class: normalizeClass(i === unref(routeSelectedIdx) ? "route-row active" : "route-row"),
@@ -10091,20 +10091,20 @@ var RouteList_default = /* @__PURE__ */ defineComponent({
 					tabindex: "0",
 					onClick: ($event) => props.onActivate(i),
 					onKeydown: ($event) => onKey($event, i)
-				}, [createElementVNode("div", _hoisted_3$30, [
-					createElementVNode("span", _hoisted_4$25, toDisplayString(r.name), 1),
-					unref(routeDefaultName) === r.name ? (openBlock(), createElementBlock("span", _hoisted_5$22, toDisplayString(DEFAULT_CHIP))) : createCommentVNode("", true),
-					r.pinned ? (openBlock(), createElementBlock("span", _hoisted_6$20, toDisplayString(PINNED))) : createCommentVNode("", true),
-					createElementVNode("span", _hoisted_7$15, toDisplayString(r.model || ""), 1)
-				]), createElementVNode("div", { class: normalizeClass(r.description ? "route-row-desc" : "route-row-desc empty") }, toDisplayString(r.description || NO_DESC), 3)], 42, _hoisted_2$33);
+				}, [createElementVNode("div", _hoisted_3$32, [
+					createElementVNode("span", _hoisted_4$27, toDisplayString(r.name), 1),
+					unref(routeDefaultName) === r.name ? (openBlock(), createElementBlock("span", _hoisted_5$24, toDisplayString(DEFAULT_CHIP))) : createCommentVNode("", true),
+					r.pinned ? (openBlock(), createElementBlock("span", _hoisted_6$22, toDisplayString(PINNED))) : createCommentVNode("", true),
+					createElementVNode("span", _hoisted_7$17, toDisplayString(r.model || ""), 1)
+				]), createElementVNode("div", { class: normalizeClass(r.description ? "route-row-desc" : "route-row-desc empty") }, toDisplayString(r.description || NO_DESC), 3)], 42, _hoisted_2$35);
 			}), 128))], 64);
 		};
 	}
 });
 //#endregion
 //#region src/features/RouteSuggestions.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$38 = { class: "route-suggestion-text" };
-var _hoisted_2$32 = ["disabled", "onClick"];
+var _hoisted_1$40 = { class: "route-suggestion-text" };
+var _hoisted_2$34 = ["disabled", "onClick"];
 //#endregion
 //#region src/features/RouteSuggestions.vue
 var RouteSuggestions_default = /* @__PURE__ */ defineComponent({
@@ -10123,7 +10123,7 @@ var RouteSuggestions_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("div", {
 					key: s.capability,
 					class: "route-suggestion"
-				}, [createElementVNode("span", _hoisted_1$38, [
+				}, [createElementVNode("span", _hoisted_1$40, [
 					createElementVNode("strong", null, toDisplayString(s.model), 1),
 					_cache[0] || (_cache[0] = createTextVNode(" can do ", -1)),
 					createElementVNode("strong", null, toDisplayString(s.capability), 1),
@@ -10133,7 +10133,7 @@ var RouteSuggestions_default = /* @__PURE__ */ defineComponent({
 					type: "button",
 					disabled: unref(routeSuggestBusy).has(s.capability) || void 0,
 					onClick: ($event) => props.onCreate(s)
-				}, "Create " + toDisplayString(s.capability) + " route", 9, _hoisted_2$32)]);
+				}, "Create " + toDisplayString(s.capability) + " route", 9, _hoisted_2$34)]);
 			}), 128);
 		};
 	}
@@ -10149,15 +10149,15 @@ var decisionsPhase = ref("rows");
 var decisionsRouter = ref("auto");
 //#endregion
 //#region src/features/RoutingDecisions.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$37 = {
+var _hoisted_1$39 = {
 	key: 0,
 	class: "ollama-muted"
 };
-var _hoisted_2$31 = {
+var _hoisted_2$33 = {
 	key: 1,
 	class: "ollama-muted"
 };
-var _hoisted_3$29 = ["title"];
+var _hoisted_3$31 = ["title"];
 var ERROR_TEXT = "Log unavailable";
 //#endregion
 //#region src/features/RoutingDecisions.vue
@@ -10185,12 +10185,12 @@ var RoutingDecisions_default = /* @__PURE__ */ defineComponent({
 			};
 		}));
 		return (_ctx, _cache) => {
-			return unref(decisionsPhase) === "error" ? (openBlock(), createElementBlock("div", _hoisted_1$37, toDisplayString(ERROR_TEXT))) : unref(decisionsPhase) === "empty" ? (openBlock(), createElementBlock("div", _hoisted_2$31, toDisplayString(emptyText.value), 1)) : (openBlock(true), createElementBlock(Fragment, { key: 2 }, renderList(rows.value, (r) => {
+			return unref(decisionsPhase) === "error" ? (openBlock(), createElementBlock("div", _hoisted_1$39, toDisplayString(ERROR_TEXT))) : unref(decisionsPhase) === "empty" ? (openBlock(), createElementBlock("div", _hoisted_2$33, toDisplayString(emptyText.value), 1)) : (openBlock(true), createElementBlock(Fragment, { key: 2 }, renderList(rows.value, (r) => {
 				return openBlock(), createElementBlock("div", {
 					key: r.key,
 					class: normalizeClass(r.err ? "routing-decision-row err" : "routing-decision-row"),
 					title: r.title
-				}, toDisplayString(r.text), 11, _hoisted_3$29);
+				}, toDisplayString(r.text), 11, _hoisted_3$31);
 			}), 128));
 		};
 	}
@@ -10386,7 +10386,7 @@ var wired$4 = false;
 var CSRF$2 = { "X-Webchat-CSRF": "1" };
 var who = (id) => id.replace(/^webchat:/, "");
 var short = (fp) => fp.slice(0, 12);
-var ago = (t) => {
+var ago$1 = (t) => {
 	const s = Math.max(0, Math.round((Date.now() - t) / 1e3));
 	return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
 };
@@ -10449,13 +10449,13 @@ function renderExtension() {
 	const box = $("#runner-ext-current");
 	if (!box) return;
 	const e = data$1?.extension;
-	box.textContent = e ? `${e.version} · ${(e.size / 1024).toFixed(0)} KB · ${ago(Date.parse(e.publishedAt))}${e.signature ? " · signed" : ""}` : "None published.";
+	box.textContent = e ? `${e.version} · ${(e.size / 1024).toFixed(0)} KB · ${ago$1(Date.parse(e.publishedAt))}${e.signature ? " · signed" : ""}` : "None published.";
 }
 function renderList$1() {
 	const list = $("#runner-list");
 	if (!list || !data$1) return;
 	if (data$1.machines.length === 0) {
-		list.innerHTML = "<li style=\"cursor:default;opacity:.6\">No machines.</li>";
+		list.innerHTML = "<li style=\"cursor:default;opacity:.6\">No runners.</li>";
 		return;
 	}
 	list.innerHTML = data$1.machines.map((m) => {
@@ -10465,7 +10465,7 @@ function renderList$1() {
       <li data-fp="${esc(m.fingerprint)}" role="button" tabindex="0"${m.fingerprint === selectedFp ? " class=\"active\"" : ""}>
         <span class="model-kind-badge kind-${m.status}">${m.status}</span>
         <span class="model-row-name"><span class="runner-dot${on ? " on" : ""}" title="${on ? "connected now" : "offline"}"></span>${esc(m.hostname || short(m.fingerprint))}</span>
-        <span class="model-row-host">${esc(who(m.user_id))} · ${esc(m.os)}/${esc(m.arch)}${on ? "" : ` · seen ${ago(m.last_seen)}`}</span>
+        <span class="model-row-host">${esc(who(m.user_id))} · ${esc(m.os)}/${esc(m.arch)}${on ? "" : ` · seen ${ago$1(m.last_seen)}`}</span>
         ${n > 0 ? `<span class="model-row-uses">${n}×</span>` : ""}
       </li>`;
 	}).join("");
@@ -10502,7 +10502,7 @@ function renderDetail() {
 	if (title) title.textContent = m.hostname || short(m.fingerprint);
 	const on = live(m.fingerprint);
 	const facts = $("#runner-detail-facts");
-	if (facts) facts.textContent = `${who(m.user_id)} · ${m.os}/${m.arch} · ${m.runner_version || "runner"} · ${on ? "online" : ago(m.last_seen)}`;
+	if (facts) facts.textContent = `${who(m.user_id)} · ${m.os}/${m.arch} · ${m.runner_version || "runner"} · ${on ? "online" : ago$1(m.last_seen)}`;
 	const pending = $("#runner-detail-pending");
 	if (pending) pending.hidden = m.status !== "pending";
 	const approved = m.status === "approved";
@@ -10631,7 +10631,7 @@ function wire$3() {
 		const m = data$1?.machines.find((x) => x.fingerprint === fp);
 		(async () => {
 			if (!await showConfirmModal({
-				title: `Revoke ${m?.hostname ?? "this machine"}?`,
+				title: `Revoke ${m?.hostname ?? "this runner"}?`,
 				body: "Its agents stop and it must be approved again to come back.",
 				confirmLabel: "Revoke",
 				destructive: true
@@ -10773,7 +10773,7 @@ function render$1() {
 		const target = b.port === 443 || b.port === 80 ? b.host : `${b.host}:${b.port}`;
 		const who = b.agentGroupIds.map((id) => esc(agentName(id))).join(", ");
 		const only = b.agentGroupIds.map((id) => `<button type="button" class="btn btn-secondary btn-sm" data-allow="${esc(target)}" data-agent="${esc(id)}">${esc(agentName(id))} only</button>`).join("");
-		return `<li><span class="rb-host" title="${esc(target)}">${esc(target)}</span><span class="rb-meta">${b.count}× · ${esc(ago(b.lastAt))} · ${who}</span><button type="button" class="btn btn-secondary btn-sm" data-allow="${esc(target)}">All agents</button>${only}</li>`;
+		return `<li><span class="rb-host" title="${esc(target)}">${esc(target)}</span><span class="rb-meta">${b.count}× · ${esc(ago$1(b.lastAt))} · ${who}</span><button type="button" class="btn btn-secondary btn-sm" data-allow="${esc(target)}">All agents</button>${only}</li>`;
 	}).join("");
 }
 async function saveInstall(list) {
@@ -11315,18 +11315,18 @@ var agentSkillsEnabled = ref(/* @__PURE__ */ new Set());
 var agentSkillsQuery = ref("");
 //#endregion
 //#region src/features/AgentSkillsList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$36 = {
+var _hoisted_1$38 = {
 	key: 0,
 	class: "agent-mcp-empty"
 };
-var _hoisted_2$30 = {
+var _hoisted_2$32 = {
 	key: 0,
 	class: "agent-mcp-empty"
 };
-var _hoisted_3$28 = ["onClick", "onKeydown"];
-var _hoisted_4$24 = { class: "agent-mcp-name" };
-var _hoisted_5$21 = { class: "agent-mcp-meta" };
-var _hoisted_6$19 = [
+var _hoisted_3$30 = ["onClick", "onKeydown"];
+var _hoisted_4$26 = { class: "agent-mcp-name" };
+var _hoisted_5$23 = { class: "agent-mcp-meta" };
+var _hoisted_6$21 = [
 	".checked",
 	"data-skill",
 	"aria-label"
@@ -11348,7 +11348,7 @@ var AgentSkillsList_default = /* @__PURE__ */ defineComponent({
 		const shown = (s) => matchesQuery(agentSkillsQuery.value, s.name, s.description);
 		const noMatch = computed(() => agentSkillRows.value.length > 0 && !agentSkillRows.value.some(shown));
 		return (_ctx, _cache) => {
-			return unref(agentSkillRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$36, toDisplayString(EMPTY$6))) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [noMatch.value ? (openBlock(), createElementBlock("li", _hoisted_2$30, toDisplayString(unref(NO_MATCH$3)), 1)) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(agentSkillRows), (s) => {
+			return unref(agentSkillRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$38, toDisplayString(EMPTY$6))) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [noMatch.value ? (openBlock(), createElementBlock("li", _hoisted_2$32, toDisplayString(unref(NO_MATCH$3)), 1)) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(agentSkillRows), (s) => {
 				return withDirectives((openBlock(), createElementBlock("li", {
 					key: s.name,
 					class: "agent-skill-row"
@@ -11360,14 +11360,14 @@ var AgentSkillsList_default = /* @__PURE__ */ defineComponent({
 					title: "View skill details",
 					onClick: ($event) => emit("view", s.name),
 					onKeydown: [withKeys(withModifiers(($event) => emit("view", s.name), ["prevent"]), ["enter"]), withKeys(withModifiers(($event) => emit("view", s.name), ["prevent"]), ["space"])]
-				}, [createElementVNode("span", _hoisted_4$24, toDisplayString(s.name ?? ""), 1), createElementVNode("span", _hoisted_5$21, toDisplayString(s.description || ""), 1)], 40, _hoisted_3$28), createElementVNode("input", {
+				}, [createElementVNode("span", _hoisted_4$26, toDisplayString(s.name ?? ""), 1), createElementVNode("span", _hoisted_5$23, toDisplayString(s.description || ""), 1)], 40, _hoisted_3$30), createElementVNode("input", {
 					type: "checkbox",
 					class: "agent-skill-toggle",
 					".checked": unref(agentSkillsEnabled).has(s.name),
 					"data-skill": s.name,
 					"aria-label": `Enable skill ${s.name}`,
 					onChange: _cache[0] || (_cache[0] = ($event) => emit("dirty"))
-				}, null, 40, _hoisted_6$19)])), [[vShow, shown(s)]]);
+				}, null, 40, _hoisted_6$21)])), [[vShow, shown(s)]]);
 			}), 128))], 64));
 		};
 	}
@@ -11385,15 +11385,15 @@ var learnAutoTrigger = ref(false);
 var learnAutoKeep = ref(false);
 //#endregion
 //#region src/features/LearnMenu.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$35 = ["onClick"];
-var _hoisted_2$29 = {
+var _hoisted_1$37 = ["onClick"];
+var _hoisted_2$31 = {
 	class: "icon",
 	"aria-hidden": "true"
 };
-var _hoisted_3$27 = ["href"];
-var _hoisted_4$23 = { class: "learn-menu-key" };
-var _hoisted_5$20 = ["aria-checked"];
-var _hoisted_6$18 = ["aria-checked"];
+var _hoisted_3$29 = ["href"];
+var _hoisted_4$25 = { class: "learn-menu-key" };
+var _hoisted_5$22 = ["aria-checked"];
+var _hoisted_6$20 = ["aria-checked"];
 var AUTO_TRIGGER = "Auto-distill busy turns (this room)";
 var AUTO_KEEP = "Auto-keep drafts (this room)";
 //#endregion
@@ -11445,32 +11445,32 @@ var LearnMenu_default = /* @__PURE__ */ defineComponent({
 					class: "learn-menu-item",
 					role: "menuitem",
 					onClick: ($event) => fire(it.key)
-				}, [(openBlock(), createElementBlock("svg", _hoisted_2$29, [createElementVNode("use", { href: `#${it.icon}` }, null, 8, _hoisted_3$27)])), createElementVNode("span", _hoisted_4$23, toDisplayString(it.label), 1)], 8, _hoisted_1$35);
+				}, [(openBlock(), createElementBlock("svg", _hoisted_2$31, [createElementVNode("use", { href: `#${it.icon}` }, null, 8, _hoisted_3$29)])), createElementVNode("span", _hoisted_4$25, toDisplayString(it.label), 1)], 8, _hoisted_1$37);
 			}), 64)), unref(learnTogglesVisible) ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("button", {
 				type: "button",
 				class: "learn-menu-item",
 				role: "menuitemcheckbox",
 				"aria-checked": unref(learnAutoTrigger),
 				onClick: _cache[0] || (_cache[0] = ($event) => props.onAutoTrigger(!unref(learnAutoTrigger)))
-			}, [createElementVNode("span", null, toDisplayString(AUTO_TRIGGER)), createElementVNode("span", { class: normalizeClass(unref(learnAutoTrigger) ? "learn-menu-state on" : "learn-menu-state") }, toDisplayString(unref(learnAutoTrigger) ? "on" : "off"), 3)], 8, _hoisted_5$20), createElementVNode("button", {
+			}, [createElementVNode("span", null, toDisplayString(AUTO_TRIGGER)), createElementVNode("span", { class: normalizeClass(unref(learnAutoTrigger) ? "learn-menu-state on" : "learn-menu-state") }, toDisplayString(unref(learnAutoTrigger) ? "on" : "off"), 3)], 8, _hoisted_5$22), createElementVNode("button", {
 				type: "button",
 				class: "learn-menu-item",
 				role: "menuitemcheckbox",
 				"aria-checked": unref(learnAutoKeep),
 				onClick: _cache[1] || (_cache[1] = ($event) => props.onAutoKeep(!unref(learnAutoKeep)))
-			}, [createElementVNode("span", null, toDisplayString(AUTO_KEEP)), createElementVNode("span", { class: normalizeClass(unref(learnAutoKeep) ? "learn-menu-state on" : "learn-menu-state") }, toDisplayString(unref(learnAutoKeep) ? "on" : "off"), 3)], 8, _hoisted_6$18)], 64)) : createCommentVNode("", true)], 64);
+			}, [createElementVNode("span", null, toDisplayString(AUTO_KEEP)), createElementVNode("span", { class: normalizeClass(unref(learnAutoKeep) ? "learn-menu-state on" : "learn-menu-state") }, toDisplayString(unref(learnAutoKeep) ? "on" : "off"), 3)], 8, _hoisted_6$20)], 64)) : createCommentVNode("", true)], 64);
 		};
 	}
 });
 //#endregion
 //#region src/features/LearnTargetPicker.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$34 = [
+var _hoisted_1$36 = [
 	"^value",
 	"disabled",
 	"title"
 ];
-var _hoisted_2$28 = ["hidden"];
-var _hoisted_3$26 = ["value"];
+var _hoisted_2$30 = ["hidden"];
+var _hoisted_3$28 = ["value"];
 //#endregion
 //#region src/features/LearnTargetPicker.vue
 var LearnTargetPicker_default = /* @__PURE__ */ defineComponent({
@@ -11510,7 +11510,7 @@ var LearnTargetPicker_default = /* @__PURE__ */ defineComponent({
 					"^value": a.id,
 					disabled: (unref(s).roomsByAgent.get(a.id) || []).length === 0 || void 0,
 					title: (unref(s).roomsByAgent.get(a.id) || []).length === 0 ? "No room" : void 0
-				}, toDisplayString(a.name), 9, _hoisted_1$34);
+				}, toDisplayString(a.name), 9, _hoisted_1$36);
 			}), 128))], 544), createElementVNode("select", {
 				class: "confirm-input",
 				"aria-label": "Room",
@@ -11520,8 +11520,8 @@ var LearnTargetPicker_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("option", {
 					key: r.id,
 					value: r.id
-				}, toDisplayString(r.name), 9, _hoisted_3$26);
-			}), 128))], 8, _hoisted_2$28)], 64);
+				}, toDisplayString(r.name), 9, _hoisted_3$28);
+			}), 128))], 8, _hoisted_2$30)], 64);
 		};
 	}
 });
@@ -11802,11 +11802,11 @@ function wireLearnPanel() {
 }
 //#endregion
 //#region src/features/SkillDuplicates.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$33 = { class: "skill-info" };
-var _hoisted_2$27 = { class: "skill-head" };
-var _hoisted_3$25 = { class: "skill-name" };
-var _hoisted_4$22 = { class: "skill-desc" };
-var _hoisted_5$19 = ["disabled", "onClick"];
+var _hoisted_1$35 = { class: "skill-info" };
+var _hoisted_2$29 = { class: "skill-head" };
+var _hoisted_3$27 = { class: "skill-name" };
+var _hoisted_4$24 = { class: "skill-desc" };
+var _hoisted_5$21 = ["disabled", "onClick"];
 var PROMOTE = "Promote";
 //#endregion
 //#region src/features/SkillDuplicates.vue
@@ -11832,30 +11832,30 @@ var SkillDuplicates_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("li", {
 					key: r.name,
 					class: "skill-row"
-				}, [createElementVNode("div", _hoisted_1$33, [createElementVNode("div", _hoisted_2$27, [createElementVNode("span", _hoisted_3$25, toDisplayString(r.name), 1), createElementVNode("span", {
+				}, [createElementVNode("div", _hoisted_1$35, [createElementVNode("div", _hoisted_2$29, [createElementVNode("span", _hoisted_3$27, toDisplayString(r.name), 1), createElementVNode("span", {
 					class: "skill-badge skill-badge-origin",
 					style: DUP_HUE
-				}, toDisplayString(r.badge), 1)]), createElementVNode("span", _hoisted_4$22, toDisplayString(r.agents), 1)]), createElementVNode("button", {
+				}, toDisplayString(r.badge), 1)]), createElementVNode("span", _hoisted_4$24, toDisplayString(r.agents), 1)]), createElementVNode("button", {
 					type: "button",
 					class: "btn btn-secondary skill-catalog-add",
 					disabled: unref(promotingSkills).has(r.name),
 					onClick: ($event) => props.onPromote(r.name)
-				}, toDisplayString(PROMOTE), 8, _hoisted_5$19)]);
+				}, toDisplayString(PROMOTE), 8, _hoisted_5$21)]);
 			}), 128);
 		};
 	}
 });
 //#endregion
 //#region src/features/AgentScopedSkills.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$32 = {
+var _hoisted_1$34 = {
 	key: 0,
 	class: "agent-mcp-empty"
 };
-var _hoisted_2$26 = ["onClick", "onKeydown"];
-var _hoisted_3$24 = { class: "skill-head" };
-var _hoisted_4$21 = { class: "agent-mcp-name" };
-var _hoisted_5$18 = { class: "agent-mcp-meta" };
-var _hoisted_6$17 = ["onClick"];
+var _hoisted_2$28 = ["onClick", "onKeydown"];
+var _hoisted_3$26 = { class: "skill-head" };
+var _hoisted_4$23 = { class: "agent-mcp-name" };
+var _hoisted_5$20 = { class: "agent-mcp-meta" };
+var _hoisted_6$19 = ["onClick"];
 var EMPTY$5 = "None yet — import one below (this agent only).";
 var REMOVE$3 = "Remove";
 var OPEN_TITLE = "View / edit this skill";
@@ -11886,7 +11886,7 @@ var AgentScopedSkills_default = /* @__PURE__ */ defineComponent({
 			}
 		}
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$32, toDisplayString(EMPTY$5))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
+			return openBlock(), createElementBlock(Fragment, null, [rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$34, toDisplayString(EMPTY$5))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
 				return openBlock(), createElementBlock("li", {
 					key: r.name,
 					class: "agent-skill-row"
@@ -11898,26 +11898,26 @@ var AgentScopedSkills_default = /* @__PURE__ */ defineComponent({
 					title: OPEN_TITLE,
 					onClick: ($event) => props.onOpen(r.name),
 					onKeydown: ($event) => onKey($event, r.name)
-				}, [createElementVNode("div", _hoisted_3$24, [createElementVNode("span", _hoisted_4$21, toDisplayString(r.name), 1), r.origin ? (openBlock(), createBlock(OriginBadge_default, {
+				}, [createElementVNode("div", _hoisted_3$26, [createElementVNode("span", _hoisted_4$23, toDisplayString(r.name), 1), r.origin ? (openBlock(), createBlock(OriginBadge_default, {
 					key: 0,
 					origin: r.origin
-				}, null, 8, ["origin"])) : createCommentVNode("", true)]), createElementVNode("span", _hoisted_5$18, toDisplayString(r.desc), 1)], 40, _hoisted_2$26), createElementVNode("button", {
+				}, null, 8, ["origin"])) : createCommentVNode("", true)]), createElementVNode("span", _hoisted_5$20, toDisplayString(r.desc), 1)], 40, _hoisted_2$28), createElementVNode("button", {
 					type: "button",
 					class: "skill-delete",
 					onClick: ($event) => props.onRemove(r.name, $event.currentTarget)
-				}, toDisplayString(REMOVE$3), 8, _hoisted_6$17)]);
+				}, toDisplayString(REMOVE$3), 8, _hoisted_6$19)]);
 			}), 128))], 64);
 		};
 	}
 });
 //#endregion
 //#region src/features/SkillSources.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$31 = { class: "skill-info" };
-var _hoisted_2$25 = { class: "skill-head" };
-var _hoisted_3$23 = { class: "skill-desc" };
-var _hoisted_4$20 = ["onClick"];
-var _hoisted_5$17 = ["onClick"];
-var _hoisted_6$16 = ["onClick"];
+var _hoisted_1$33 = { class: "skill-info" };
+var _hoisted_2$27 = { class: "skill-head" };
+var _hoisted_3$25 = { class: "skill-desc" };
+var _hoisted_4$22 = ["onClick"];
+var _hoisted_5$19 = ["onClick"];
+var _hoisted_6$18 = ["onClick"];
 var EDIT = "Edit";
 var REMOVE$2 = "Remove";
 var ADD$2 = "Add";
@@ -11944,60 +11944,60 @@ var SkillSources_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("li", {
 					key: r.key,
 					class: normalizeClass(r.disabled ? "skill-source-row source-disabled" : "skill-source-row")
-				}, [createElementVNode("div", _hoisted_1$31, [createElementVNode("div", _hoisted_2$25, [createVNode(OriginBadge_default, { origin: r.origin }, null, 8, ["origin"])]), createElementVNode("span", _hoisted_3$23, toDisplayString(r.meta), 1)]), r.kind === "source" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("button", {
+				}, [createElementVNode("div", _hoisted_1$33, [createElementVNode("div", _hoisted_2$27, [createVNode(OriginBadge_default, { origin: r.origin }, null, 8, ["origin"])]), createElementVNode("span", _hoisted_3$25, toDisplayString(r.meta), 1)]), r.kind === "source" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("button", {
 					type: "button",
 					class: "btn btn-ghost",
 					onClick: ($event) => props.onEdit(r)
-				}, toDisplayString(EDIT), 8, _hoisted_4$20), createElementVNode("button", {
+				}, toDisplayString(EDIT), 8, _hoisted_4$22), createElementVNode("button", {
 					type: "button",
 					class: "skill-delete",
 					onClick: ($event) => props.onRemove(r)
-				}, toDisplayString(REMOVE$2), 8, _hoisted_5$17)], 64)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [createElementVNode("span", { class: "skill-badge" }, toDisplayString(BUILT_IN)), createElementVNode("button", {
+				}, toDisplayString(REMOVE$2), 8, _hoisted_5$19)], 64)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [createElementVNode("span", { class: "skill-badge" }, toDisplayString(BUILT_IN)), createElementVNode("button", {
 					type: "button",
 					class: normalizeClass(r.disabled ? "btn btn-ghost" : "skill-delete"),
 					onClick: ($event) => props.onToggleBuiltin(r)
-				}, toDisplayString(r.disabled ? ADD$2 : REMOVE$2), 11, _hoisted_6$16)], 64))], 2);
+				}, toDisplayString(r.disabled ? ADD$2 : REMOVE$2), 11, _hoisted_6$18)], 64))], 2);
 			}), 128);
 		};
 	}
 });
 //#endregion
 //#region src/features/SkillsRegistry.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$30 = {
+var _hoisted_1$32 = {
 	key: 0,
 	class: "skills-empty"
 };
-var _hoisted_2$24 = {
+var _hoisted_2$26 = {
 	key: 1,
 	class: "skills-empty"
 };
-var _hoisted_3$22 = [
+var _hoisted_3$24 = [
 	"data-section-head",
 	"hidden",
 	"aria-expanded",
 	"onClick",
 	"onKeydown"
 ];
-var _hoisted_4$19 = { class: "skills-section-label" };
-var _hoisted_5$16 = {
+var _hoisted_4$21 = { class: "skills-section-label" };
+var _hoisted_5$18 = {
 	key: 0,
 	class: "skill-badge skill-badge-scope"
 };
-var _hoisted_6$15 = { class: "skills-section-count" };
-var _hoisted_7$14 = [
+var _hoisted_6$17 = { class: "skills-section-count" };
+var _hoisted_7$16 = [
 	"data-section",
 	"data-search",
 	"hidden"
 ];
-var _hoisted_8$11 = ["onClick", "onKeydown"];
-var _hoisted_9$9 = { class: "skill-head" };
-var _hoisted_10$9 = { class: "skill-name" };
-var _hoisted_11$7 = { class: "skill-desc" };
-var _hoisted_12$7 = ["disabled", "onClick"];
-var _hoisted_13$7 = ["onClick"];
-var _hoisted_14$7 = ["onClick"];
-var _hoisted_15$7 = ["onClick"];
-var _hoisted_16$7 = ["hidden"];
+var _hoisted_8$13 = ["onClick", "onKeydown"];
+var _hoisted_9$11 = { class: "skill-head" };
+var _hoisted_10$11 = { class: "skill-name" };
+var _hoisted_11$9 = { class: "skill-desc" };
+var _hoisted_12$9 = ["disabled", "onClick"];
+var _hoisted_13$9 = ["onClick"];
+var _hoisted_14$9 = ["onClick"];
+var _hoisted_15$9 = ["onClick"];
+var _hoisted_16$9 = ["hidden"];
 var LOADING$3 = "Loading…";
 var EMPTY$4 = "No skills yet — import one above.";
 var NO_MATCH = "No matching skills";
@@ -12041,10 +12041,10 @@ var SkillsRegistry_default = /* @__PURE__ */ defineComponent({
 		});
 		const anyMatch = computed(() => !!skillsFilter.value && view.value.some((s) => !s.headHidden));
 		return (_ctx, _cache) => {
-			return unref(skillsPhase) === "loading" ? (openBlock(), createElementBlock("li", _hoisted_1$30, [_cache[0] || (_cache[0] = createElementVNode("span", {
+			return unref(skillsPhase) === "loading" ? (openBlock(), createElementBlock("li", _hoisted_1$32, [_cache[0] || (_cache[0] = createElementVNode("span", {
 				class: "btn-spinner",
 				"aria-hidden": "true"
-			}, null, -1)), createTextVNode(toDisplayString(LOADING$3))])) : unref(skillsPhase) === "empty" ? (openBlock(), createElementBlock("li", _hoisted_2$24, toDisplayString(EMPTY$4))) : (openBlock(), createElementBlock(Fragment, { key: 2 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(view.value, (s) => {
+			}, null, -1)), createTextVNode(toDisplayString(LOADING$3))])) : unref(skillsPhase) === "empty" ? (openBlock(), createElementBlock("li", _hoisted_2$26, toDisplayString(EMPTY$4))) : (openBlock(), createElementBlock(Fragment, { key: 2 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(view.value, (s) => {
 				return openBlock(), createElementBlock(Fragment, { key: s.key }, [createElementVNode("li", {
 					class: normalizeClass(s.open ? "skills-section-head open" : "skills-section-head"),
 					"data-section-head": s.key,
@@ -12061,10 +12061,10 @@ var SkillsRegistry_default = /* @__PURE__ */ defineComponent({
 					}
 				}, [
 					createElementVNode("span", { class: "skills-section-chevron" }, toDisplayString(CHEVRON$1)),
-					createElementVNode("span", _hoisted_4$19, toDisplayString(s.label), 1),
-					s.roomName ? (openBlock(), createElementBlock("span", _hoisted_5$16, toDisplayString(s.roomName), 1)) : createCommentVNode("", true),
-					createElementVNode("span", _hoisted_6$15, toDisplayString(s.rows.length), 1)
-				], 42, _hoisted_3$22), (openBlock(true), createElementBlock(Fragment, null, renderList(s.rows, (r) => {
+					createElementVNode("span", _hoisted_4$21, toDisplayString(s.label), 1),
+					s.roomName ? (openBlock(), createElementBlock("span", _hoisted_5$18, toDisplayString(s.roomName), 1)) : createCommentVNode("", true),
+					createElementVNode("span", _hoisted_6$17, toDisplayString(s.rows.length), 1)
+				], 42, _hoisted_3$24), (openBlock(true), createElementBlock(Fragment, null, renderList(s.rows, (r) => {
 					return openBlock(), createElementBlock("li", mergeProps({
 						key: r.key,
 						class: "skill-row"
@@ -12084,8 +12084,8 @@ var SkillsRegistry_default = /* @__PURE__ */ defineComponent({
 								props.onOpen(r);
 							}
 						}
-					}, [createElementVNode("div", _hoisted_9$9, [
-						createElementVNode("span", _hoisted_10$9, toDisplayString(r.name), 1),
+					}, [createElementVNode("div", _hoisted_9$11, [
+						createElementVNode("span", _hoisted_10$11, toDisplayString(r.name), 1),
 						r.badge.kind === "origin" ? (openBlock(), createBlock(OriginBadge_default, {
 							key: 0,
 							origin: r.badge.origin
@@ -12097,7 +12097,7 @@ var SkillsRegistry_default = /* @__PURE__ */ defineComponent({
 							key: 2,
 							origin: r.extraOrigin
 						}, null, 8, ["origin"])) : createCommentVNode("", true)
-					]), createElementVNode("span", _hoisted_11$7, toDisplayString(r.desc), 1)], 40, _hoisted_8$11), r.source === "user" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [unref(skillUpdates)[r.name] ? (openBlock(), createElementBlock("button", {
+					]), createElementVNode("span", _hoisted_11$9, toDisplayString(r.desc), 1)], 40, _hoisted_8$13), r.source === "user" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [unref(skillUpdates)[r.name] ? (openBlock(), createElementBlock("button", {
 						key: 0,
 						type: "button",
 						class: "btn btn-secondary skill-update-btn",
@@ -12108,43 +12108,43 @@ var SkillsRegistry_default = /* @__PURE__ */ defineComponent({
 						busy: unref(skillUpdating).has(r.name),
 						label: UPDATE,
 						"busy-label": UPDATING
-					}, null, 8, ["busy"])], 8, _hoisted_12$7)) : createCommentVNode("", true), createElementVNode("button", {
+					}, null, 8, ["busy"])], 8, _hoisted_12$9)) : createCommentVNode("", true), createElementVNode("button", {
 						type: "button",
 						class: "skill-delete",
 						onClick: ($event) => props.onDelete(r)
-					}, toDisplayString(REMOVE$1), 8, _hoisted_13$7)], 64)) : r.source === "scoped" ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [createElementVNode("button", {
+					}, toDisplayString(REMOVE$1), 8, _hoisted_13$9)], 64)) : r.source === "scoped" ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [createElementVNode("button", {
 						type: "button",
 						class: "btn btn-ghost skill-history-btn",
 						onClick: ($event) => props.onHistory(r)
-					}, toDisplayString(HISTORY), 8, _hoisted_14$7), createElementVNode("button", {
+					}, toDisplayString(HISTORY), 8, _hoisted_14$9), createElementVNode("button", {
 						type: "button",
 						class: "skill-delete",
 						onClick: ($event) => props.onDelete(r)
-					}, toDisplayString(REMOVE$1), 8, _hoisted_15$7)], 64)) : createCommentVNode("", true)], 16, _hoisted_7$14);
+					}, toDisplayString(REMOVE$1), 8, _hoisted_15$9)], 64)) : createCommentVNode("", true)], 16, _hoisted_7$16);
 				}), 128))], 64);
 			}), 128)), createElementVNode("li", {
 				id: "skills-no-match",
 				class: "skills-empty",
 				hidden: !unref(skillsFilter) || anyMatch.value
-			}, toDisplayString(NO_MATCH), 8, _hoisted_16$7)], 64));
+			}, toDisplayString(NO_MATCH), 8, _hoisted_16$9)], 64));
 		};
 	}
 });
 //#endregion
 //#region src/features/SkillDrafts.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$29 = ["data-draft-id"];
-var _hoisted_2$23 = ["onClick"];
-var _hoisted_3$21 = { class: "skill-head" };
-var _hoisted_4$18 = { class: "skill-name" };
-var _hoisted_5$15 = { class: "skill-desc" };
-var _hoisted_6$14 = ["onClick"];
-var _hoisted_7$13 = [
+var _hoisted_1$31 = ["data-draft-id"];
+var _hoisted_2$25 = ["onClick"];
+var _hoisted_3$23 = { class: "skill-head" };
+var _hoisted_4$20 = { class: "skill-name" };
+var _hoisted_5$17 = { class: "skill-desc" };
+var _hoisted_6$16 = ["onClick"];
+var _hoisted_7$15 = [
 	"title",
 	"data-draft-id",
 	"disabled",
 	"onClick"
 ];
-var _hoisted_8$10 = ["onClick"];
+var _hoisted_8$12 = ["onClick"];
 var KEEP$1 = "Keep";
 var DISCARD$1 = "Discard";
 var REVIEWING$1 = "Checking for overlaps…";
@@ -12191,14 +12191,14 @@ var SkillDrafts_default = /* @__PURE__ */ defineComponent({
 					class: "skill-info",
 					style: { cursor: "pointer" },
 					onClick: ($event) => props.onOpen(r.id)
-				}, [createElementVNode("div", _hoisted_3$21, [createElementVNode("span", _hoisted_4$18, toDisplayString(r.name), 1), createElementVNode("span", {
+				}, [createElementVNode("div", _hoisted_3$23, [createElementVNode("span", _hoisted_4$20, toDisplayString(r.name), 1), createElementVNode("span", {
 					class: "skill-badge skill-badge-origin",
 					style: LEARNED_HUE
-				}, toDisplayString(r.badge), 1)]), createElementVNode("span", _hoisted_5$15, [createTextVNode(toDisplayString(r.desc), 1), r.roomId ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createTextVNode(toDisplayString(SPACE)), createElementVNode("a", {
+				}, toDisplayString(r.badge), 1)]), createElementVNode("span", _hoisted_5$17, [createTextVNode(toDisplayString(r.desc), 1), r.roomId ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createTextVNode(toDisplayString(SPACE)), createElementVNode("a", {
 					href: "#",
 					class: "skill-draft-source",
 					onClick: withModifiers(($event) => props.onSource(r.roomId), ["stop", "prevent"])
-				}, toDisplayString(SOURCE), 8, _hoisted_6$14)], 64)) : createCommentVNode("", true)])], 8, _hoisted_2$23), createElementVNode("span", mergeProps({ class: "skill-draft-actions" }, { ref_for: true }, unref(draftUndo)[r.id]?.width ? { style: { width: unref(draftUndo)[r.id].width } } : {}), [unref(draftUndo)[r.id] ? (openBlock(), createBlock(UndoTimer_default, {
+				}, toDisplayString(SOURCE), 8, _hoisted_6$16)], 64)) : createCommentVNode("", true)])], 8, _hoisted_2$25), createElementVNode("span", mergeProps({ class: "skill-draft-actions" }, { ref_for: true }, unref(draftUndo)[r.id]?.width ? { style: { width: unref(draftUndo)[r.id].width } } : {}), [unref(draftUndo)[r.id] ? (openBlock(), createBlock(UndoTimer_default, {
 					key: 0,
 					label: unref(draftUndo)[r.id].label,
 					seconds: __props.undoSeconds,
@@ -12220,39 +12220,39 @@ var SkillDrafts_default = /* @__PURE__ */ defineComponent({
 					busy: unref(draftsReviewing).has(r.id),
 					label: KEEP$1,
 					"busy-label": REVIEWING$1
-				}, null, 8, ["busy"])], 8, _hoisted_7$13), createElementVNode("button", {
+				}, null, 8, ["busy"])], 8, _hoisted_7$15), createElementVNode("button", {
 					type: "button",
 					class: "skill-delete",
 					onClick: ($event) => props.onDiscard(r)
-				}, toDisplayString(DISCARD$1), 8, _hoisted_8$10)], 64))], 16)], 8, _hoisted_1$29);
+				}, toDisplayString(DISCARD$1), 8, _hoisted_8$12)], 64))], 16)], 8, _hoisted_1$31);
 			}), 128);
 		};
 	}
 });
 //#endregion
 //#region src/features/SkillPool.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$28 = {
+var _hoisted_1$30 = {
 	key: 0,
 	class: "skills-empty"
 };
-var _hoisted_2$22 = {
+var _hoisted_2$24 = {
 	key: 1,
 	class: "skills-empty"
 };
-var _hoisted_3$20 = {
+var _hoisted_3$22 = {
 	key: 2,
 	class: "skills-empty"
 };
-var _hoisted_4$17 = { class: "skill-info" };
-var _hoisted_5$14 = { class: "skill-head" };
-var _hoisted_6$13 = { class: "skill-name" };
-var _hoisted_7$12 = { class: "skill-desc" };
-var _hoisted_8$9 = ["href"];
-var _hoisted_9$8 = {
+var _hoisted_4$19 = { class: "skill-info" };
+var _hoisted_5$16 = { class: "skill-head" };
+var _hoisted_6$15 = { class: "skill-name" };
+var _hoisted_7$14 = { class: "skill-desc" };
+var _hoisted_8$11 = ["href"];
+var _hoisted_9$10 = {
 	key: 1,
 	class: "skill-badge skill-badge-user"
 };
-var _hoisted_10$8 = ["onClick"];
+var _hoisted_10$10 = ["onClick"];
 var FAILED$1 = "Couldn’t load skills — import by URL below.";
 var REVIEW = "Review ↗";
 var ADDED = "added";
@@ -12273,28 +12273,28 @@ var SkillPool_default = /* @__PURE__ */ defineComponent({
 		const waitLabel = computed(() => skillPoolQuery.value ? "Searching…" : "Loading skills…");
 		const emptyLabel = computed(() => skillPoolQuery.value ? "No matches." : "Nothing here yet.");
 		return (_ctx, _cache) => {
-			return unref(skillPoolPhase) === "loading" ? (openBlock(), createElementBlock("li", _hoisted_1$28, [_cache[0] || (_cache[0] = createElementVNode("span", {
+			return unref(skillPoolPhase) === "loading" ? (openBlock(), createElementBlock("li", _hoisted_1$30, [_cache[0] || (_cache[0] = createElementVNode("span", {
 				class: "btn-spinner",
 				"aria-hidden": "true"
-			}, null, -1)), createTextVNode(toDisplayString(waitLabel.value), 1)])) : unref(skillPoolPhase) === "error" ? (openBlock(), createElementBlock("li", _hoisted_2$22, toDisplayString(FAILED$1))) : unref(skillPoolPhase) === "empty" ? (openBlock(), createElementBlock("li", _hoisted_3$20, toDisplayString(emptyLabel.value), 1)) : (openBlock(true), createElementBlock(Fragment, { key: 3 }, renderList(unref(skillPool), (s) => {
+			}, null, -1)), createTextVNode(toDisplayString(waitLabel.value), 1)])) : unref(skillPoolPhase) === "error" ? (openBlock(), createElementBlock("li", _hoisted_2$24, toDisplayString(FAILED$1))) : unref(skillPoolPhase) === "empty" ? (openBlock(), createElementBlock("li", _hoisted_3$22, toDisplayString(emptyLabel.value), 1)) : (openBlock(true), createElementBlock(Fragment, { key: 3 }, renderList(unref(skillPool), (s) => {
 				return openBlock(), createElementBlock("li", {
 					key: s.name,
 					class: "skill-row"
 				}, [
-					createElementVNode("div", _hoisted_4$17, [createElementVNode("div", _hoisted_5$14, [createElementVNode("span", _hoisted_6$13, toDisplayString(s.name ?? ""), 1), createVNode(OriginBadge_default, { origin: s.origin }, null, 8, ["origin"])]), createElementVNode("span", _hoisted_7$12, toDisplayString(s.description || ""), 1)]),
+					createElementVNode("div", _hoisted_4$19, [createElementVNode("div", _hoisted_5$16, [createElementVNode("span", _hoisted_6$15, toDisplayString(s.name ?? ""), 1), createVNode(OriginBadge_default, { origin: s.origin }, null, 8, ["origin"])]), createElementVNode("span", _hoisted_7$14, toDisplayString(s.description || ""), 1)]),
 					unref(skillPoolCommunity) && s.review ? (openBlock(), createElementBlock("a", {
 						key: 0,
 						class: "skill-review",
 						href: s.review,
 						target: "_blank",
 						rel: "noopener noreferrer"
-					}, toDisplayString(REVIEW), 8, _hoisted_8$9)) : createCommentVNode("", true),
-					s.installed ? (openBlock(), createElementBlock("span", _hoisted_9$8, toDisplayString(ADDED))) : (openBlock(), createElementBlock("button", {
+					}, toDisplayString(REVIEW), 8, _hoisted_8$11)) : createCommentVNode("", true),
+					s.installed ? (openBlock(), createElementBlock("span", _hoisted_9$10, toDisplayString(ADDED))) : (openBlock(), createElementBlock("button", {
 						key: 2,
 						type: "button",
 						class: "btn btn-secondary skill-catalog-add",
 						onClick: ($event) => props.onAdd(s)
-					}, toDisplayString(ADD$1), 8, _hoisted_10$8))
+					}, toDisplayString(ADD$1), 8, _hoisted_10$10))
 				]);
 			}), 128));
 		};
@@ -12302,15 +12302,15 @@ var SkillPool_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/SkillSuggestions.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$27 = { class: "skill-info" };
-var _hoisted_2$21 = { class: "skill-head" };
-var _hoisted_3$19 = { class: "skill-name" };
-var _hoisted_4$16 = { class: "skill-desc" };
-var _hoisted_5$13 = {
+var _hoisted_1$29 = { class: "skill-info" };
+var _hoisted_2$23 = { class: "skill-head" };
+var _hoisted_3$21 = { class: "skill-name" };
+var _hoisted_4$18 = { class: "skill-desc" };
+var _hoisted_5$15 = {
 	key: 0,
 	class: "skill-badge"
 };
-var _hoisted_6$12 = [
+var _hoisted_6$14 = [
 	"data-url",
 	"data-name",
 	"aria-label"
@@ -12332,58 +12332,58 @@ var SkillSuggestions_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("li", {
 					key: s.name,
 					class: "agent-create-skill-row"
-				}, [createElementVNode("div", _hoisted_1$27, [createElementVNode("div", _hoisted_2$21, [createElementVNode("span", _hoisted_3$19, toDisplayString(s.name ?? ""), 1)]), createElementVNode("span", _hoisted_4$16, toDisplayString(s.description || ""), 1)]), s.source === "installed" ? (openBlock(), createElementBlock("span", _hoisted_5$13, toDisplayString(AVAILABLE))) : (openBlock(), createElementBlock("input", {
+				}, [createElementVNode("div", _hoisted_1$29, [createElementVNode("div", _hoisted_2$23, [createElementVNode("span", _hoisted_3$21, toDisplayString(s.name ?? ""), 1)]), createElementVNode("span", _hoisted_4$18, toDisplayString(s.description || ""), 1)]), s.source === "installed" ? (openBlock(), createElementBlock("span", _hoisted_5$15, toDisplayString(AVAILABLE))) : (openBlock(), createElementBlock("input", {
 					key: 1,
 					type: "checkbox",
 					class: "agent-create-skill-check",
 					"data-url": s.url,
 					"data-name": s.name,
 					"aria-label": `Add skill ${s.name} (${s.source})`
-				}, null, 8, _hoisted_6$12))]);
+				}, null, 8, _hoisted_6$14))]);
 			}), 128);
 		};
 	}
 });
 //#endregion
 //#region src/features/RoomSkills.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$26 = {
+var _hoisted_1$28 = {
 	key: 0,
 	class: "room-skill-row proposed"
 };
-var _hoisted_2$20 = { class: "room-skill-head" };
-var _hoisted_3$18 = { class: "room-skill-name" };
-var _hoisted_4$15 = { class: "room-skill-desc" };
-var _hoisted_5$12 = ["onClick"];
-var _hoisted_6$11 = [
+var _hoisted_2$22 = { class: "room-skill-head" };
+var _hoisted_3$20 = { class: "room-skill-name" };
+var _hoisted_4$17 = { class: "room-skill-desc" };
+var _hoisted_5$14 = ["onClick"];
+var _hoisted_6$13 = [
 	"title",
 	"data-draft-id",
 	"disabled",
 	"onClick"
 ];
-var _hoisted_7$11 = ["onClick"];
-var _hoisted_8$8 = {
+var _hoisted_7$13 = ["onClick"];
+var _hoisted_8$10 = {
 	key: 1,
 	class: "room-skill-row"
 };
-var _hoisted_9$7 = { class: "room-skill-head" };
-var _hoisted_10$7 = { class: "room-skill-name" };
-var _hoisted_11$6 = {
+var _hoisted_9$9 = { class: "room-skill-head" };
+var _hoisted_10$9 = { class: "room-skill-name" };
+var _hoisted_11$8 = {
 	key: 1,
 	class: "room-skill-agent"
 };
-var _hoisted_12$6 = {
+var _hoisted_12$8 = {
 	key: 2,
 	class: "room-skill-agent"
 };
-var _hoisted_13$6 = ["onClick"];
-var _hoisted_14$6 = ["title", "onClick"];
-var _hoisted_15$6 = {
+var _hoisted_13$8 = ["onClick"];
+var _hoisted_14$8 = ["title", "onClick"];
+var _hoisted_15$8 = {
 	key: 2,
 	class: "room-skill-row room-skill-archived"
 };
-var _hoisted_16$6 = { class: "room-skill-head" };
-var _hoisted_17$6 = { class: "room-skill-name" };
-var _hoisted_18$5 = ["onClick"];
+var _hoisted_16$8 = { class: "room-skill-head" };
+var _hoisted_17$8 = { class: "room-skill-name" };
+var _hoisted_18$6 = ["onClick"];
 var VIEW = "View";
 var KEEP = "Keep";
 var REVIEWING = "Checking for overlaps…";
@@ -12418,9 +12418,9 @@ var RoomSkills_default = /* @__PURE__ */ defineComponent({
 		const rows = computed(() => roomSkillRows.value);
 		return (_ctx, _cache) => {
 			return openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
-				return openBlock(), createElementBlock(Fragment, { key: r.key }, [r.kind === "proposed" ? (openBlock(), createElementBlock("li", _hoisted_1$26, [
-					createElementVNode("div", _hoisted_2$20, [createElementVNode("span", _hoisted_3$18, toDisplayString(r.name), 1), createVNode(OriginBadge_default, { origin: r.origin }, null, 8, ["origin"])]),
-					createElementVNode("div", _hoisted_4$15, toDisplayString(r.desc), 1),
+				return openBlock(), createElementBlock(Fragment, { key: r.key }, [r.kind === "proposed" ? (openBlock(), createElementBlock("li", _hoisted_1$28, [
+					createElementVNode("div", _hoisted_2$22, [createElementVNode("span", _hoisted_3$20, toDisplayString(r.name), 1), createVNode(OriginBadge_default, { origin: r.origin }, null, 8, ["origin"])]),
+					createElementVNode("div", _hoisted_4$17, toDisplayString(r.desc), 1),
 					createElementVNode("div", mergeProps({ class: "room-skill-actions" }, { ref_for: true }, unref(roomSkillUndo)[r.id]?.width ? { style: { width: unref(roomSkillUndo)[r.id].width } } : {}), [unref(roomSkillUndo)[r.id] ? (openBlock(), createBlock(UndoTimer_default, {
 						key: 0,
 						label: unref(roomSkillUndo)[r.id].label,
@@ -12437,7 +12437,7 @@ var RoomSkills_default = /* @__PURE__ */ defineComponent({
 							type: "button",
 							class: "btn btn-ghost",
 							onClick: ($event) => props.onView(r.id)
-						}, toDisplayString(VIEW), 8, _hoisted_5$12),
+						}, toDisplayString(VIEW), 8, _hoisted_5$14),
 						createElementVNode("button", {
 							type: "button",
 							class: "btn btn-primary",
@@ -12449,54 +12449,54 @@ var RoomSkills_default = /* @__PURE__ */ defineComponent({
 							busy: unref(roomSkillsReviewing).has(r.id),
 							label: KEEP,
 							"busy-label": REVIEWING
-						}, null, 8, ["busy"])], 8, _hoisted_6$11),
+						}, null, 8, ["busy"])], 8, _hoisted_6$13),
 						createElementVNode("button", {
 							type: "button",
 							class: "skill-delete",
 							onClick: ($event) => props.onDiscard(r)
-						}, toDisplayString(DISCARD), 8, _hoisted_7$11)
+						}, toDisplayString(DISCARD), 8, _hoisted_7$13)
 					], 64))], 16)
-				])) : r.kind === "learned" ? (openBlock(), createElementBlock("li", _hoisted_8$8, [createElementVNode("div", _hoisted_9$7, [
-					createElementVNode("span", _hoisted_10$7, toDisplayString(r.name), 1),
+				])) : r.kind === "learned" ? (openBlock(), createElementBlock("li", _hoisted_8$10, [createElementVNode("div", _hoisted_9$9, [
+					createElementVNode("span", _hoisted_10$9, toDisplayString(r.name), 1),
 					r.origin ? (openBlock(), createBlock(OriginBadge_default, {
 						key: 0,
 						origin: r.origin
 					}, null, 8, ["origin"])) : createCommentVNode("", true),
-					r.who ? (openBlock(), createElementBlock("span", _hoisted_11$6, toDisplayString(r.who), 1)) : createCommentVNode("", true),
-					r.uses ? (openBlock(), createElementBlock("span", _hoisted_12$6, toDisplayString(r.uses), 1)) : createCommentVNode("", true),
+					r.who ? (openBlock(), createElementBlock("span", _hoisted_11$8, toDisplayString(r.who), 1)) : createCommentVNode("", true),
+					r.uses ? (openBlock(), createElementBlock("span", _hoisted_12$8, toDisplayString(r.uses), 1)) : createCommentVNode("", true),
 					r.hasHistory ? (openBlock(), createElementBlock("button", {
 						key: 3,
 						type: "button",
 						class: "btn btn-ghost",
 						title: REVERT_TITLE,
 						onClick: ($event) => props.onRevert(r)
-					}, toDisplayString(REVERT$1), 8, _hoisted_13$6)) : createCommentVNode("", true)
+					}, toDisplayString(REVERT$1), 8, _hoisted_13$8)) : createCommentVNode("", true)
 				]), createElementVNode("button", {
 					type: "button",
 					class: "skill-delete",
 					title: r.removeTitle,
 					onClick: ($event) => props.onRemove(r)
-				}, toDisplayString(REMOVE_GLYPH), 8, _hoisted_14$6)])) : (openBlock(), createElementBlock("li", _hoisted_15$6, [createElementVNode("div", _hoisted_16$6, [createElementVNode("span", _hoisted_17$6, toDisplayString(r.name), 1), createElementVNode("span", { class: "room-skill-agent" }, toDisplayString(ARCHIVED_TAG))]), createElementVNode("button", {
+				}, toDisplayString(REMOVE_GLYPH), 8, _hoisted_14$8)])) : (openBlock(), createElementBlock("li", _hoisted_15$8, [createElementVNode("div", _hoisted_16$8, [createElementVNode("span", _hoisted_17$8, toDisplayString(r.name), 1), createElementVNode("span", { class: "room-skill-agent" }, toDisplayString(ARCHIVED_TAG))]), createElementVNode("button", {
 					type: "button",
 					class: "btn btn-ghost",
 					onClick: ($event) => props.onRestore(r)
-				}, toDisplayString(RESTORE), 8, _hoisted_18$5)]))], 64);
+				}, toDisplayString(RESTORE), 8, _hoisted_18$6)]))], 64);
 			}), 128);
 		};
 	}
 });
 //#endregion
 //#region src/features/SkillEditorModal.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$25 = { class: "modal-header" };
-var _hoisted_2$19 = {
+var _hoisted_1$27 = { class: "modal-header" };
+var _hoisted_2$21 = {
 	key: 0,
 	class: "skill-badge skill-badge-user"
 };
-var _hoisted_3$17 = { class: "modal-body" };
-var _hoisted_4$14 = ["readonly"];
-var _hoisted_5$11 = { class: "confirm-actions" };
-var _hoisted_6$10 = ["onClick"];
-var _hoisted_7$10 = ["disabled"];
+var _hoisted_3$19 = { class: "modal-body" };
+var _hoisted_4$16 = ["readonly"];
+var _hoisted_5$13 = { class: "confirm-actions" };
+var _hoisted_6$12 = ["onClick"];
+var _hoisted_7$12 = ["disabled"];
 var SAVING = "Saving…";
 var SAVE = "Save";
 var TITLE_ID = "skill-edit-modal-title";
@@ -12569,15 +12569,15 @@ var SkillEditorModal_default = /* @__PURE__ */ defineComponent({
 				"aria-modal": "true",
 				"aria-labelledby": TITLE_ID
 			}, [
-				createElementVNode("div", _hoisted_1$25, [createElementVNode("span", { id: TITLE_ID }, toDisplayString(__props.name), 1), __props.badgeText ? (openBlock(), createElementBlock("span", _hoisted_2$19, toDisplayString(__props.badgeText), 1)) : createCommentVNode("", true)]),
-				createElementVNode("div", _hoisted_3$17, [createElementVNode("textarea", {
+				createElementVNode("div", _hoisted_1$27, [createElementVNode("span", { id: TITLE_ID }, toDisplayString(__props.name), 1), __props.badgeText ? (openBlock(), createElementBlock("span", _hoisted_2$21, toDisplayString(__props.badgeText), 1)) : createCommentVNode("", true)]),
+				createElementVNode("div", _hoisted_3$19, [createElementVNode("textarea", {
 					ref_key: "ta",
 					ref: ta,
 					class: "skill-edit-textarea",
 					readonly: !__props.editable,
 					spellcheck: "false"
-				}, null, 8, _hoisted_4$14)]),
-				createElementVNode("div", _hoisted_5$11, [
+				}, null, 8, _hoisted_4$16)]),
+				createElementVNode("div", _hoisted_5$13, [
 					(openBlock(true), createElementBlock(Fragment, null, renderList(__props.actions, (a) => {
 						return openBlock(), createElementBlock("button", {
 							key: a.label,
@@ -12587,7 +12587,7 @@ var SkillEditorModal_default = /* @__PURE__ */ defineComponent({
 								props.onClose();
 								a.onClick();
 							}
-						}, toDisplayString(a.label), 9, _hoisted_6$10);
+						}, toDisplayString(a.label), 9, _hoisted_6$12);
 					}), 128)),
 					createElementVNode("button", {
 						type: "button",
@@ -12604,7 +12604,7 @@ var SkillEditorModal_default = /* @__PURE__ */ defineComponent({
 						busy: saving.value,
 						label: SAVE,
 						"busy-label": SAVING
-					}, null, 8, ["busy"])], 8, _hoisted_7$10)) : createCommentVNode("", true)
+					}, null, 8, ["busy"])], 8, _hoisted_7$12)) : createCommentVNode("", true)
 				])
 			], 512);
 		};
@@ -14116,7 +14116,7 @@ var UsageTable_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/UsageSpark.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$24 = ["title"];
+var _hoisted_1$26 = ["title"];
 //#endregion
 //#region src/features/UsageSpark.vue
 var UsageSpark_default = /* @__PURE__ */ defineComponent({
@@ -14133,7 +14133,7 @@ var UsageSpark_default = /* @__PURE__ */ defineComponent({
 					class: "usage-bar",
 					style: normalizeStyle({ height: b.height }),
 					title: b.title
-				}, null, 12, _hoisted_1$24);
+				}, null, 12, _hoisted_1$26);
 			}), 128);
 		};
 	}
@@ -14166,13 +14166,13 @@ var matrixAgents = ref([]);
 var matrixEdges = ref(/* @__PURE__ */ new Set());
 //#endregion
 //#region src/features/WiringMatrix.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$23 = {
+var _hoisted_1$25 = {
 	key: 1,
 	class: "matrix-table"
 };
-var _hoisted_2$18 = { class: "matrix-agent-name" };
-var _hoisted_3$16 = { class: "matrix-room-head" };
-var _hoisted_4$13 = [
+var _hoisted_2$20 = { class: "matrix-agent-name" };
+var _hoisted_3$18 = { class: "matrix-room-head" };
+var _hoisted_4$15 = [
 	"data-room",
 	"data-agent",
 	"title"
@@ -14193,20 +14193,20 @@ var WiringMatrix_default = /* @__PURE__ */ defineComponent({
 		const empty = computed(() => matrixRooms.value.length === 0 || matrixAgents.value.length === 0);
 		const isOn = (roomId, agentId) => matrixEdges.value.has(`${roomId}|${agentId}`);
 		return (_ctx, _cache) => {
-			return empty.value ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createTextVNode(toDisplayString(EMPTY$3))], 64)) : (openBlock(), createElementBlock("table", _hoisted_1$23, [createElementVNode("thead", null, [createElementVNode("tr", null, [createElementVNode("th", { class: "matrix-corner" }, toDisplayString(CORNER)), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(matrixAgents), (a) => {
+			return empty.value ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createTextVNode(toDisplayString(EMPTY$3))], 64)) : (openBlock(), createElementBlock("table", _hoisted_1$25, [createElementVNode("thead", null, [createElementVNode("tr", null, [createElementVNode("th", { class: "matrix-corner" }, toDisplayString(CORNER)), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(matrixAgents), (a) => {
 				return openBlock(), createElementBlock("th", {
 					key: a.id,
 					class: "matrix-agent-head"
-				}, [createElementVNode("div", _hoisted_2$18, toDisplayString(a.name), 1), createElementVNode("div", { class: normalizeClass(a.modelName ? "matrix-model-chip" : "matrix-model-chip none") }, toDisplayString(a.modelName || NO_MODEL), 3)]);
+				}, [createElementVNode("div", _hoisted_2$20, toDisplayString(a.name), 1), createElementVNode("div", { class: normalizeClass(a.modelName ? "matrix-model-chip" : "matrix-model-chip none") }, toDisplayString(a.modelName || NO_MODEL), 3)]);
 			}), 128))])]), createElementVNode("tbody", null, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(matrixRooms), (room) => {
-				return openBlock(), createElementBlock("tr", { key: room.id }, [createElementVNode("th", _hoisted_3$16, toDisplayString(room.name), 1), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(matrixAgents), (a) => {
+				return openBlock(), createElementBlock("tr", { key: room.id }, [createElementVNode("th", _hoisted_3$18, toDisplayString(room.name), 1), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(matrixAgents), (a) => {
 					return openBlock(), createElementBlock("td", {
 						key: a.id,
 						class: normalizeClass(isOn(room.id, a.id) ? "matrix-cell on" : "matrix-cell"),
 						"data-room": room.id,
 						"data-agent": a.id,
 						title: `${room.name} ↔ ${a.name}`
-					}, null, 10, _hoisted_4$13);
+					}, null, 10, _hoisted_4$15);
 				}), 128))]);
 			}), 128))])]));
 		};
@@ -14226,12 +14226,12 @@ var journeyFilter = ref({
 });
 //#endregion
 //#region src/features/JourneyList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$22 = {
+var _hoisted_1$24 = {
 	key: 2,
 	class: "journey-empty"
 };
-var _hoisted_2$17 = ["hidden"];
-var _hoisted_3$15 = [
+var _hoisted_2$19 = ["hidden"];
+var _hoisted_3$17 = [
 	"data-kind",
 	"data-agent",
 	"data-skill",
@@ -14240,11 +14240,11 @@ var _hoisted_3$15 = [
 	"onClick",
 	"onKeydown"
 ];
-var _hoisted_4$12 = { class: "journey-skill" };
-var _hoisted_5$10 = { class: "skill-badge skill-badge-scope" };
-var _hoisted_6$9 = { class: "journey-meta" };
-var _hoisted_7$9 = { class: "journey-time" };
-var _hoisted_8$7 = ["onClick"];
+var _hoisted_4$14 = { class: "journey-skill" };
+var _hoisted_5$12 = { class: "skill-badge skill-badge-scope" };
+var _hoisted_6$11 = { class: "journey-meta" };
+var _hoisted_7$11 = { class: "journey-time" };
+var _hoisted_8$9 = ["onClick"];
 var LOADING$2 = "Loading…";
 var FAILED = "Could not load the timeline.";
 var EMPTY$2 = "Nothing learned yet.";
@@ -14319,11 +14319,11 @@ var JourneyList_default = /* @__PURE__ */ defineComponent({
 			return unref(journeyPhase) === "loading" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [_cache[0] || (_cache[0] = createElementVNode("span", {
 				class: "btn-spinner",
 				"aria-hidden": "true"
-			}, null, -1)), createTextVNode(toDisplayString(LOADING$2))], 64)) : unref(journeyPhase) === "error" ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [createTextVNode(toDisplayString(FAILED))], 64)) : unref(journeyPhase) === "empty" ? (openBlock(), createElementBlock("div", _hoisted_1$22, toDisplayString(EMPTY$2))) : (openBlock(true), createElementBlock(Fragment, { key: 3 }, renderList(days.value, (d) => {
+			}, null, -1)), createTextVNode(toDisplayString(LOADING$2))], 64)) : unref(journeyPhase) === "error" ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [createTextVNode(toDisplayString(FAILED))], 64)) : unref(journeyPhase) === "empty" ? (openBlock(), createElementBlock("div", _hoisted_1$24, toDisplayString(EMPTY$2))) : (openBlock(true), createElementBlock(Fragment, { key: 3 }, renderList(days.value, (d) => {
 				return openBlock(), createElementBlock(Fragment, { key: d.key }, [createElementVNode("div", {
 					class: "journey-day",
 					hidden: d.rows.every((r) => !visible(r.ev))
-				}, toDisplayString(d.label), 9, _hoisted_2$17), (openBlock(true), createElementBlock(Fragment, null, renderList(d.rows, (r) => {
+				}, toDisplayString(d.label), 9, _hoisted_2$19), (openBlock(true), createElementBlock(Fragment, null, renderList(d.rows, (r) => {
 					return openBlock(), createElementBlock("div", mergeProps({
 						key: r.key,
 						class: r.linked ? "journey-row journey-linked" : "journey-row",
@@ -14340,17 +14340,17 @@ var JourneyList_default = /* @__PURE__ */ defineComponent({
 						onKeydown: ($event) => r.linked ? onKey($event, r.ev) : void 0
 					}), [
 						createElementVNode("span", { class: normalizeClass(`journey-verb journey-verb-${r.ev.kind}`) }, toDisplayString(r.verb), 3),
-						createElementVNode("span", _hoisted_4$12, toDisplayString(r.ev.skillName), 1),
-						createElementVNode("span", _hoisted_5$10, toDisplayString(r.ev.agentName), 1),
-						createElementVNode("span", _hoisted_6$9, toDisplayString(r.meta), 1),
-						createElementVNode("span", _hoisted_7$9, toDisplayString(r.time), 1),
+						createElementVNode("span", _hoisted_4$14, toDisplayString(r.ev.skillName), 1),
+						createElementVNode("span", _hoisted_5$12, toDisplayString(r.ev.agentName), 1),
+						createElementVNode("span", _hoisted_6$11, toDisplayString(r.meta), 1),
+						createElementVNode("span", _hoisted_7$11, toDisplayString(r.time), 1),
 						r.ev.canRevert ? (openBlock(), createElementBlock("button", {
 							key: 0,
 							type: "button",
 							class: "btn btn-secondary",
 							onClick: withModifiers(($event) => props.onRevert(r.ev), ["stop"])
-						}, toDisplayString(REVERT), 8, _hoisted_8$7)) : createCommentVNode("", true)
-					], 16, _hoisted_3$15);
+						}, toDisplayString(REVERT), 8, _hoisted_8$9)) : createCommentVNode("", true)
+					], 16, _hoisted_3$17);
 				}), 128))], 64);
 			}), 128));
 		};
@@ -15429,7 +15429,7 @@ function toggleHelp() {
 }
 //#endregion
 //#region src/features/SelectToggle.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$21 = [
+var _hoisted_1$23 = [
 	"title",
 	"aria-label",
 	"disabled"
@@ -15467,7 +15467,7 @@ var SelectToggle_default = /* @__PURE__ */ defineComponent({
 				"aria-label": p.value.title,
 				disabled: busy.value || void 0,
 				onClick
-			}, toDisplayString(p.value.label), 11, _hoisted_1$21);
+			}, toDisplayString(p.value.label), 11, _hoisted_1$23);
 		};
 	}
 });
@@ -15488,12 +15488,12 @@ var rosterSystem = ref([]);
 var rosterUnreachable = ref(true);
 //#endregion
 //#region src/features/RouterRoster.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$20 = {
+var _hoisted_1$22 = {
 	key: 0,
 	class: "ollama-muted"
 };
-var _hoisted_2$16 = { class: "ollama-model-name" };
-var _hoisted_3$14 = { class: "ollama-model-name" };
+var _hoisted_2$18 = { class: "ollama-model-name" };
+var _hoisted_3$16 = { class: "ollama-model-name" };
 var UNREACHABLE = "Router not reachable right now…";
 var SYS_HEADING$1 = "System — not selectable";
 var CLASSIFIER$1 = "classifier";
@@ -15508,8 +15508,8 @@ var RouterRoster_default = /* @__PURE__ */ defineComponent({
 		* covers both "router not answering" and "answered with no models".
 		*/
 		return (_ctx, _cache) => {
-			return unref(rosterUnreachable) ? (openBlock(), createElementBlock("li", _hoisted_1$20, toDisplayString(UNREACHABLE))) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(rosterSelectable), (id) => {
-				return openBlock(), createElementBlock("li", { key: id }, [createElementVNode("span", _hoisted_2$16, toDisplayString(id), 1), createVNode(SelectToggle_default, {
+			return unref(rosterUnreachable) ? (openBlock(), createElementBlock("li", _hoisted_1$22, toDisplayString(UNREACHABLE))) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(rosterSelectable), (id) => {
+				return openBlock(), createElementBlock("li", { key: id }, [createElementVNode("span", _hoisted_2$18, toDisplayString(id), 1), createVNode(SelectToggle_default, {
 					kind: "openai-compatible",
 					endpoint: unref(rosterEndpoint),
 					"model-id": id,
@@ -15520,7 +15520,7 @@ var RouterRoster_default = /* @__PURE__ */ defineComponent({
 					"display-name"
 				])]);
 			}), 128)), unref(rosterSystem).length ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("li", { class: "ollama-model-sysheading" }, toDisplayString(SYS_HEADING$1)), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(rosterSystem), (id) => {
-				return openBlock(), createElementBlock("li", { key: id }, [createElementVNode("span", _hoisted_3$14, toDisplayString(id), 1), createElementVNode("span", {
+				return openBlock(), createElementBlock("li", { key: id }, [createElementVNode("span", _hoisted_3$16, toDisplayString(id), 1), createElementVNode("span", {
 					class: "ollama-model-systag",
 					title: CLASSIFIER_TITLE$1
 				}, toDisplayString(CLASSIFIER$1))]);
@@ -15935,16 +15935,16 @@ function closeRouteDetail() {
 }
 //#endregion
 //#region src/features/OllamaPullStatus.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$19 = ["hidden"];
-var _hoisted_2$15 = { class: "ollama-pull-line progress" };
-var _hoisted_3$13 = { class: "ollama-pull-text" };
-var _hoisted_4$11 = { class: "ollama-pull-bar" };
-var _hoisted_5$9 = { class: "ollama-pull-line ok" };
-var _hoisted_6$8 = {
+var _hoisted_1$21 = ["hidden"];
+var _hoisted_2$17 = { class: "ollama-pull-line progress" };
+var _hoisted_3$15 = { class: "ollama-pull-text" };
+var _hoisted_4$13 = { class: "ollama-pull-bar" };
+var _hoisted_5$11 = { class: "ollama-pull-line ok" };
+var _hoisted_6$10 = {
 	key: 2,
 	class: "ollama-pull-line"
 };
-var _hoisted_7$8 = {
+var _hoisted_7$10 = {
 	key: 3,
 	class: "ollama-pull-line err"
 };
@@ -15968,57 +15968,57 @@ var OllamaPullStatus_default = /* @__PURE__ */ defineComponent({
 			return openBlock(), createElementBlock("div", {
 				class: "ollama-pull-status",
 				hidden: !props.pull
-			}, [props.pull ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [props.pull.status === "pulling" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("div", _hoisted_2$15, [createElementVNode("span", _hoisted_3$13, "Pulling " + toDisplayString(props.pull.model) + " — " + toDisplayString(props.pull.detail), 1), createElementVNode("button", {
+			}, [props.pull ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [props.pull.status === "pulling" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("div", _hoisted_2$17, [createElementVNode("span", _hoisted_3$15, "Pulling " + toDisplayString(props.pull.model) + " — " + toDisplayString(props.pull.detail), 1), createElementVNode("button", {
 				class: "ollama-pull-cancel",
 				type: "button",
 				onClick: _cache[0] || (_cache[0] = ($event) => props.onCancel(props.pull.model))
-			}, toDisplayString(CANCEL))]), createElementVNode("div", _hoisted_4$11, [createElementVNode("span", { style: normalizeStyle({ width: props.pull.pct + "%" }) }, null, 4)])], 64)) : props.pull.status === "success" ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [createElementVNode("div", _hoisted_5$9, "Pulled " + toDisplayString(props.pull.model), 1), (openBlock(true), createElementBlock(Fragment, null, renderList(props.pull.verdict || [], (v) => {
+			}, toDisplayString(CANCEL))]), createElementVNode("div", _hoisted_4$13, [createElementVNode("span", { style: normalizeStyle({ width: props.pull.pct + "%" }) }, null, 4)])], 64)) : props.pull.status === "success" ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [createElementVNode("div", _hoisted_5$11, "Pulled " + toDisplayString(props.pull.model), 1), (openBlock(true), createElementBlock(Fragment, null, renderList(props.pull.verdict || [], (v) => {
 				return openBlock(), createElementBlock("div", {
 					key: v,
 					class: "ollama-pull-line pull-verdict"
 				}, toDisplayString(v), 1);
-			}), 128))], 64)) : props.pull.status === "cancelled" ? (openBlock(), createElementBlock("div", _hoisted_6$8, " Cancelled pull of " + toDisplayString(props.pull.model), 1)) : (openBlock(), createElementBlock("div", _hoisted_7$8, "Pull of " + toDisplayString(props.pull.model) + " failed: " + toDisplayString(props.pull.error), 1))], 64)) : createCommentVNode("", true)], 8, _hoisted_1$19);
+			}), 128))], 64)) : props.pull.status === "cancelled" ? (openBlock(), createElementBlock("div", _hoisted_6$10, " Cancelled pull of " + toDisplayString(props.pull.model), 1)) : (openBlock(), createElementBlock("div", _hoisted_7$10, "Pull of " + toDisplayString(props.pull.model) + " failed: " + toDisplayString(props.pull.error), 1))], 64)) : createCommentVNode("", true)], 8, _hoisted_1$21);
 		};
 	}
 });
 //#endregion
 //#region src/features/OllamaHostCards.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$18 = {
+var _hoisted_1$20 = {
 	key: 0,
 	class: "setting-group install-row"
 };
-var _hoisted_2$14 = { class: "setting-toggle" };
-var _hoisted_3$12 = ["checked"];
-var _hoisted_4$10 = ["id", "data-host"];
-var _hoisted_5$8 = ["onClick"];
-var _hoisted_6$7 = ["title", "aria-label"];
-var _hoisted_7$7 = { class: "ollama-host-name" };
-var _hoisted_8$6 = ["hidden"];
-var _hoisted_9$6 = ["hidden"];
-var _hoisted_10$6 = { class: "ollama-model-list" };
-var _hoisted_11$5 = {
+var _hoisted_2$16 = { class: "setting-toggle" };
+var _hoisted_3$14 = ["checked"];
+var _hoisted_4$12 = ["id", "data-host"];
+var _hoisted_5$10 = ["onClick"];
+var _hoisted_6$9 = ["title", "aria-label"];
+var _hoisted_7$9 = { class: "ollama-host-name" };
+var _hoisted_8$8 = ["hidden"];
+var _hoisted_9$8 = ["hidden"];
+var _hoisted_10$8 = { class: "ollama-model-list" };
+var _hoisted_11$7 = {
 	key: 0,
 	class: "ollama-muted"
 };
-var _hoisted_12$5 = {
+var _hoisted_12$7 = {
 	key: 1,
 	class: "ollama-muted"
 };
-var _hoisted_13$5 = {
+var _hoisted_13$7 = {
 	key: 2,
 	class: "ollama-muted"
 };
-var _hoisted_14$5 = { class: "ollama-model-name" };
-var _hoisted_15$5 = { class: "ollama-model-meta" };
-var _hoisted_16$5 = ["title"];
-var _hoisted_17$5 = ["aria-label", "onClick"];
-var _hoisted_18$4 = { class: "ollama-model-name" };
-var _hoisted_19$4 = { class: "ollama-model-meta" };
-var _hoisted_20$4 = ["title"];
-var _hoisted_21$3 = { class: "ollama-pull-row" };
-var _hoisted_22$3 = ["onKeydown", "onInput"];
-var _hoisted_23$2 = ["onClick"];
-var _hoisted_24$2 = {
+var _hoisted_14$7 = { class: "ollama-model-name" };
+var _hoisted_15$7 = { class: "ollama-model-meta" };
+var _hoisted_16$7 = ["title"];
+var _hoisted_17$7 = ["aria-label", "onClick"];
+var _hoisted_18$5 = { class: "ollama-model-name" };
+var _hoisted_19$5 = { class: "ollama-model-meta" };
+var _hoisted_20$5 = ["title"];
+var _hoisted_21$4 = { class: "ollama-pull-row" };
+var _hoisted_22$4 = ["onKeydown", "onInput"];
+var _hoisted_23$3 = ["onClick"];
+var _hoisted_24$3 = {
 	key: 0,
 	class: "ollama-pull-status"
 };
@@ -16128,12 +16128,12 @@ var OllamaHostCards_default = /* @__PURE__ */ defineComponent({
 			props.onPreview(host, e.target.value);
 		}
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [unref(fitContext) !== null ? (openBlock(), createElementBlock("div", _hoisted_1$18, [createElementVNode("span", { class: "setting-label" }, toDisplayString(FIT_LABEL)), createElementVNode("label", _hoisted_2$14, [createElementVNode("input", {
+			return openBlock(), createElementBlock(Fragment, null, [unref(fitContext) !== null ? (openBlock(), createElementBlock("div", _hoisted_1$20, [createElementVNode("span", { class: "setting-label" }, toDisplayString(FIT_LABEL)), createElementVNode("label", _hoisted_2$16, [createElementVNode("input", {
 				type: "checkbox",
 				checked: unref(fitContext),
 				"aria-label": FIT_LABEL,
 				onChange: _cache[0] || (_cache[0] = ($event) => props.onFitContext($event.target.checked))
-			}, null, 40, _hoisted_3$12)])])) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(cards.value, (c) => {
+			}, null, 40, _hoisted_3$14)])])) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(cards.value, (c) => {
 				return openBlock(), createElementBlock("div", {
 					key: c.host,
 					class: "ollama-host-card",
@@ -16153,26 +16153,26 @@ var OllamaHostCards_default = /* @__PURE__ */ defineComponent({
 							role: "img",
 							title: c.healthTitle,
 							"aria-label": c.healthTitle
-						}, null, 10, _hoisted_6$7)) : createCommentVNode("", true),
-						createElementVNode("span", _hoisted_7$7, toDisplayString(c.label), 1),
+						}, null, 10, _hoisted_6$9)) : createCommentVNode("", true),
+						createElementVNode("span", _hoisted_7$9, toDisplayString(c.label), 1),
 						createElementVNode("span", {
 							class: "ollama-card-summary",
 							hidden: c.open
-						}, toDisplayString(c.summary), 9, _hoisted_8$6)
-					], 8, _hoisted_5$8),
+						}, toDisplayString(c.summary), 9, _hoisted_8$8)
+					], 8, _hoisted_5$10),
 					createElementVNode("div", { hidden: !c.open }, [
-						createElementVNode("ul", _hoisted_10$6, [c.phase === "loading" ? (openBlock(), createElementBlock("li", _hoisted_11$5, [_cache[1] || (_cache[1] = createElementVNode("span", {
+						createElementVNode("ul", _hoisted_10$8, [c.phase === "loading" ? (openBlock(), createElementBlock("li", _hoisted_11$7, [_cache[1] || (_cache[1] = createElementVNode("span", {
 							class: "btn-spinner",
 							"aria-hidden": "true"
-						}, null, -1)), createTextVNode(toDisplayString(LOADING$1))])) : c.phase === "error" ? (openBlock(), createElementBlock("li", _hoisted_12$5, toDisplayString(c.error), 1)) : c.selectable.length === 0 && c.system.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_13$5, toDisplayString(NO_MODELS))) : (openBlock(), createElementBlock(Fragment, { key: 3 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(c.selectable, (m) => {
+						}, null, -1)), createTextVNode(toDisplayString(LOADING$1))])) : c.phase === "error" ? (openBlock(), createElementBlock("li", _hoisted_12$7, toDisplayString(c.error), 1)) : c.selectable.length === 0 && c.system.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_13$7, toDisplayString(NO_MODELS))) : (openBlock(), createElementBlock(Fragment, { key: 3 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(c.selectable, (m) => {
 							return openBlock(), createElementBlock("li", { key: m.name }, [
-								createElementVNode("span", _hoisted_14$5, toDisplayString(m.name), 1),
-								createElementVNode("span", _hoisted_15$5, toDisplayString(m.meta), 1),
+								createElementVNode("span", _hoisted_14$7, toDisplayString(m.name), 1),
+								createElementVNode("span", _hoisted_15$7, toDisplayString(m.meta), 1),
 								m.loaded ? (openBlock(), createElementBlock("span", {
 									key: 0,
 									class: "ollama-loaded-badge",
 									title: m.vram
-								}, "in memory", 8, _hoisted_16$5)) : createCommentVNode("", true),
+								}, "in memory", 8, _hoisted_16$7)) : createCommentVNode("", true),
 								createVNode(SelectToggle_default, {
 									kind: "ollama",
 									endpoint: c.host,
@@ -16189,45 +16189,45 @@ var OllamaHostCards_default = /* @__PURE__ */ defineComponent({
 									"aria-label": `Remove ${m.name} from this server`,
 									title: "Remove from server…",
 									onClick: ($event) => props.onRemove(c.host, m.name)
-								}, "✕", 8, _hoisted_17$5)
+								}, "✕", 8, _hoisted_17$7)
 							]);
 						}), 128)), c.system.length ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("li", { class: "ollama-model-sysheading" }, toDisplayString(SYS_HEADING)), (openBlock(true), createElementBlock(Fragment, null, renderList(c.system, (m) => {
 							return openBlock(), createElementBlock("li", { key: m.name }, [
-								createElementVNode("span", _hoisted_18$4, toDisplayString(m.name), 1),
-								createElementVNode("span", _hoisted_19$4, toDisplayString(m.meta), 1),
+								createElementVNode("span", _hoisted_18$5, toDisplayString(m.name), 1),
+								createElementVNode("span", _hoisted_19$5, toDisplayString(m.meta), 1),
 								m.loaded ? (openBlock(), createElementBlock("span", {
 									key: 0,
 									class: "ollama-loaded-badge",
 									title: m.vram
-								}, "in memory", 8, _hoisted_20$4)) : createCommentVNode("", true),
+								}, "in memory", 8, _hoisted_20$5)) : createCommentVNode("", true),
 								createElementVNode("span", {
 									class: "ollama-model-systag",
 									title: CLASSIFIER_TITLE
 								}, toDisplayString(CLASSIFIER))
 							]);
 						}), 128))], 64)) : createCommentVNode("", true)], 64))]),
-						createElementVNode("div", _hoisted_21$3, [createElementVNode("input", {
+						createElementVNode("div", _hoisted_21$4, [createElementVNode("input", {
 							type: "text",
 							placeholder: PULL_PLACEHOLDER,
 							class: "ollama-pull-input",
 							onKeydown: ($event) => pullKey(c.host, $event),
 							onInput: ($event) => preview(c.host, $event)
-						}, null, 40, _hoisted_22$3), createElementVNode("button", {
+						}, null, 40, _hoisted_22$4), createElementVNode("button", {
 							class: "btn btn-secondary",
 							type: "button",
 							onClick: ($event) => pull(c.host, $event)
-						}, toDisplayString(PULL), 8, _hoisted_23$2)]),
+						}, toDisplayString(PULL), 8, _hoisted_23$3)]),
 						c.preview ? (openBlock(), createElementBlock("div", {
 							key: 0,
 							class: normalizeClass(["ollama-pull-preview", { warn: c.preview.warn }])
 						}, toDisplayString(c.preview.text), 3)) : createCommentVNode("", true)
-					], 8, _hoisted_9$6),
-					c.fit ? (openBlock(), createElementBlock("div", _hoisted_24$2, [createElementVNode("div", { class: normalizeClass(`ollama-pull-line ${c.fit.cls}`) }, toDisplayString(c.fit.text), 3)])) : createCommentVNode("", true),
+					], 8, _hoisted_9$8),
+					c.fit ? (openBlock(), createElementBlock("div", _hoisted_24$3, [createElementVNode("div", { class: normalizeClass(`ollama-pull-line ${c.fit.cls}`) }, toDisplayString(c.fit.text), 3)])) : createCommentVNode("", true),
 					createVNode(OllamaPullStatus_default, {
 						pull: c.pull,
 						"on-cancel": (m) => props.onCancel(c.host, m)
 					}, null, 8, ["pull", "on-cancel"])
-				], 8, _hoisted_4$10);
+				], 8, _hoisted_4$12);
 			}), 128))], 64);
 		};
 	}
@@ -19237,8 +19237,8 @@ async function resumeCopilotLogin() {
 }
 //#endregion
 //#region src/features/ConfirmInput.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$17 = ["placeholder"];
-var _hoisted_2$13 = ["hidden"];
+var _hoisted_1$19 = ["placeholder"];
+var _hoisted_2$15 = ["hidden"];
 //#endregion
 //#region src/features/ConfirmInput.vue
 var ConfirmInput_default = /* @__PURE__ */ defineComponent({
@@ -19267,17 +19267,17 @@ var ConfirmInput_default = /* @__PURE__ */ defineComponent({
 				placeholder: unref(s).placeholder,
 				autocomplete: "off",
 				ref: capture
-			}, toHandlers(unref(s).validate ? { input: onInput } : {}, true)), null, 16, _hoisted_1$17), unref(s).validate ? (openBlock(), createElementBlock("div", {
+			}, toHandlers(unref(s).validate ? { input: onInput } : {}, true)), null, 16, _hoisted_1$19), unref(s).validate ? (openBlock(), createElementBlock("div", {
 				key: 0,
 				class: "confirm-input-error",
 				hidden: !unref(s).error
-			}, toDisplayString(unref(s).error), 9, _hoisted_2$13)) : createCommentVNode("", true)], 64);
+			}, toDisplayString(unref(s).error), 9, _hoisted_2$15)) : createCommentVNode("", true)], 64);
 		};
 	}
 });
 //#endregion
 //#region src/features/ConfirmToggle.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$16 = {
+var _hoisted_1$18 = {
 	key: 0,
 	class: "import-note"
 };
@@ -19305,19 +19305,19 @@ var ConfirmToggle_default = /* @__PURE__ */ defineComponent({
 					ref_for: true,
 					ref: (el) => capture(el, i)
 				}, null, 512)]);
-			}), 128)), unref(s).note ? (openBlock(), createElementBlock("div", _hoisted_1$16, toDisplayString(unref(s).note), 1)) : createCommentVNode("", true)], 64);
+			}), 128)), unref(s).note ? (openBlock(), createElementBlock("div", _hoisted_1$18, toDisplayString(unref(s).note), 1)) : createCommentVNode("", true)], 64);
 		};
 	}
 });
 //#endregion
 //#region src/features/ConfirmModal.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$15 = { class: "modal-header" };
-var _hoisted_2$12 = {
+var _hoisted_1$17 = { class: "modal-header" };
+var _hoisted_2$14 = {
 	key: 0,
 	class: "modal-body"
 };
-var _hoisted_3$11 = { class: "confirm-actions" };
-var _hoisted_4$9 = ["onClick"];
+var _hoisted_3$13 = { class: "confirm-actions" };
+var _hoisted_4$11 = ["onClick"];
 //#endregion
 //#region src/features/ConfirmModal.vue
 var ConfirmModal_default = /* @__PURE__ */ defineComponent({
@@ -19358,13 +19358,13 @@ var ConfirmModal_default = /* @__PURE__ */ defineComponent({
 		onUnmounted(() => document.removeEventListener("keydown", onKey));
 		return (_ctx, _cache) => {
 			return openBlock(), createElementBlock("div", { class: normalizeClass(modalClass.value) }, [
-				createElementVNode("div", _hoisted_1$15, [createElementVNode("span", null, toDisplayString(__props.title || "Confirm"), 1)]),
-				hasBody.value ? (openBlock(), createElementBlock("div", _hoisted_2$12, [createElementVNode("div", {
+				createElementVNode("div", _hoisted_1$17, [createElementVNode("span", null, toDisplayString(__props.title || "Confirm"), 1)]),
+				hasBody.value ? (openBlock(), createElementBlock("div", _hoisted_2$14, [createElementVNode("div", {
 					ref_key: "message",
 					ref: message,
 					class: "confirm-message"
 				}, toDisplayString(isEl.value ? "" : __props.body), 513)])) : createCommentVNode("", true),
-				createElementVNode("div", _hoisted_3$11, [
+				createElementVNode("div", _hoisted_3$13, [
 					createElementVNode("button", {
 						ref_key: "cancelEl",
 						ref: cancelEl,
@@ -19378,7 +19378,7 @@ var ConfirmModal_default = /* @__PURE__ */ defineComponent({
 							type: "button",
 							class: normalizeClass(a.className || "btn btn-secondary"),
 							onClick: ($event) => props.onPick(a.value)
-						}, toDisplayString(a.label), 11, _hoisted_4$9);
+						}, toDisplayString(a.label), 11, _hoisted_4$11);
 					}), 128)),
 					createElementVNode("button", {
 						ref_key: "confirmEl",
@@ -19400,17 +19400,17 @@ var mentionMatches = ref([]);
 var mentionSelectedIndex = ref(0);
 //#endregion
 //#region src/features/MentionPopover.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$14 = ["onMousedown", "onTouchstart"];
-var _hoisted_2$11 = { class: "mention-popover-slug" };
-var _hoisted_3$10 = {
+var _hoisted_1$16 = ["onMousedown", "onTouchstart"];
+var _hoisted_2$13 = { class: "mention-popover-slug" };
+var _hoisted_3$12 = {
 	key: 0,
 	class: "mention-popover-name"
 };
-var _hoisted_4$8 = {
+var _hoisted_4$10 = {
 	key: 1,
 	class: "mention-popover-person"
 };
-var _hoisted_5$7 = {
+var _hoisted_5$9 = {
 	key: 2,
 	class: "mention-popover-prime"
 };
@@ -19442,10 +19442,10 @@ var MentionPopover_default = /* @__PURE__ */ defineComponent({
 					onMousedown: ($event) => pick($event, i),
 					onTouchstart: withModifiers(($event) => pick($event, i), ["prevent"])
 				}, [
-					createElementVNode("span", _hoisted_2$11, "@" + toDisplayString(agent.folder), 1),
-					agent.name && agent.name !== agent.folder ? (openBlock(), createElementBlock("span", _hoisted_3$10, toDisplayString(nameLabel(agent)), 1)) : createCommentVNode("", true),
-					agent.isUser ? (openBlock(), createElementBlock("span", _hoisted_4$8, toDisplayString(PERSON))) : agent.is_prime ? (openBlock(), createElementBlock("span", _hoisted_5$7, toDisplayString(DEFAULT_AGENT))) : createCommentVNode("", true)
-				], 42, _hoisted_1$14);
+					createElementVNode("span", _hoisted_2$13, "@" + toDisplayString(agent.folder), 1),
+					agent.name && agent.name !== agent.folder ? (openBlock(), createElementBlock("span", _hoisted_3$12, toDisplayString(nameLabel(agent)), 1)) : createCommentVNode("", true),
+					agent.isUser ? (openBlock(), createElementBlock("span", _hoisted_4$10, toDisplayString(PERSON))) : agent.is_prime ? (openBlock(), createElementBlock("span", _hoisted_5$9, toDisplayString(DEFAULT_AGENT))) : createCommentVNode("", true)
+				], 42, _hoisted_1$16);
 			}), 128);
 		};
 	}
@@ -19458,11 +19458,11 @@ var codexUserCode = ref("");
 var codexActive = ref(false);
 //#endregion
 //#region src/features/CodexPairingCode.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$13 = {
+var _hoisted_1$15 = {
 	class: "icon",
 	"aria-hidden": "true"
 };
-var _hoisted_2$10 = ["href"];
+var _hoisted_2$12 = ["href"];
 var PREFIX = "Pairing code: ";
 var NO_CODE = "Open the link, then approve the sign-in.";
 var COPY_TITLE = "Copy";
@@ -19500,7 +19500,7 @@ var CodexPairingCode_default = /* @__PURE__ */ defineComponent({
 					title: COPY_TITLE,
 					"aria-label": COPY_LABEL,
 					onClick: copy
-				}, [(openBlock(), createElementBlock("svg", _hoisted_1$13, [createElementVNode("use", { href: copied.value ? "#i-check" : "#i-copy" }, null, 8, _hoisted_2$10)]))], 2)
+				}, [(openBlock(), createElementBlock("svg", _hoisted_1$15, [createElementVNode("use", { href: copied.value ? "#i-check" : "#i-copy" }, null, 8, _hoisted_2$12)]))], 2)
 			], 64)) : unref(codexActive) ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [createTextVNode(toDisplayString(NO_CODE))], 64)) : createCommentVNode("", true);
 		};
 	}
@@ -20349,101 +20349,101 @@ async function setDockerHub(on) {
 }
 //#endregion
 //#region src/features/AgentApps.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$12 = {
+var _hoisted_1$14 = {
 	key: 0,
 	class: "apps"
 };
-var _hoisted_2$9 = {
+var _hoisted_2$11 = {
 	key: 0,
 	class: "cred-hint apps-gate"
 };
-var _hoisted_3$9 = {
+var _hoisted_3$11 = {
 	key: 0,
 	id: "agent-apps-docker-hub",
 	class: "setting-group install-row apps-builds"
 };
-var _hoisted_4$7 = {
+var _hoisted_4$9 = {
 	key: 0,
 	class: "btn-spinner",
 	"aria-hidden": "true"
 };
-var _hoisted_5$6 = {
+var _hoisted_5$8 = {
 	key: 1,
 	class: "app-state app-state-needs-approval"
 };
-var _hoisted_6$6 = { class: "setting-toggle" };
-var _hoisted_7$6 = ["checked", "disabled"];
-var _hoisted_8$5 = {
+var _hoisted_6$8 = { class: "setting-toggle" };
+var _hoisted_7$8 = ["checked", "disabled"];
+var _hoisted_8$7 = {
 	key: 1,
 	id: "agent-apps-docker-hub",
 	class: "cred-hint apps-gate"
 };
-var _hoisted_9$5 = {
+var _hoisted_9$7 = {
 	key: 2,
 	class: "cred-hint err",
 	role: "alert"
 };
-var _hoisted_10$5 = {
+var _hoisted_10$7 = {
 	key: 3,
 	class: "apps-empty"
 };
-var _hoisted_11$4 = {
+var _hoisted_11$6 = {
 	key: 4,
 	class: "apps-list"
 };
-var _hoisted_12$4 = ["aria-busy"];
-var _hoisted_13$4 = { class: "app-row-head" };
-var _hoisted_14$4 = { class: "app-name" };
-var _hoisted_15$4 = {
+var _hoisted_12$6 = ["aria-busy"];
+var _hoisted_13$6 = { class: "app-row-head" };
+var _hoisted_14$6 = { class: "app-name" };
+var _hoisted_15$6 = {
 	key: 0,
 	class: "btn-spinner",
 	"aria-hidden": "true"
 };
-var _hoisted_16$4 = ["href"];
-var _hoisted_17$4 = [
+var _hoisted_16$6 = ["href"];
+var _hoisted_17$6 = [
 	"aria-label",
 	"aria-expanded",
 	"onClick",
 	"innerHTML"
 ];
-var _hoisted_18$3 = {
+var _hoisted_18$4 = {
 	key: 0,
 	class: "app-row-controls"
 };
-var _hoisted_19$3 = [
+var _hoisted_19$4 = [
 	"value",
 	"disabled",
 	"onChange"
 ];
-var _hoisted_20$3 = ["value"];
-var _hoisted_21$2 = [
+var _hoisted_20$4 = ["value"];
+var _hoisted_21$3 = [
 	"value",
 	"disabled",
 	"onChange"
 ];
-var _hoisted_22$2 = ["value"];
-var _hoisted_23$1 = [
+var _hoisted_22$3 = ["value"];
+var _hoisted_23$2 = [
 	"aria-expanded",
 	"onClick",
 	"innerHTML"
 ];
-var _hoisted_24$1 = [
+var _hoisted_24$2 = [
 	"value",
 	"disabled",
 	"onChange"
 ];
-var _hoisted_25$1 = ["value"];
-var _hoisted_26$1 = ["onClick"];
-var _hoisted_27$1 = {
+var _hoisted_25$2 = ["value"];
+var _hoisted_26$2 = ["onClick"];
+var _hoisted_27$2 = {
 	key: 1,
 	class: "cred-hint"
 };
-var _hoisted_28$1 = {
+var _hoisted_28$2 = {
 	key: 2,
 	class: "cred-hint err",
 	role: "alert"
 };
-var _hoisted_29$1 = {
+var _hoisted_29$2 = {
 	key: 3,
 	class: "app-menu",
 	role: "menu"
@@ -20567,32 +20567,32 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 			onWhoChange(r, v);
 		}
 		return (_ctx, _cache) => {
-			return view.value ? (openBlock(), createElementBlock("div", _hoisted_1$12, [
-				!view.value.available ? (openBlock(), createElementBlock("p", _hoisted_2$9, " Workloads are off — an owner turns them on in Admin → Publishing ")) : createCommentVNode("", true),
+			return view.value ? (openBlock(), createElementBlock("div", _hoisted_1$14, [
+				!view.value.available ? (openBlock(), createElementBlock("p", _hoisted_2$11, " Workloads are off — an owner turns them on in Admin → Publishing ")) : createCommentVNode("", true),
 				disk.value ? (openBlock(), createElementBlock("div", {
 					key: 1,
 					class: normalizeClass(["apps-disk", `apps-disk-${view.value.disk?.level}`])
 				}, toDisplayString(disk.value), 3)) : createCommentVNode("", true),
-				view.value.available && builds.value ? (openBlock(), createElementBlock(Fragment, { key: 2 }, [builds.value.on ? (openBlock(), createElementBlock("div", _hoisted_3$9, [
+				view.value.available && builds.value ? (openBlock(), createElementBlock(Fragment, { key: 2 }, [builds.value.on ? (openBlock(), createElementBlock("div", _hoisted_3$11, [
 					_cache[5] || (_cache[5] = createElementVNode("span", { class: "setting-label" }, "Allow Docker Hub for builds", -1)),
-					unref(appsBuildsBusy) ? (openBlock(), createElementBlock("span", _hoisted_4$7)) : builds.value.pending ? (openBlock(), createElementBlock("span", _hoisted_5$6, "Needs approval")) : createCommentVNode("", true),
-					createElementVNode("label", _hoisted_6$6, [createElementVNode("input", {
+					unref(appsBuildsBusy) ? (openBlock(), createElementBlock("span", _hoisted_4$9)) : builds.value.pending ? (openBlock(), createElementBlock("span", _hoisted_5$8, "Needs approval")) : createCommentVNode("", true),
+					createElementVNode("label", _hoisted_6$8, [createElementVNode("input", {
 						type: "checkbox",
 						"aria-label": "Allow Docker Hub for builds",
 						checked: builds.value.dockerHub,
 						disabled: unref(appsBuildsBusy) || builds.value.pending && !builds.value.dockerHub || void 0,
 						onChange: dockerHubChanged
-					}, null, 40, _hoisted_7$6)])
-				])) : (openBlock(), createElementBlock("p", _hoisted_8$5, " Builds are off — an owner turns them on in Admin → Publishing ")), unref(appsBuildsError) ? (openBlock(), createElementBlock("p", _hoisted_9$5, toDisplayString(unref(appsBuildsError)), 1)) : createCommentVNode("", true)], 64)) : createCommentVNode("", true),
-				!view.value.apps.length ? (openBlock(), createElementBlock("p", _hoisted_10$5, "No apps yet")) : (openBlock(), createElementBlock("ul", _hoisted_11$4, [(openBlock(true), createElementBlock(Fragment, null, renderList(view.value.apps, (r) => {
+					}, null, 40, _hoisted_7$8)])
+				])) : (openBlock(), createElementBlock("p", _hoisted_8$7, " Builds are off — an owner turns them on in Admin → Publishing ")), unref(appsBuildsError) ? (openBlock(), createElementBlock("p", _hoisted_9$7, toDisplayString(unref(appsBuildsError)), 1)) : createCommentVNode("", true)], 64)) : createCommentVNode("", true),
+				!view.value.apps.length ? (openBlock(), createElementBlock("p", _hoisted_10$7, "No apps yet")) : (openBlock(), createElementBlock("ul", _hoisted_11$6, [(openBlock(true), createElementBlock(Fragment, null, renderList(view.value.apps, (r) => {
 					return openBlock(), createElementBlock("li", {
 						key: unref(rowKey)(r),
 						class: "app-row",
 						"aria-busy": busy(r) || void 0
 					}, [
-						createElementVNode("div", _hoisted_13$4, [
-							createElementVNode("span", _hoisted_14$4, toDisplayString(r.app ?? r.workload), 1),
-							busy(r) ? (openBlock(), createElementBlock("span", _hoisted_15$4)) : createCommentVNode("", true),
+						createElementVNode("div", _hoisted_13$6, [
+							createElementVNode("span", _hoisted_14$6, toDisplayString(r.app ?? r.workload), 1),
+							busy(r) ? (openBlock(), createElementBlock("span", _hoisted_15$6)) : createCommentVNode("", true),
 							createElementVNode("span", { class: normalizeClass(["app-state", `app-state-${r.state}`]) }, toDisplayString(unref(STATE_LABEL)[r.state]), 3),
 							expiry(r) ? (openBlock(), createElementBlock("span", {
 								key: 1,
@@ -20604,7 +20604,7 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								href: r.url,
 								target: "_blank",
 								rel: "noopener noreferrer"
-							}, "Open ↗", 8, _hoisted_16$4)) : createCommentVNode("", true),
+							}, "Open ↗", 8, _hoisted_16$6)) : createCommentVNode("", true),
 							r.deployed ? (openBlock(), createElementBlock("button", {
 								key: 3,
 								class: "app-kebab",
@@ -20613,9 +20613,9 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								"aria-expanded": unref(appsMenuKey) === unref(rowKey)(r),
 								onClick: withModifiers(($event) => unref(toggleMenu)(r), ["stop"]),
 								innerHTML: unref(KEBAB)
-							}, null, 8, _hoisted_17$4)) : createCommentVNode("", true)
+							}, null, 8, _hoisted_17$6)) : createCommentVNode("", true)
 						]),
-						r.deployed ? (openBlock(), createElementBlock("div", _hoisted_18$3, [
+						r.deployed ? (openBlock(), createElementBlock("div", _hoisted_18$4, [
 							createElementVNode("select", {
 								value: r.route,
 								"aria-label": "Route",
@@ -20625,8 +20625,8 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								return openBlock(), createElementBlock("option", {
 									key: o.value,
 									value: o.value
-								}, toDisplayString(o.label), 9, _hoisted_20$3);
-							}), 128))], 40, _hoisted_19$3),
+								}, toDisplayString(o.label), 9, _hoisted_20$4);
+							}), 128))], 40, _hoisted_19$4),
 							!r.app && r.services.length > 1 ? (openBlock(), createElementBlock("select", {
 								key: 0,
 								value: unref(appsService).get(unref(rowKey)(r)) ?? r.services[0],
@@ -20637,8 +20637,8 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								return openBlock(), createElementBlock("option", {
 									key: sv,
 									value: sv
-								}, toDisplayString(sv), 9, _hoisted_22$2);
-							}), 128))], 40, _hoisted_21$2)) : createCommentVNode("", true),
+								}, toDisplayString(sv), 9, _hoisted_22$3);
+							}), 128))], 40, _hoisted_21$3)) : createCommentVNode("", true),
 							!r.app && !r.canPublish ? (openBlock(), createElementBlock("button", {
 								key: 1,
 								class: "feature-info-btn",
@@ -20647,7 +20647,7 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								"aria-label": "Why it can’t be published here",
 								onClick: ($event) => unref(toggleInfo)(r),
 								innerHTML: unref(INFO)
-							}, null, 8, _hoisted_23$1)) : createCommentVNode("", true),
+							}, null, 8, _hoisted_23$2)) : createCommentVNode("", true),
 							r.route !== "off" ? (openBlock(), createElementBlock("select", {
 								key: 2,
 								value: r.who,
@@ -20658,18 +20658,18 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								return openBlock(), createElementBlock("option", {
 									key: o.value,
 									value: o.value
-								}, toDisplayString(o.label), 9, _hoisted_25$1);
-							}), 128))], 40, _hoisted_24$1)) : createCommentVNode("", true),
+								}, toDisplayString(o.label), 9, _hoisted_25$2);
+							}), 128))], 40, _hoisted_24$2)) : createCommentVNode("", true),
 							r.who === "specific" && r.route === "cloudflare" ? (openBlock(), createElementBlock("button", {
 								key: 3,
 								class: "btn btn-ghost",
 								type: "button",
 								onClick: ($event) => unref(openPeople)(r)
-							}, toDisplayString(r.emails.length === 1 ? "1 person" : `${r.emails.length} people`), 9, _hoisted_26$1)) : createCommentVNode("", true)
+							}, toDisplayString(r.emails.length === 1 ? "1 person" : `${r.emails.length} people`), 9, _hoisted_26$2)) : createCommentVNode("", true)
 						])) : createCommentVNode("", true),
-						!r.app && !r.canPublish && unref(appsInfoKey) === unref(rowKey)(r) ? (openBlock(), createElementBlock("p", _hoisted_27$1, toDisplayString(NO_SERVICE))) : createCommentVNode("", true),
-						unref(appsErrors).get(unref(rowKey)(r)) ? (openBlock(), createElementBlock("p", _hoisted_28$1, toDisplayString(unref(appsErrors).get(unref(rowKey)(r))), 1)) : createCommentVNode("", true),
-						unref(appsMenuKey) === unref(rowKey)(r) ? (openBlock(), createElementBlock("div", _hoisted_29$1, [
+						!r.app && !r.canPublish && unref(appsInfoKey) === unref(rowKey)(r) ? (openBlock(), createElementBlock("p", _hoisted_27$2, toDisplayString(NO_SERVICE))) : createCommentVNode("", true),
+						unref(appsErrors).get(unref(rowKey)(r)) ? (openBlock(), createElementBlock("p", _hoisted_28$2, toDisplayString(unref(appsErrors).get(unref(rowKey)(r))), 1)) : createCommentVNode("", true),
+						unref(appsMenuKey) === unref(rowKey)(r) ? (openBlock(), createElementBlock("div", _hoisted_29$2, [
 							createElementVNode("button", {
 								type: "button",
 								role: "menuitem",
@@ -20752,7 +20752,7 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 							}, " Save ", 8, _hoisted_51$1)]),
 							people.value.bad.length ? (openBlock(), createElementBlock("p", _hoisted_52, "Not an email address: " + toDisplayString(people.value.bad.join(", ")), 1)) : createCommentVNode("", true)
 						]))], 64)) : createCommentVNode("", true)
-					], 8, _hoisted_12$4);
+					], 8, _hoisted_12$6);
 				}), 128))]))
 			])) : createCommentVNode("", true);
 		};
@@ -22628,7 +22628,7 @@ var prejudgeRows = ref([]);
 var prejudgeModelOptions = ref([]);
 //#endregion
 //#region src/features/PrejudgeActions.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$11 = [
+var _hoisted_1$13 = [
 	"data-action",
 	"checked",
 	"disabled",
@@ -22659,23 +22659,23 @@ var PrejudgeActions_default = /* @__PURE__ */ defineComponent({
 					checked: r.checked,
 					disabled: r.never || void 0,
 					onChange: ($event) => r.never ? void 0 : props.onToggle($event.target)
-				}, null, 40, _hoisted_1$11)], 16);
+				}, null, 40, _hoisted_1$13)], 16);
 			}), 128);
 		};
 	}
 });
 //#endregion
 //#region src/features/MyCredentials.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$10 = { class: "my-cred-head" };
-var _hoisted_2$8 = { class: "form-label" };
-var _hoisted_3$8 = ["onClick"];
-var _hoisted_4$6 = { class: "secret-effective" };
-var _hoisted_5$5 = { class: "skill-sources-list" };
-var _hoisted_6$5 = { class: "skill-info" };
-var _hoisted_7$5 = { class: "skill-head" };
-var _hoisted_8$4 = ["onClick"];
-var _hoisted_9$4 = { class: "secret-form" };
-var _hoisted_10$4 = ["disabled", "onClick"];
+var _hoisted_1$12 = { class: "my-cred-head" };
+var _hoisted_2$10 = { class: "form-label" };
+var _hoisted_3$10 = ["onClick"];
+var _hoisted_4$8 = { class: "secret-effective" };
+var _hoisted_5$7 = { class: "skill-sources-list" };
+var _hoisted_6$7 = { class: "skill-info" };
+var _hoisted_7$7 = { class: "skill-head" };
+var _hoisted_8$6 = ["onClick"];
+var _hoisted_9$6 = { class: "secret-form" };
+var _hoisted_10$6 = ["disabled", "onClick"];
 var ADD = "Add secret";
 var REMOVE = "Remove";
 var OPEN = "Open agent";
@@ -22719,23 +22719,23 @@ var MyCredentials_default = /* @__PURE__ */ defineComponent({
 					key: g.agentGroupId,
 					class: "my-cred-group"
 				}, [
-					createElementVNode("div", _hoisted_1$10, [createElementVNode("span", _hoisted_2$8, toDisplayString(g.name), 1), createElementVNode("button", {
+					createElementVNode("div", _hoisted_1$12, [createElementVNode("span", _hoisted_2$10, toDisplayString(g.name), 1), createElementVNode("button", {
 						class: "btn btn-ghost",
 						type: "button",
 						onClick: ($event) => props.onOpenAgent(g)
-					}, toDisplayString(OPEN), 8, _hoisted_3$8)]),
-					createElementVNode("p", _hoisted_4$6, toDisplayString(forYou(g)), 1),
-					createElementVNode("ul", _hoisted_5$5, [(openBlock(true), createElementBlock(Fragment, null, renderList(g.secrets, (sec, i) => {
+					}, toDisplayString(OPEN), 8, _hoisted_3$10)]),
+					createElementVNode("p", _hoisted_4$8, toDisplayString(forYou(g)), 1),
+					createElementVNode("ul", _hoisted_5$7, [(openBlock(true), createElementBlock(Fragment, null, renderList(g.secrets, (sec, i) => {
 						return openBlock(), createElementBlock("li", {
 							key: i,
 							class: "skill-source-row secret-row"
-						}, [createElementVNode("div", _hoisted_6$5, [createElementVNode("div", _hoisted_7$5, [createElementVNode("span", null, toDisplayString(sec.hostPattern), 1), createElementVNode("span", { class: "skill-badge secret-scope skill-badge-user" }, toDisplayString(BADGE))])]), createElementVNode("button", {
+						}, [createElementVNode("div", _hoisted_6$7, [createElementVNode("div", _hoisted_7$7, [createElementVNode("span", null, toDisplayString(sec.hostPattern), 1), createElementVNode("span", { class: "skill-badge secret-scope skill-badge-user" }, toDisplayString(BADGE))])]), createElementVNode("button", {
 							class: "btn btn-danger",
 							type: "button",
 							onClick: ($event) => props.onRemove(g, sec)
-						}, toDisplayString(REMOVE), 8, _hoisted_8$4)]);
+						}, toDisplayString(REMOVE), 8, _hoisted_8$6)]);
 					}), 128))]),
-					createElementVNode("div", _hoisted_9$4, [
+					createElementVNode("div", _hoisted_9$6, [
 						createElementVNode("label", { class: "secret-field" }, [createElementVNode("span", { class: "form-label" }, toDisplayString(HOST_LABEL)), createElementVNode("input", {
 							type: "text",
 							placeholder: HOST_PLACEHOLDER,
@@ -22753,7 +22753,7 @@ var MyCredentials_default = /* @__PURE__ */ defineComponent({
 							type: "button",
 							disabled: unref(myCredSaving).has(g.agentGroupId) || void 0,
 							onClick: ($event) => add(g, $event)
-						}, toDisplayString(ADD), 8, _hoisted_10$4)
+						}, toDisplayString(ADD), 8, _hoisted_10$6)
 					])
 				]);
 			}), 128);
@@ -22762,9 +22762,9 @@ var MyCredentials_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/Preflight.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$9 = { class: "preflight-check-head" };
-var _hoisted_2$7 = { class: "preflight-fix" };
-var _hoisted_3$7 = ["onClick"];
+var _hoisted_1$11 = { class: "preflight-check-head" };
+var _hoisted_2$9 = { class: "preflight-fix" };
+var _hoisted_3$9 = ["onClick"];
 var COPY = "Copy fix";
 var COPIED = "Copied";
 //#endregion
@@ -22792,11 +22792,11 @@ var Preflight_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("div", {
 					key: i,
 					class: normalizeClass(`preflight-check status-${c.status}`)
-				}, [createElementVNode("div", _hoisted_1$9, toDisplayString(c.head), 1), c.fix ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("pre", _hoisted_2$7, toDisplayString(c.fix), 1), createElementVNode("button", {
+				}, [createElementVNode("div", _hoisted_1$11, toDisplayString(c.head), 1), c.fix ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("pre", _hoisted_2$9, toDisplayString(c.fix), 1), createElementVNode("button", {
 					type: "button",
 					class: "btn btn-ghost",
 					onClick: ($event) => copy(c.fix)
-				}, toDisplayString(copied.value === c.fix ? COPIED : COPY), 9, _hoisted_3$7)], 64)) : createCommentVNode("", true)], 2);
+				}, toDisplayString(copied.value === c.fix ? COPIED : COPY), 9, _hoisted_3$9)], 64)) : createCommentVNode("", true)], 2);
 			}), 128));
 		};
 	}
@@ -23007,7 +23007,7 @@ async function connect$1() {
 }
 //#endregion
 //#region src/features/PrejudgeModelOptions.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$8 = ["value"];
+var _hoisted_1$10 = ["value"];
 var OFF = "Off";
 //#endregion
 //#region src/features/PrejudgeModelOptions.vue
@@ -23025,7 +23025,7 @@ var PrejudgeModelOptions_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("option", {
 					key: m.id,
 					value: m.id
-				}, toDisplayString(m.label), 9, _hoisted_1$8);
+				}, toDisplayString(m.label), 9, _hoisted_1$10);
 			}), 128))], 64);
 		};
 	}
@@ -25022,35 +25022,35 @@ var auditLoading = ref(false);
 var auditError = ref("");
 //#endregion
 //#region src/features/AuditLog.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$7 = { class: "audit-log" };
-var _hoisted_2$6 = { class: "audit-filters" };
-var _hoisted_3$6 = ["value"];
-var _hoisted_4$5 = ["value"];
-var _hoisted_5$4 = {
+var _hoisted_1$9 = { class: "audit-log" };
+var _hoisted_2$8 = { class: "audit-filters" };
+var _hoisted_3$8 = ["value"];
+var _hoisted_4$7 = ["value"];
+var _hoisted_5$6 = {
 	key: 0,
 	class: "cred-hint err"
 };
-var _hoisted_6$4 = {
+var _hoisted_6$6 = {
 	key: 1,
 	class: "cred-hint"
 };
-var _hoisted_7$4 = { class: "audit-rows" };
-var _hoisted_8$3 = { class: "audit-row-head" };
-var _hoisted_9$3 = { class: "audit-when" };
-var _hoisted_10$3 = { class: "audit-type" };
-var _hoisted_11$3 = {
+var _hoisted_7$6 = { class: "audit-rows" };
+var _hoisted_8$5 = { class: "audit-row-head" };
+var _hoisted_9$5 = { class: "audit-when" };
+var _hoisted_10$5 = { class: "audit-type" };
+var _hoisted_11$5 = {
 	key: 0,
 	class: "audit-action"
 };
-var _hoisted_12$3 = { class: "audit-row-meta" };
-var _hoisted_13$3 = { class: "audit-actor" };
-var _hoisted_14$3 = {
+var _hoisted_12$5 = { class: "audit-row-meta" };
+var _hoisted_13$5 = { class: "audit-actor" };
+var _hoisted_14$5 = {
 	key: 0,
 	class: "audit-detail"
 };
-var _hoisted_15$3 = { class: "audit-more" };
-var _hoisted_16$3 = ["disabled"];
-var _hoisted_17$3 = {
+var _hoisted_15$5 = { class: "audit-more" };
+var _hoisted_16$5 = ["disabled"];
+var _hoisted_17$5 = {
 	key: 1,
 	class: "cred-hint"
 };
@@ -25101,8 +25101,8 @@ var AuditLog_default = /* @__PURE__ */ defineComponent({
 			detail: detailOf(r)
 		})));
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock("div", _hoisted_1$7, [
-				createElementVNode("div", _hoisted_2$6, [withDirectives(createElementVNode("select", {
+			return openBlock(), createElementBlock("div", _hoisted_1$9, [
+				createElementVNode("div", _hoisted_2$8, [withDirectives(createElementVNode("select", {
 					"onUpdate:modelValue": _cache[0] || (_cache[0] = ($event) => isRef(auditFilterType) ? auditFilterType.value = $event : null),
 					"aria-label": "Filter by event type",
 					onChange: _cache[1] || (_cache[1] = ($event) => props.onFilter())
@@ -25110,7 +25110,7 @@ var AuditLog_default = /* @__PURE__ */ defineComponent({
 					return openBlock(), createElementBlock("option", {
 						key: t,
 						value: t
-					}, toDisplayString(t), 9, _hoisted_3$6);
+					}, toDisplayString(t), 9, _hoisted_3$8);
 				}), 128))], 544), [[vModelSelect, unref(auditFilterType)]]), withDirectives(createElementVNode("select", {
 					"onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => isRef(auditFilterEffect) ? auditFilterEffect.value = $event : null),
 					"aria-label": "Filter by outcome",
@@ -25119,39 +25119,39 @@ var AuditLog_default = /* @__PURE__ */ defineComponent({
 					return openBlock(), createElementBlock("option", {
 						key: e,
 						value: e
-					}, toDisplayString(e), 9, _hoisted_4$5);
+					}, toDisplayString(e), 9, _hoisted_4$7);
 				}), 128))], 544), [[vModelSelect, unref(auditFilterEffect)]])]),
-				unref(auditError) ? (openBlock(), createElementBlock("p", _hoisted_5$4, toDisplayString(unref(auditError)), 1)) : !rows.value.length && !unref(auditLoading) ? (openBlock(), createElementBlock("p", _hoisted_6$4, toDisplayString(EMPTY$1))) : createCommentVNode("", true),
-				createElementVNode("ul", _hoisted_7$4, [(openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
+				unref(auditError) ? (openBlock(), createElementBlock("p", _hoisted_5$6, toDisplayString(unref(auditError)), 1)) : !rows.value.length && !unref(auditLoading) ? (openBlock(), createElementBlock("p", _hoisted_6$6, toDisplayString(EMPTY$1))) : createCommentVNode("", true),
+				createElementVNode("ul", _hoisted_7$6, [(openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
 					return openBlock(), createElementBlock("li", {
 						key: r.key,
 						class: normalizeClass({ warn: r.warn })
-					}, [createElementVNode("div", _hoisted_8$3, [
-						createElementVNode("span", _hoisted_9$3, toDisplayString(r.when), 1),
-						createElementVNode("span", _hoisted_10$3, toDisplayString(r.type), 1),
-						r.action ? (openBlock(), createElementBlock("span", _hoisted_11$3, toDisplayString(r.action), 1)) : createCommentVNode("", true),
+					}, [createElementVNode("div", _hoisted_8$5, [
+						createElementVNode("span", _hoisted_9$5, toDisplayString(r.when), 1),
+						createElementVNode("span", _hoisted_10$5, toDisplayString(r.type), 1),
+						r.action ? (openBlock(), createElementBlock("span", _hoisted_11$5, toDisplayString(r.action), 1)) : createCommentVNode("", true),
 						r.effect ? (openBlock(), createElementBlock("span", {
 							key: 1,
 							class: normalizeClass(["audit-effect", { warn: r.warn }])
 						}, toDisplayString(r.effect), 3)) : createCommentVNode("", true)
-					]), createElementVNode("div", _hoisted_12$3, [createElementVNode("span", _hoisted_13$3, toDisplayString(r.actor), 1), r.detail ? (openBlock(), createElementBlock("span", _hoisted_14$3, toDisplayString(r.detail), 1)) : createCommentVNode("", true)])], 2);
+					]), createElementVNode("div", _hoisted_12$5, [createElementVNode("span", _hoisted_13$5, toDisplayString(r.actor), 1), r.detail ? (openBlock(), createElementBlock("span", _hoisted_14$5, toDisplayString(r.detail), 1)) : createCommentVNode("", true)])], 2);
 				}), 128))]),
-				createElementVNode("div", _hoisted_15$3, [unref(auditHasMore) ? (openBlock(), createElementBlock("button", {
+				createElementVNode("div", _hoisted_15$5, [unref(auditHasMore) ? (openBlock(), createElementBlock("button", {
 					key: 0,
 					class: "btn btn-secondary",
 					type: "button",
 					disabled: unref(auditLoading),
 					onClick: _cache[4] || (_cache[4] = ($event) => props.onOlder())
-				}, toDisplayString(OLDER), 8, _hoisted_16$3)) : unref(auditTruncated) ? (openBlock(), createElementBlock("span", _hoisted_17$3, toDisplayString(TRUNCATED))) : createCommentVNode("", true)])
+				}, toDisplayString(OLDER), 8, _hoisted_16$5)) : unref(auditTruncated) ? (openBlock(), createElementBlock("span", _hoisted_17$5, toDisplayString(TRUNCATED))) : createCommentVNode("", true)])
 			]);
 		};
 	}
 });
 //#endregion
 //#region src/features/audit-log.ts
-var app$1 = null;
+var app$2 = null;
 function mount() {
-	app$1 ??= mountIsland("#audit-log-view", () => createApp(AuditLog_default, {
+	app$2 ??= mountIsland("#audit-log-view", () => createApp(AuditLog_default, {
 		onFilter: () => void loadAuditLog(),
 		onOlder: () => void loadAuditLog({ older: true })
 	}));
@@ -25253,70 +25253,70 @@ async function connectRoute(kind, body) {
 }
 //#endregion
 //#region src/features/PublishingPanel.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$6 = {
+var _hoisted_1$8 = {
 	key: 0,
 	class: "publishing"
 };
-var _hoisted_2$5 = {
+var _hoisted_2$7 = {
 	id: "publishing-workloads",
 	class: "publishing-route"
 };
-var _hoisted_3$5 = { class: "setting-group install-row" };
-var _hoisted_4$4 = { class: "setting-toggle" };
-var _hoisted_5$3 = ["checked", "disabled"];
-var _hoisted_6$3 = {
+var _hoisted_3$7 = { class: "setting-group install-row" };
+var _hoisted_4$6 = { class: "setting-toggle" };
+var _hoisted_5$5 = ["checked", "disabled"];
+var _hoisted_6$5 = {
 	key: 0,
 	class: "cred-hint err"
 };
-var _hoisted_7$3 = ["title"];
-var _hoisted_8$2 = {
+var _hoisted_7$5 = ["title"];
+var _hoisted_8$4 = {
 	key: 0,
 	class: "btn-spinner",
 	"aria-hidden": "true"
 };
-var _hoisted_9$2 = {
+var _hoisted_9$4 = {
 	key: 1,
 	class: "publishing-dot",
 	"aria-hidden": "true"
 };
-var _hoisted_10$2 = {
+var _hoisted_10$4 = {
 	key: 0,
 	class: "publishing-fix"
 };
-var _hoisted_11$2 = {
+var _hoisted_11$4 = {
 	id: "publishing-confined-builds",
 	class: "setting-group install-row"
 };
-var _hoisted_12$2 = { class: "setting-toggle" };
-var _hoisted_13$2 = ["checked", "disabled"];
-var _hoisted_14$2 = {
+var _hoisted_12$4 = { class: "setting-toggle" };
+var _hoisted_13$4 = ["checked", "disabled"];
+var _hoisted_14$4 = {
 	key: 1,
 	class: "cred-hint err"
 };
-var _hoisted_15$2 = ["title"];
-var _hoisted_16$2 = {
+var _hoisted_15$4 = ["title"];
+var _hoisted_16$4 = {
 	key: 0,
 	class: "publishing-fix"
 };
-var _hoisted_17$2 = ["title"];
-var _hoisted_18$2 = { class: "publishing-route" };
-var _hoisted_19$2 = { class: "setting-group install-row" };
-var _hoisted_20$2 = { class: "setting-toggle" };
-var _hoisted_21$1 = ["checked", "disabled"];
-var _hoisted_22$1 = {
+var _hoisted_17$4 = ["title"];
+var _hoisted_18$3 = { class: "publishing-route" };
+var _hoisted_19$3 = { class: "setting-group install-row" };
+var _hoisted_20$3 = { class: "setting-toggle" };
+var _hoisted_21$2 = ["checked", "disabled"];
+var _hoisted_22$2 = {
 	key: 0,
 	class: "cred-hint err"
 };
-var _hoisted_23 = ["title"];
-var _hoisted_24 = ["title"];
-var _hoisted_25 = { class: "secret-form" };
-var _hoisted_26 = { class: "secret-field" };
-var _hoisted_27 = ["disabled"];
-var _hoisted_28 = {
+var _hoisted_23$1 = ["title"];
+var _hoisted_24$1 = ["title"];
+var _hoisted_25$1 = { class: "secret-form" };
+var _hoisted_26$1 = { class: "secret-field" };
+var _hoisted_27$1 = ["disabled"];
+var _hoisted_28$1 = {
 	key: 0,
 	class: "cred-hint err"
 };
-var _hoisted_29 = { class: "secret-form" };
+var _hoisted_29$1 = { class: "secret-form" };
 var _hoisted_30 = { class: "secret-field" };
 var _hoisted_31 = { class: "secret-field" };
 var _hoisted_32 = {
@@ -25508,40 +25508,40 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 			}
 		}
 		return (_ctx, _cache) => {
-			return view.value ? (openBlock(), createElementBlock("div", _hoisted_1$6, [
-				createElementVNode("div", _hoisted_2$5, [
-					createElementVNode("div", _hoisted_3$5, [_cache[12] || (_cache[12] = createElementVNode("span", { class: "setting-label" }, "Workloads", -1)), createElementVNode("label", _hoisted_4$4, [createElementVNode("input", {
+			return view.value ? (openBlock(), createElementBlock("div", _hoisted_1$8, [
+				createElementVNode("div", _hoisted_2$7, [
+					createElementVNode("div", _hoisted_3$7, [_cache[12] || (_cache[12] = createElementVNode("span", { class: "setting-label" }, "Workloads", -1)), createElementVNode("label", _hoisted_4$6, [createElementVNode("input", {
 						type: "checkbox",
 						"aria-label": "Workloads",
 						checked: view.value.workloads.on,
 						disabled: busy.value === "workloads-switch" || void 0,
 						onChange: _cache[0] || (_cache[0] = ($event) => toggleHost("workloads", $event))
-					}, null, 40, _hoisted_5$3)])]),
-					errors["workloads.on"] || errors["workloads.form"] ? (openBlock(), createElementBlock("p", _hoisted_6$3, toDisplayString(errors["workloads.on"] || errors["workloads.form"]), 1)) : createCommentVNode("", true),
+					}, null, 40, _hoisted_5$5)])]),
+					errors["workloads.on"] || errors["workloads.form"] ? (openBlock(), createElementBlock("p", _hoisted_6$5, toDisplayString(errors["workloads.on"] || errors["workloads.form"]), 1)) : createCommentVNode("", true),
 					view.value.workloads.on ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [
 						createElementVNode("p", {
 							class: normalizeClass(["publishing-status", { ok: view.value.workloads.status.ok }]),
 							title: view.value.workloads.status.detail || void 0
-						}, [view.value.workloads.status.checking ? (openBlock(), createElementBlock("span", _hoisted_8$2)) : (openBlock(), createElementBlock("span", _hoisted_9$2)), createTextVNode(toDisplayString(view.value.workloads.status.text), 1)], 10, _hoisted_7$3),
-						view.value.workloads.status.fix ? (openBlock(), createElementBlock("p", _hoisted_10$2, [createElementVNode("code", null, toDisplayString(view.value.workloads.status.fix), 1), createVNode(CopyIconButton_default, {
+						}, [view.value.workloads.status.checking ? (openBlock(), createElementBlock("span", _hoisted_8$4)) : (openBlock(), createElementBlock("span", _hoisted_9$4)), createTextVNode(toDisplayString(view.value.workloads.status.text), 1)], 10, _hoisted_7$5),
+						view.value.workloads.status.fix ? (openBlock(), createElementBlock("p", _hoisted_10$4, [createElementVNode("code", null, toDisplayString(view.value.workloads.status.fix), 1), createVNode(CopyIconButton_default, {
 							text: view.value.workloads.status.fix,
 							label: "Copy command"
 						}, null, 8, ["text"])])) : createCommentVNode("", true),
-						createElementVNode("div", _hoisted_11$2, [_cache[13] || (_cache[13] = createElementVNode("span", { class: "setting-label" }, "Confined builds", -1)), createElementVNode("label", _hoisted_12$2, [createElementVNode("input", {
+						createElementVNode("div", _hoisted_11$4, [_cache[13] || (_cache[13] = createElementVNode("span", { class: "setting-label" }, "Confined builds", -1)), createElementVNode("label", _hoisted_12$4, [createElementVNode("input", {
 							type: "checkbox",
 							"aria-label": "Confined builds",
 							checked: view.value.builds.on,
 							disabled: busy.value === "builds-switch" || void 0,
 							onChange: _cache[1] || (_cache[1] = ($event) => toggleHost("builds", $event))
-						}, null, 40, _hoisted_13$2)])]),
-						errors["builds.confinedBuilds"] || errors["builds.form"] ? (openBlock(), createElementBlock("p", _hoisted_14$2, toDisplayString(errors["builds.confinedBuilds"] || errors["builds.form"]), 1)) : createCommentVNode("", true),
+						}, null, 40, _hoisted_13$4)])]),
+						errors["builds.confinedBuilds"] || errors["builds.form"] ? (openBlock(), createElementBlock("p", _hoisted_14$4, toDisplayString(errors["builds.confinedBuilds"] || errors["builds.form"]), 1)) : createCommentVNode("", true),
 						view.value.builds.on ? (openBlock(), createElementBlock(Fragment, { key: 2 }, [createElementVNode("p", {
 							class: normalizeClass(["publishing-status", { ok: view.value.builds.status.ok }]),
 							title: view.value.builds.status.detail || void 0
 						}, [_cache[14] || (_cache[14] = createElementVNode("span", {
 							class: "publishing-dot",
 							"aria-hidden": "true"
-						}, null, -1)), createTextVNode(toDisplayString(view.value.builds.status.text), 1)], 10, _hoisted_15$2), view.value.builds.status.fix ? (openBlock(), createElementBlock("p", _hoisted_16$2, [createElementVNode("code", null, toDisplayString(view.value.builds.status.fix), 1), createVNode(CopyIconButton_default, {
+						}, null, -1)), createTextVNode(toDisplayString(view.value.builds.status.text), 1)], 10, _hoisted_15$4), view.value.builds.status.fix ? (openBlock(), createElementBlock("p", _hoisted_16$4, [createElementVNode("code", null, toDisplayString(view.value.builds.status.fix), 1), createVNode(CopyIconButton_default, {
 							text: view.value.builds.status.fix,
 							label: "Copy command"
 						}, null, 8, ["text"])])) : createCommentVNode("", true)], 64)) : createCommentVNode("", true)
@@ -25551,16 +25551,16 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 					key: 0,
 					class: "cred-hint err publishing-gate",
 					title: view.value.gate.detail || void 0
-				}, toDisplayString(view.value.gate.text), 9, _hoisted_17$2)) : createCommentVNode("", true),
-				createElementVNode("div", _hoisted_18$2, [
-					createElementVNode("div", _hoisted_19$2, [_cache[15] || (_cache[15] = createElementVNode("span", { class: "setting-label" }, "Tailnet", -1)), createElementVNode("label", _hoisted_20$2, [createElementVNode("input", {
+				}, toDisplayString(view.value.gate.text), 9, _hoisted_17$4)) : createCommentVNode("", true),
+				createElementVNode("div", _hoisted_18$3, [
+					createElementVNode("div", _hoisted_19$3, [_cache[15] || (_cache[15] = createElementVNode("span", { class: "setting-label" }, "Tailnet", -1)), createElementVNode("label", _hoisted_20$3, [createElementVNode("input", {
 						type: "checkbox",
 						"aria-label": "Tailnet",
 						checked: view.value.tailnet.on,
 						disabled: busy.value === "tailnet-switch" || void 0,
 						onChange: _cache[2] || (_cache[2] = ($event) => toggle("tailnet", $event))
-					}, null, 40, _hoisted_21$1)])]),
-					errors["tailnet.on"] || errors["tailnet.form"] ? (openBlock(), createElementBlock("p", _hoisted_22$1, toDisplayString(errors["tailnet.on"] || errors["tailnet.form"]), 1)) : createCommentVNode("", true),
+					}, null, 40, _hoisted_21$2)])]),
+					errors["tailnet.on"] || errors["tailnet.form"] ? (openBlock(), createElementBlock("p", _hoisted_22$2, toDisplayString(errors["tailnet.on"] || errors["tailnet.form"]), 1)) : createCommentVNode("", true),
 					view.value.tailnet.on ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [
 						createElementVNode("p", {
 							class: normalizeClass(["publishing-status", { ok: view.value.tailnet.status.ok }]),
@@ -25568,15 +25568,15 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 						}, [_cache[16] || (_cache[16] = createElementVNode("span", {
 							class: "publishing-dot",
 							"aria-hidden": "true"
-						}, null, -1)), createTextVNode(toDisplayString(view.value.tailnet.status.text), 1)], 10, _hoisted_23),
+						}, null, -1)), createTextVNode(toDisplayString(view.value.tailnet.status.text), 1)], 10, _hoisted_23$1),
 						(openBlock(true), createElementBlock(Fragment, null, renderList(view.value.tailnet.status.warnings, (w) => {
 							return openBlock(), createElementBlock("p", {
 								key: w.detail,
 								class: "cred-hint",
 								title: w.detail
-							}, toDisplayString(w.text), 9, _hoisted_24);
+							}, toDisplayString(w.text), 9, _hoisted_24$1);
 						}), 128)),
-						createElementVNode("div", _hoisted_25, [createElementVNode("label", _hoisted_26, [_cache[17] || (_cache[17] = createElementVNode("span", { class: "form-label" }, "Tailnet name", -1)), withDirectives(createElementVNode("input", {
+						createElementVNode("div", _hoisted_25$1, [createElementVNode("label", _hoisted_26$1, [_cache[17] || (_cache[17] = createElementVNode("span", { class: "form-label" }, "Tailnet name", -1)), withDirectives(createElementVNode("input", {
 							"onUpdate:modelValue": _cache[3] || (_cache[3] = ($event) => tsDomain.value = $event),
 							type: "text",
 							placeholder: "tail1234.ts.net",
@@ -25592,15 +25592,15 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 							busy: busy.value === "tailnet-save",
 							label: "Save",
 							"busy-label": "Saving…"
-						}, null, 8, ["busy"])], 8, _hoisted_27)]),
-						errors["tailnet.domain"] ? (openBlock(), createElementBlock("p", _hoisted_28, toDisplayString(errors["tailnet.domain"]), 1)) : createCommentVNode("", true),
+						}, null, 8, ["busy"])], 8, _hoisted_27$1)]),
+						errors["tailnet.domain"] ? (openBlock(), createElementBlock("p", _hoisted_28$1, toDisplayString(errors["tailnet.domain"]), 1)) : createCommentVNode("", true),
 						connecting.value !== "tailnet" ? (openBlock(), createElementBlock("button", {
 							key: 1,
 							class: "btn btn-secondary publishing-connect",
 							type: "button",
 							onClick: _cache[4] || (_cache[4] = ($event) => openConnect("tailnet"))
 						}, toDisplayString(unref(connectLabel)(view.value.tailnet.status)), 1)) : (openBlock(), createElementBlock(Fragment, { key: 2 }, [
-							createElementVNode("div", _hoisted_29, [createElementVNode("label", _hoisted_30, [_cache[18] || (_cache[18] = createElementVNode("span", { class: "form-label" }, "Client ID", -1)), withDirectives(createElementVNode("input", {
+							createElementVNode("div", _hoisted_29$1, [createElementVNode("label", _hoisted_30, [_cache[18] || (_cache[18] = createElementVNode("span", { class: "form-label" }, "Client ID", -1)), withDirectives(createElementVNode("input", {
 								"onUpdate:modelValue": _cache[5] || (_cache[5] = ($event) => secret.clientId = $event),
 								type: "text",
 								autocomplete: "off",
@@ -25739,6 +25739,765 @@ async function renderPublishingSettings() {
 	panelApp ??= mountIsland("#publishing-panel", () => createApp(PublishingPanel_default));
 }
 //#endregion
+//#region src/features/machines-view.ts
+/**
+* The isolation line of a worker row: "Isolated", "Not isolated — host rules
+* missing" (with the fix behind the ⓘ), "Not checked yet" or "Not checked
+* recently" (its last pass is too old to count). `fix` says
+* whether the row offers the host-rules command.
+*/
+function isolationLine(m) {
+	if (m.role !== "worker" || m.state === "revoked" || !m.isolation) return null;
+	switch (m.isolation.status) {
+		case "ok": return {
+			text: "Isolated",
+			tone: "ok",
+			fix: false
+		};
+		case "open": {
+			const stopped = (m.placed ?? []).filter((p) => p.state === "stopped" && p.error).length;
+			return {
+				text: `Not isolated — host rules missing${stopped ? ` · ${stopped} stopped` : ""}`,
+				tone: "bad",
+				fix: true
+			};
+		}
+		case "stale": return {
+			text: "Not checked recently",
+			tone: "dim",
+			fix: false
+		};
+		default: return {
+			text: "Not checked yet",
+			tone: "dim",
+			fix: false
+		};
+	}
+}
+/** A worker that reports but has no link: its worker service is missing or down. */
+var needsWorker = (m) => m.role === "worker" && m.state !== "revoked" && m.healthy && m.linked === false;
+/** "demo · 2 GB · running — M-A: most free memory; …" */
+function placedLine(p) {
+	return `${p.name} · ${Math.round(p.memoryMb / 1024 * 10) / 10} GB · ${p.state}${p.reason ? ` — ${p.reason}` : ""}`;
+}
+/** The one status word a row shows. */
+function statusOf(m) {
+	if (m.state === "revoked") return "revoked";
+	if (!m.healthy) return "offline";
+	return m.state === "draining" ? "draining" : "ready";
+}
+var gb = (mb) => `${Math.round(mb / 1024 * 10) / 10} GB`;
+/** "2.1/16 GB · 0.4/4 CPU · 40 GB free" from the last report, or the join facts. */
+function usageLine(m) {
+	const h = m.health;
+	if (!h) return `${gb(m.facts.memTotalMb)} · ${m.facts.cpus} CPU`;
+	return `${gb(h.memUsedMb)}/${gb(h.memTotalMb).replace(" GB", "")} GB · ${h.cpuUsed}/${h.cpus} CPU · ${h.diskFreeGb} GB free`;
+}
+/** What NanoClaw may use: "12.4 GB, 2.6 CPU", with "(cap)" where the owner's cap applies. */
+function availableLine(m) {
+	const a = m.available;
+	return `${`${gb(a.memMb)}${a.memBy === "cap" ? " (cap)" : ""}`}, ${`${a.cpus} CPU${a.cpusBy === "cap" ? " (cap)" : ""}`}`;
+}
+/** "just now", "5 min ago", "3 h ago", "never". */
+function ago(at, now = Date.now()) {
+	if (!at) return "never";
+	const s = Math.max(0, Math.round((now - at) / 1e3));
+	if (s < 60) return "just now";
+	if (s < 3600) return `${Math.round(s / 60)} min ago`;
+	if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+	return `${Math.round(s / 86400)} d ago`;
+}
+/** The cap form's values from a row: GB and CPUs as text, empty for none. */
+function capForm(m) {
+	return {
+		memGb: m.cap.memMb === null ? "" : String(Math.round(m.cap.memMb / 1024 * 10) / 10),
+		cpus: m.cap.cpus === null ? "" : String(m.cap.cpus)
+	};
+}
+//#endregion
+//#region src/features/ssh-join-view.ts
+var initialSsh = () => ({
+	phase: "form",
+	host: "",
+	port: "22",
+	username: "",
+	auth: "password",
+	output: ""
+});
+function reduceSsh(s, a) {
+	switch (a.type) {
+		case "probed": return {
+			...s,
+			phase: "confirm",
+			probeId: a.probeId,
+			fingerprint: a.fingerprint,
+			address: a.address
+		};
+		case "start": return {
+			...s,
+			phase: "running",
+			output: "",
+			ok: void 0,
+			error: void 0
+		};
+		case "event":
+			if (a.event.t === "out") return {
+				...s,
+				output: (s.output + a.event.s).slice(-2e5)
+			};
+			return {
+				...s,
+				phase: "done",
+				ok: a.event.ok,
+				error: a.event.error,
+				probeId: void 0
+			};
+		case "reset": return initialSsh();
+	}
+}
+/** Connect needs a host, a port and a user; Join a password or a key. */
+var canConnect = (s) => !!s.host.trim() && /^\d{1,5}$/.test(s.port.trim()) && Number(s.port) >= 1 && Number(s.port) <= 65535 && !!s.username.trim();
+var canJoin = (s, secret) => s.phase === "confirm" && (s.auth === "password" ? !!secret.password : !!secret.privateKey.trim());
+/** Split a server-sent event stream: whole events out, the unfinished tail kept for the next chunk. */
+function parseSse(buf) {
+	const parts = buf.split("\n\n");
+	const rest = parts.pop() ?? "";
+	const events = [];
+	for (const p of parts) {
+		const data = p.split("\n").filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trimStart()).join("\n");
+		if (!data) continue;
+		try {
+			events.push(JSON.parse(data));
+		} catch {}
+	}
+	return {
+		events,
+		rest
+	};
+}
+//#endregion
+//#region src/features/SshJoin.vue?vue&type=script&setup=true&lang.ts
+var _hoisted_1$7 = { class: "machine-ssh" };
+var _hoisted_2$6 = ["placeholder", "aria-label"];
+var _hoisted_3$6 = ["placeholder", "aria-label"];
+var _hoisted_4$5 = ["placeholder", "aria-label"];
+var _hoisted_5$4 = ["disabled"];
+var _hoisted_6$4 = { class: "setting-hint" };
+var _hoisted_7$4 = { class: "machine-ssh-fp" };
+var _hoisted_8$3 = { class: "machine-ssh-check" };
+var _hoisted_9$3 = ["aria-checked", "aria-label"];
+var _hoisted_10$3 = { class: "setting-options" };
+var _hoisted_11$3 = ["placeholder", "aria-label"];
+var _hoisted_12$3 = ["placeholder", "aria-label"];
+var _hoisted_13$3 = ["placeholder", "aria-label"];
+var _hoisted_14$3 = { class: "secret-actions" };
+var _hoisted_15$3 = ["disabled"];
+var _hoisted_16$3 = {
+	class: "roster-refresh-log machine-ssh-out",
+	"aria-live": "polite"
+};
+var _hoisted_17$3 = { class: "secret-actions" };
+//#endregion
+//#region src/features/SshJoin.vue
+var SshJoin_default = /* @__PURE__ */ defineComponent({
+	__name: "SshJoin",
+	emits: ["close"],
+	setup(__props, { emit: __emit }) {
+		/**
+		* Admin → Machines → Join over SSH. Step 1 (Connect) shows the host key's
+		* fingerprint; only after the person confirms it do the password or key go
+		* to NanoClaw, which signs in and runs the installer, output streamed here.
+		* The secrets live in this component's inputs only until Join is pressed:
+		* they are cleared as the request is built. Server: server/routes-scaling.ts.
+		*/
+		const emit = __emit;
+		const T = {
+			host: "Host",
+			port: "Port",
+			user: "Username",
+			connect: "Connect",
+			fp: "Host key",
+			confirm: "Matches the server",
+			password: "Password",
+			key: "Private key",
+			passphrase: "Passphrase",
+			join: "Join",
+			cancel: "Cancel",
+			done: "Done",
+			joined: "Joined"
+		};
+		const s = ref(initialSsh());
+		const secret = reactive({
+			password: "",
+			privateKey: "",
+			passphrase: ""
+		});
+		const confirmed = ref(false);
+		const busy = ref(false);
+		let ctrl = null;
+		const dispatch = (a) => {
+			s.value = reduceSsh(s.value, a);
+		};
+		const fail = (err) => {
+			showToast(err?.body?.error || err?.message || String(err), { kind: "error" });
+		};
+		async function connect() {
+			busy.value = true;
+			try {
+				const r = await apiJson("/api/scaling/machines/ssh/probe", {
+					method: "POST",
+					body: {
+						host: s.value.host.trim(),
+						port: Number(s.value.port)
+					}
+				});
+				confirmed.value = false;
+				dispatch({
+					type: "probed",
+					probeId: r.probeId,
+					fingerprint: r.fingerprint,
+					address: r.address
+				});
+			} catch (err) {
+				fail(err);
+			} finally {
+				busy.value = false;
+			}
+		}
+		async function join() {
+			const body = JSON.stringify({
+				probeId: s.value.probeId,
+				fingerprint: s.value.fingerprint,
+				username: s.value.username.trim(),
+				role: "worker",
+				...s.value.auth === "password" ? { password: secret.password } : {
+					privateKey: secret.privateKey,
+					...secret.passphrase ? { passphrase: secret.passphrase } : {}
+				}
+			});
+			secret.password = secret.privateKey = secret.passphrase = "";
+			dispatch({ type: "start" });
+			ctrl = new AbortController();
+			try {
+				const r = await authFetch("/api/scaling/machines/ssh/join", {
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						"X-Webchat-CSRF": "1"
+					},
+					body,
+					signal: ctrl.signal
+				});
+				if (!r.ok || !r.body) {
+					const e = await r.json().catch(() => ({}));
+					return dispatch({
+						type: "event",
+						event: {
+							t: "done",
+							ok: false,
+							error: e.error || `HTTP ${r.status}`
+						}
+					});
+				}
+				const reader = r.body.getReader();
+				const dec = new TextDecoder();
+				let buf = "";
+				for (;;) {
+					const { value, done } = await reader.read();
+					if (done) break;
+					const parsed = parseSse(buf + dec.decode(value, { stream: true }));
+					buf = parsed.rest;
+					for (const event of parsed.events) dispatch({
+						type: "event",
+						event
+					});
+				}
+				if (s.value.phase === "running") dispatch({
+					type: "event",
+					event: {
+						t: "done",
+						ok: false,
+						error: "Connection closed"
+					}
+				});
+			} catch (err) {
+				if (s.value.phase === "running") dispatch({
+					type: "event",
+					event: {
+						t: "done",
+						ok: false,
+						error: ctrl?.signal.aborted ? "Cancelled" : String(err)
+					}
+				});
+			} finally {
+				ctrl = null;
+			}
+		}
+		function cancel() {
+			if (ctrl) return ctrl.abort();
+			secret.password = secret.privateKey = secret.passphrase = "";
+			emit("close");
+		}
+		return (_ctx, _cache) => {
+			return openBlock(), createElementBlock("div", _hoisted_1$7, [s.value.phase === "form" ? (openBlock(), createElementBlock("form", {
+				key: 0,
+				class: "machine-ssh-form",
+				onSubmit: _cache[3] || (_cache[3] = withModifiers(($event) => unref(canConnect)(s.value) && connect(), ["prevent"]))
+			}, [
+				withDirectives(createElementVNode("input", {
+					"onUpdate:modelValue": _cache[0] || (_cache[0] = ($event) => s.value.host = $event),
+					placeholder: T.host,
+					"aria-label": T.host,
+					autocomplete: "off",
+					spellcheck: "false"
+				}, null, 8, _hoisted_2$6), [[vModelText, s.value.host]]),
+				withDirectives(createElementVNode("input", {
+					"onUpdate:modelValue": _cache[1] || (_cache[1] = ($event) => s.value.port = $event),
+					placeholder: T.port,
+					"aria-label": T.port,
+					inputmode: "numeric",
+					class: "machine-ssh-port"
+				}, null, 8, _hoisted_3$6), [[vModelText, s.value.port]]),
+				withDirectives(createElementVNode("input", {
+					"onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => s.value.username = $event),
+					placeholder: T.user,
+					"aria-label": T.user,
+					autocomplete: "off",
+					spellcheck: "false"
+				}, null, 8, _hoisted_4$5), [[vModelText, s.value.username]]),
+				createElementVNode("button", {
+					class: "btn btn-primary",
+					type: "submit",
+					disabled: !unref(canConnect)(s.value) || busy.value
+				}, toDisplayString(T.connect), 9, _hoisted_5$4),
+				createElementVNode("button", {
+					class: "btn btn-secondary",
+					type: "button",
+					onClick: cancel
+				}, toDisplayString(T.cancel), 1)
+			], 32)) : s.value.phase === "confirm" ? (openBlock(), createElementBlock("form", {
+				key: 1,
+				class: "machine-ssh-form",
+				onSubmit: _cache[10] || (_cache[10] = withModifiers(($event) => unref(canJoin)(s.value, secret) && confirmed.value && join(), ["prevent"]))
+			}, [
+				createElementVNode("span", _hoisted_6$4, toDisplayString(T.fp) + " (" + toDisplayString(s.value.address) + "):", 1),
+				createElementVNode("code", _hoisted_7$4, toDisplayString(s.value.fingerprint), 1),
+				createElementVNode("div", _hoisted_8$3, [createElementVNode("button", {
+					type: "button",
+					class: normalizeClass(["perms-switch", { on: confirmed.value }]),
+					role: "switch",
+					"aria-checked": confirmed.value ? "true" : "false",
+					"aria-label": T.confirm,
+					onClick: _cache[4] || (_cache[4] = ($event) => confirmed.value = !confirmed.value)
+				}, null, 10, _hoisted_9$3), createElementVNode("span", null, toDisplayString(T.confirm), 1)]),
+				createElementVNode("div", _hoisted_10$3, [createElementVNode("button", {
+					type: "button",
+					class: normalizeClass(["setting-option", { active: s.value.auth === "password" }]),
+					onClick: _cache[5] || (_cache[5] = ($event) => s.value.auth = "password")
+				}, toDisplayString(T.password), 3), createElementVNode("button", {
+					type: "button",
+					class: normalizeClass(["setting-option", { active: s.value.auth === "key" }]),
+					onClick: _cache[6] || (_cache[6] = ($event) => s.value.auth = "key")
+				}, toDisplayString(T.key), 3)]),
+				s.value.auth === "password" ? withDirectives((openBlock(), createElementBlock("input", {
+					key: 0,
+					"onUpdate:modelValue": _cache[7] || (_cache[7] = ($event) => secret.password = $event),
+					type: "password",
+					placeholder: T.password,
+					"aria-label": T.password,
+					autocomplete: "off"
+				}, null, 8, _hoisted_11$3)), [[vModelText, secret.password]]) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [withDirectives(createElementVNode("textarea", {
+					"onUpdate:modelValue": _cache[8] || (_cache[8] = ($event) => secret.privateKey = $event),
+					rows: "4",
+					placeholder: T.key,
+					"aria-label": T.key,
+					spellcheck: "false",
+					autocomplete: "off"
+				}, null, 8, _hoisted_12$3), [[vModelText, secret.privateKey]]), withDirectives(createElementVNode("input", {
+					"onUpdate:modelValue": _cache[9] || (_cache[9] = ($event) => secret.passphrase = $event),
+					type: "password",
+					placeholder: T.passphrase,
+					"aria-label": T.passphrase,
+					autocomplete: "off"
+				}, null, 8, _hoisted_13$3), [[vModelText, secret.passphrase]])], 64)),
+				createElementVNode("div", _hoisted_14$3, [createElementVNode("button", {
+					class: "btn btn-primary",
+					type: "submit",
+					disabled: !confirmed.value || !unref(canJoin)(s.value, secret)
+				}, toDisplayString(T.join), 9, _hoisted_15$3), createElementVNode("button", {
+					class: "btn btn-secondary",
+					type: "button",
+					onClick: cancel
+				}, toDisplayString(T.cancel), 1)])
+			], 32)) : (openBlock(), createElementBlock(Fragment, { key: 2 }, [
+				createElementVNode("pre", _hoisted_16$3, toDisplayString(s.value.output), 1),
+				s.value.phase === "done" ? (openBlock(), createElementBlock("span", {
+					key: 0,
+					class: normalizeClass(["setting-hint", s.value.ok ? "" : "machine-ssh-error"])
+				}, toDisplayString(s.value.ok ? T.joined : s.value.error), 3)) : createCommentVNode("", true),
+				createElementVNode("div", _hoisted_17$3, [s.value.phase === "running" ? (openBlock(), createElementBlock("button", {
+					key: 0,
+					class: "btn btn-secondary",
+					type: "button",
+					onClick: cancel
+				}, toDisplayString(T.cancel), 1)) : (openBlock(), createElementBlock("button", {
+					key: 1,
+					class: "btn btn-secondary",
+					type: "button",
+					onClick: _cache[11] || (_cache[11] = ($event) => emit("close"))
+				}, toDisplayString(T.done), 1))])
+			], 64))]);
+		};
+	}
+});
+//#endregion
+//#region src/features/MachinesPanel.vue?vue&type=script&setup=true&lang.ts
+var _hoisted_1$6 = {
+	key: 0,
+	class: "setting-hint"
+};
+var _hoisted_2$5 = { class: "skill-sources-list" };
+var _hoisted_3$5 = {
+	key: 0,
+	class: "setting-hint"
+};
+var _hoisted_4$4 = { class: "skill-info" };
+var _hoisted_5$3 = { class: "skill-head" };
+var _hoisted_6$3 = { class: "skill-desc" };
+var _hoisted_7$3 = { class: "skill-desc" };
+var _hoisted_8$2 = [
+	"aria-expanded",
+	"aria-label",
+	"onClick",
+	"innerHTML"
+];
+var _hoisted_9$2 = {
+	key: 1,
+	class: "machine-command"
+};
+var _hoisted_10$2 = { class: "setting-hint" };
+var _hoisted_11$2 = { class: "roster-refresh-log" };
+var _hoisted_12$2 = {
+	key: 2,
+	class: "machine-run-here"
+};
+var _hoisted_13$2 = [
+	"aria-checked",
+	"aria-label",
+	"onClick"
+];
+var _hoisted_14$2 = {
+	key: 3,
+	class: "machine-command"
+};
+var _hoisted_15$2 = { class: "setting-hint" };
+var _hoisted_16$2 = { class: "roster-refresh-log" };
+var _hoisted_17$2 = ["onSubmit"];
+var _hoisted_18$2 = ["placeholder", "aria-label"];
+var _hoisted_19$2 = ["placeholder", "aria-label"];
+var _hoisted_20$2 = { class: "secret-actions" };
+var _hoisted_21$1 = ["onClick"];
+var _hoisted_22$1 = ["onClick"];
+var _hoisted_23 = ["onClick"];
+var _hoisted_24 = ["onClick"];
+var _hoisted_25 = ["onClick"];
+var _hoisted_26 = {
+	key: 0,
+	class: "machine-command"
+};
+var _hoisted_27 = { class: "setting-hint" };
+var _hoisted_28 = { class: "roster-refresh-log" };
+var _hoisted_29 = {
+	key: 2,
+	class: "secret-actions"
+};
+//#endregion
+//#region src/features/MachinesPanel.vue
+var MachinesPanel_default = /* @__PURE__ */ defineComponent({
+	__name: "MachinesPanel",
+	setup(__props, { expose: __expose }) {
+		/**
+		* Admin → Scaling → Machines (owners and global admins; the API is guarded
+		* too). Machines join with a one-line install command; NanoClaw works out
+		* what it may use on each (total minus other software's peak minus headroom),
+		* and an optional cap lowers that. Server: server/routes-scaling.ts.
+		*/
+		const T = {
+			off: "Off: NANOCLAW_MACHINE_PORT is not set",
+			empty: "No machines",
+			add: "Add machine",
+			ssh: "Join over SSH",
+			run: "Run on the machine (valid 1 hour, once):",
+			copy: "Copy",
+			done: "Done",
+			drain: "Drain",
+			resume: "Resume",
+			revoke: "Revoke",
+			remove: "Remove",
+			cap: "Cap",
+			save: "Save",
+			cancel: "Cancel",
+			capMem: "GB",
+			capCpu: "CPUs",
+			uses: "NanoClaw may use",
+			reported: "reported",
+			linked: "linked",
+			noLink: "no worker link",
+			workerRun: "Run once on the machine:",
+			runHere: "Run workloads here",
+			fixInfo: "How to fix",
+			fixRun: "Run on the machine as root:"
+		};
+		const INFO = lucide("info");
+		const listener = ref(null);
+		const machines = ref([]);
+		const command = ref(null);
+		const workerCommand = ref("");
+		const hostRulesCommand = ref("");
+		const fixOpen = ref(null);
+		const ssh = ref(false);
+		const capping = ref(null);
+		const cap = reactive({
+			memGb: "",
+			cpus: ""
+		});
+		const fail = (err) => {
+			showToast(err?.body?.error || err?.message || String(err), { kind: "error" });
+		};
+		async function load() {
+			try {
+				const d = await apiJson("/api/scaling/machines");
+				listener.value = d.listener;
+				machines.value = d.machines;
+				workerCommand.value = d.workerCommand ?? "";
+				hostRulesCommand.value = d.hostRulesCommand ?? "";
+			} catch (err) {
+				fail(err);
+			}
+		}
+		async function add() {
+			try {
+				command.value = (await apiJson("/api/scaling/machines/join", {
+					method: "POST",
+					body: { role: "worker" }
+				})).command;
+			} catch (err) {
+				fail(err);
+			}
+		}
+		async function act(m, path, body = {}) {
+			try {
+				await apiJson(`/api/scaling/machines/${encodeURIComponent(m.id)}/${path}`, {
+					method: "POST",
+					body
+				});
+				await load();
+			} catch (err) {
+				fail(err);
+			}
+		}
+		async function setRunHere(m) {
+			await act(m, "workloads", { on: !m.workloadsOn });
+		}
+		async function revoke(m) {
+			if (await showConfirmModal({
+				title: `Revoke ${m.name}?`,
+				body: "It is cut off at once.",
+				confirmLabel: T.revoke,
+				destructive: true
+			})) await act(m, "revoke");
+		}
+		async function remove(m) {
+			try {
+				await apiJson(`/api/scaling/machines/${encodeURIComponent(m.id)}`, { method: "DELETE" });
+				await load();
+			} catch (err) {
+				fail(err);
+			}
+		}
+		function startCap(m) {
+			capping.value = m.id;
+			Object.assign(cap, capForm(m));
+		}
+		async function saveCap(m) {
+			try {
+				await apiJson(`/api/scaling/machines/${encodeURIComponent(m.id)}/cap`, {
+					method: "PUT",
+					body: {
+						memGb: cap.memGb.trim() || null,
+						cpus: cap.cpus.trim() || null
+					}
+				});
+				capping.value = null;
+				await load();
+			} catch (err) {
+				fail(err);
+			}
+		}
+		onMounted(load);
+		__expose({ load });
+		return (_ctx, _cache) => {
+			return !listener.value ? (openBlock(), createElementBlock("p", _hoisted_1$6, toDisplayString(T.off), 1)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [createElementVNode("ul", _hoisted_2$5, [!machines.value.length ? (openBlock(), createElementBlock("li", _hoisted_3$5, toDisplayString(T.empty), 1)) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(machines.value, (m) => {
+				return openBlock(), createElementBlock("li", {
+					key: m.id,
+					class: "skill-source-row secret-row machine-row"
+				}, [createElementVNode("div", _hoisted_4$4, [
+					createElementVNode("div", _hoisted_5$3, [createTextVNode(toDisplayString(m.name) + " ", 1), createElementVNode("span", { class: normalizeClass(["model-kind-badge", `kind-${unref(statusOf)(m)}`]) }, toDisplayString(unref(statusOf)(m)), 3)]),
+					createElementVNode("span", _hoisted_6$3, toDisplayString(unref(usageLine)(m)) + " · " + toDisplayString(T.reported) + " " + toDisplayString(unref(ago)(m.lastReport)), 1),
+					createElementVNode("span", _hoisted_7$3, [createTextVNode(toDisplayString(T.uses) + ": " + toDisplayString(unref(availableLine)(m)), 1), m.role === "worker" && m.linked !== void 0 ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createTextVNode(" · " + toDisplayString(m.linked ? T.linked : T.noLink), 1)], 64)) : createCommentVNode("", true)]),
+					unref(isolationLine)(m) ? (openBlock(), createElementBlock("span", {
+						key: 0,
+						class: normalizeClass([
+							"skill-desc",
+							"machine-isolation",
+							unref(isolationLine)(m).tone
+						])
+					}, [createTextVNode(toDisplayString(unref(isolationLine)(m).text), 1), unref(isolationLine)(m).fix && hostRulesCommand.value ? (openBlock(), createElementBlock("button", {
+						key: 0,
+						class: "feature-info-btn",
+						type: "button",
+						"aria-expanded": fixOpen.value === m.id,
+						"aria-label": T.fixInfo,
+						onClick: ($event) => fixOpen.value = fixOpen.value === m.id ? null : m.id,
+						innerHTML: unref(INFO)
+					}, null, 8, _hoisted_8$2)) : createCommentVNode("", true)], 2)) : createCommentVNode("", true),
+					fixOpen.value === m.id && unref(isolationLine)(m)?.fix ? (openBlock(), createElementBlock("div", _hoisted_9$2, [
+						createElementVNode("span", _hoisted_10$2, toDisplayString(T.fixRun), 1),
+						createElementVNode("pre", _hoisted_11$2, toDisplayString(hostRulesCommand.value), 1),
+						createElementVNode("button", {
+							class: "btn btn-secondary",
+							type: "button",
+							onClick: _cache[0] || (_cache[0] = ($event) => unref(copyTextToClipboard)(hostRulesCommand.value))
+						}, toDisplayString(T.copy), 1)
+					])) : createCommentVNode("", true),
+					m.role === "worker" && m.state !== "revoked" ? (openBlock(), createElementBlock("div", _hoisted_12$2, [createElementVNode("span", null, toDisplayString(T.runHere), 1), createElementVNode("button", {
+						type: "button",
+						class: normalizeClass(["perms-switch", { on: m.workloadsOn }]),
+						role: "switch",
+						"aria-checked": m.workloadsOn ? "true" : "false",
+						"aria-label": T.runHere,
+						onClick: ($event) => setRunHere(m)
+					}, null, 10, _hoisted_13$2)])) : createCommentVNode("", true),
+					(openBlock(true), createElementBlock(Fragment, null, renderList(m.placed ?? [], (p) => {
+						return openBlock(), createElementBlock("span", {
+							key: p.name,
+							class: "skill-desc"
+						}, toDisplayString(unref(placedLine)(p)), 1);
+					}), 128)),
+					unref(needsWorker)(m) && workerCommand.value ? (openBlock(), createElementBlock("div", _hoisted_14$2, [
+						createElementVNode("span", _hoisted_15$2, toDisplayString(T.workerRun), 1),
+						createElementVNode("pre", _hoisted_16$2, toDisplayString(workerCommand.value), 1),
+						createElementVNode("button", {
+							class: "btn btn-secondary",
+							type: "button",
+							onClick: _cache[1] || (_cache[1] = ($event) => unref(copyTextToClipboard)(workerCommand.value))
+						}, toDisplayString(T.copy), 1)
+					])) : createCommentVNode("", true),
+					capping.value === m.id ? (openBlock(), createElementBlock("form", {
+						key: 4,
+						class: "machine-cap",
+						onSubmit: withModifiers(($event) => saveCap(m), ["prevent"])
+					}, [withDirectives(createElementVNode("input", {
+						"onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => cap.memGb = $event),
+						inputmode: "decimal",
+						placeholder: T.capMem,
+						"aria-label": T.capMem
+					}, null, 8, _hoisted_18$2), [[vModelText, cap.memGb]]), withDirectives(createElementVNode("input", {
+						"onUpdate:modelValue": _cache[3] || (_cache[3] = ($event) => cap.cpus = $event),
+						inputmode: "decimal",
+						placeholder: T.capCpu,
+						"aria-label": T.capCpu
+					}, null, 8, _hoisted_19$2), [[vModelText, cap.cpus]])], 40, _hoisted_17$2)) : createCommentVNode("", true)
+				]), createElementVNode("div", _hoisted_20$2, [capping.value === m.id ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("button", {
+					class: "btn btn-primary",
+					type: "button",
+					onClick: ($event) => saveCap(m)
+				}, toDisplayString(T.save), 9, _hoisted_21$1), createElementVNode("button", {
+					class: "btn btn-secondary",
+					type: "button",
+					onClick: _cache[4] || (_cache[4] = ($event) => capping.value = null)
+				}, toDisplayString(T.cancel), 1)], 64)) : m.state === "revoked" ? (openBlock(), createElementBlock("button", {
+					key: 1,
+					class: "btn btn-danger",
+					type: "button",
+					onClick: ($event) => remove(m)
+				}, toDisplayString(T.remove), 9, _hoisted_22$1)) : (openBlock(), createElementBlock(Fragment, { key: 2 }, [
+					createElementVNode("button", {
+						class: "btn btn-secondary",
+						type: "button",
+						onClick: ($event) => startCap(m)
+					}, toDisplayString(T.cap), 9, _hoisted_23),
+					createElementVNode("button", {
+						class: "btn btn-secondary",
+						type: "button",
+						onClick: ($event) => act(m, "drain", { on: m.state !== "draining" })
+					}, toDisplayString(m.state === "draining" ? T.resume : T.drain), 9, _hoisted_24),
+					createElementVNode("button", {
+						class: "btn btn-danger",
+						type: "button",
+						onClick: ($event) => revoke(m)
+					}, toDisplayString(T.revoke), 9, _hoisted_25)
+				], 64))])]);
+			}), 128))]), command.value ? (openBlock(), createElementBlock("div", _hoisted_26, [
+				createElementVNode("span", _hoisted_27, toDisplayString(T.run), 1),
+				createElementVNode("pre", _hoisted_28, toDisplayString(command.value), 1),
+				createElementVNode("button", {
+					class: "btn btn-secondary",
+					type: "button",
+					onClick: _cache[5] || (_cache[5] = ($event) => unref(copyTextToClipboard)(command.value))
+				}, toDisplayString(T.copy), 1),
+				createElementVNode("button", {
+					class: "btn btn-secondary",
+					type: "button",
+					onClick: _cache[6] || (_cache[6] = ($event) => {
+						command.value = null;
+						load();
+					})
+				}, toDisplayString(T.done), 1)
+			])) : ssh.value ? (openBlock(), createBlock(SshJoin_default, {
+				key: 1,
+				onClose: _cache[7] || (_cache[7] = ($event) => {
+					ssh.value = false;
+					load();
+				})
+			})) : (openBlock(), createElementBlock("div", _hoisted_29, [createElementVNode("button", {
+				class: "btn btn-secondary",
+				type: "button",
+				onClick: add
+			}, toDisplayString(T.add), 1), createElementVNode("button", {
+				class: "btn btn-secondary",
+				type: "button",
+				onClick: _cache[8] || (_cache[8] = ($event) => ssh.value = true)
+			}, toDisplayString(T.ssh), 1)]))], 64));
+		};
+	}
+});
+//#endregion
+//#region src/features/scaling.ts
+var app$1 = null;
+var panel = null;
+async function renderScalingSettings() {
+	const section = $("#settings-scaling");
+	if (!section) return;
+	if (!state.isOwnerView && !isAdminView.value) {
+		section.hidden = true;
+		return;
+	}
+	try {
+		await apiJson("/api/scaling/machines");
+	} catch {
+		section.hidden = true;
+		return;
+	}
+	section.hidden = false;
+	if (app$1) {
+		panel?.load();
+		return;
+	}
+	app$1 = mountIsland("#machines-panel", () => createApp(MachinesPanel_default));
+	panel = app$1?._instance?.exposed ?? null;
+}
+//#endregion
 //#region src/features/admin.ts
 /**
 * Hide a group whose every block hid itself, so a scoped admin never sees
@@ -25772,7 +26531,8 @@ function openAdmin() {
 			renderAuditSettings(),
 			renderAgentActivitySettings(),
 			loadAuditLog(),
-			renderAboutSettings()
+			renderAboutSettings(),
+			renderScalingSettings()
 		]).then(syncAdminGroups);
 		openView("admin", teardownAdmin);
 	});
@@ -26138,7 +26898,7 @@ async function refreshStatus() {
 	}
 	const m = machines[0];
 	line.hidden = !m;
-	if (m) line.textContent = `${m.hostname || "This machine"}: ${m.status === "pending" ? "waiting for approval" : "approved"}`;
+	if (m) line.textContent = `${m.hostname || "This runner"}: ${m.status === "pending" ? "waiting for approval" : "approved"}`;
 }
 function show(on) {
 	const card = $("#vscode-start");

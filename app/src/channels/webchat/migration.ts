@@ -1478,3 +1478,133 @@ export const moduleWebchatThreadCreator: Migration = {
     await db.exec(`ALTER TABLE webchat_threads ADD COLUMN created_by TEXT;`);
   },
 };
+
+/**
+ * Agent machines (modules/machines): sites (a backend plus its sizes and
+ * caps) and the machines built on them. Deleted machines keep their row, so
+ * the record of who had what outlives the VM.
+ */
+export const moduleWebchatMachines: Migration = {
+  version: 236,
+  name: 'webchat-machines',
+  async up(db) {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS machine_sites (
+        id             TEXT PRIMARY KEY,
+        backend        TEXT NOT NULL,
+        label          TEXT NOT NULL,
+        config_json    TEXT NOT NULL DEFAULT '{}',
+        sizes_json     TEXT NOT NULL DEFAULT '{}',
+        per_agent_cap  INTEGER NOT NULL DEFAULT 2,
+        install_cap    INTEGER NOT NULL DEFAULT 6,
+        auto_stop_at   TEXT,
+        enabled        INTEGER NOT NULL DEFAULT 1,
+        created_at     INTEGER NOT NULL,
+        updated_at     INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS machines (
+        id              TEXT PRIMARY KEY,
+        agent_group_id  TEXT NOT NULL,
+        site_id         TEXT NOT NULL,
+        name            TEXT NOT NULL,
+        size            TEXT NOT NULL,
+        state           TEXT NOT NULL,
+        handle          TEXT,
+        private_ip      TEXT,
+        op_id           TEXT NOT NULL,
+        last_error      TEXT,
+        expires_at      INTEGER,
+        created_by      TEXT,
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_machines_group ON machines (agent_group_id, state);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_machines_group_name_live
+        ON machines (agent_group_id, name) WHERE state <> 'deleted';
+    `);
+  },
+};
+
+/**
+ * Machines that joined NanoClaw (modules/machines/members.ts): one-time join
+ * tokens, and the machines themselves with their certificate, health and the
+ * capacity NanoClaw may use on them.
+ */
+export const moduleWebchatMachineMembers: Migration = {
+  version: 237,
+  name: 'webchat-machine-members',
+  async up(db) {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS machine_join_tokens (
+        token_hash  TEXT PRIMARY KEY,
+        role        TEXT NOT NULL,
+        created_by  TEXT,
+        created_at  INTEGER NOT NULL,
+        expires_at  INTEGER NOT NULL,
+        used_at     INTEGER,
+        machine_id  TEXT
+      );
+      CREATE TABLE IF NOT EXISTS machine_members (
+        id               TEXT PRIMARY KEY,
+        name             TEXT NOT NULL,
+        role             TEXT NOT NULL,
+        provider         TEXT NOT NULL,
+        state            TEXT NOT NULL,
+        facts_json       TEXT NOT NULL DEFAULT '{}',
+        health_json      TEXT,
+        peaks_json       TEXT NOT NULL DEFAULT '{}',
+        last_report      INTEGER,
+        cert_fp          TEXT,
+        cert_expires     INTEGER,
+        prev_cert_fp     TEXT,
+        prev_cert_expires INTEGER,
+        cap_memory_mb    INTEGER,
+        cap_cpus         REAL,
+        created_by       TEXT,
+        created_at       INTEGER NOT NULL,
+        updated_at       INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_machine_members_fp ON machine_members (cert_fp);
+    `);
+  },
+};
+
+/**
+ * Scaling, placement: an owner's pin of an agent's workloads to one node (a
+ * worker machine's id, or 'local' for central), and the one-line reason a
+ * workload sits where it does (shown on its card and in Admin → Machines).
+ */
+export const moduleWebchatWorkloadPlacement: Migration = {
+  version: 238,
+  name: 'webchat-workload-placement',
+  async up(db) {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS workload_pins (
+        agent_group_id TEXT PRIMARY KEY,
+        node           TEXT NOT NULL,
+        set_by         TEXT,
+        set_at         INTEGER NOT NULL
+      );
+      ALTER TABLE workloads ADD COLUMN placement_reason TEXT;
+    `);
+  },
+};
+
+/**
+ * Workers that run workloads: whether an owner turned workloads on for the
+ * machine (off for every machine, so nothing moves to a worker by itself),
+ * and its latest workload isolation check — 'ok', 'open' or 'unknown' — with
+ * when it ran (members.ts recordHealth). Placement uses a worker only while
+ * that check is 'ok' and recent.
+ */
+export const moduleWebchatMachineIsolation: Migration = {
+  version: 239,
+  name: 'webchat-machine-isolation',
+  async up(db) {
+    await db.exec(`
+      ALTER TABLE machine_members ADD COLUMN workloads_on INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE machine_members ADD COLUMN isolation TEXT;
+      ALTER TABLE machine_members ADD COLUMN isolation_at INTEGER;
+    `);
+  },
+};

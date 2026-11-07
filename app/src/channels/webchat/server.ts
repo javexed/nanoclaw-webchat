@@ -454,6 +454,17 @@ import {
   rPublishingWorkloadsPut,
 } from './server/routes-workloads.js';
 import { handleAccountRoutes, handlePreAuthSignin } from './server/routes-signin.js';
+import {
+  rScalingCapPut,
+  rScalingDrainPost,
+  rScalingWorkloadsPost,
+  rScalingJoinPost,
+  rScalingMachineDelete,
+  rScalingMachinesGet,
+  rScalingRevokePost,
+  rScalingSshJoinPost,
+  rScalingSshProbePost,
+} from './server/routes-scaling.js';
 import { handleSigninSettings } from './server/routes-signin-settings.js';
 
 const DEFAULT_HOST = '127.0.0.1';
@@ -1013,6 +1024,11 @@ interface ApiRoute {
 }
 
 const RE_ROOM_ID = /^\/api\/rooms\/([^/]+)$/;
+const RE_SCALING_MACHINE = /^\/api\/scaling\/machines\/([^/]+)$/;
+const RE_SCALING_DRAIN = /^\/api\/scaling\/machines\/([^/]+)\/drain$/;
+const RE_SCALING_REVOKE = /^\/api\/scaling\/machines\/([^/]+)\/revoke$/;
+const RE_SCALING_CAP = /^\/api\/scaling\/machines\/([^/]+)\/cap$/;
+const RE_SCALING_WORKLOADS = /^\/api\/scaling\/machines\/([^/]+)\/workloads$/;
 // Parameterised paths must be RegExp: a STRING path is compared with `===`,
 // so a pattern written as a string silently never matches (404).
 const RE_AGENT_EXPORT_TEMPLATE = /^\/api\/agents\/([^/]+)\/export-template$/;
@@ -3084,6 +3100,54 @@ const API_ROUTES: ApiRoute[] = [
     guards: ['csrf', 'owner'],
     h: rPublishingCloudflareConnect,
     audit: 'publishing.cloudflare.connect',
+  },
+  // Admin → Scaling → Machines (server/routes-scaling.ts).
+  { method: 'GET', path: '/api/scaling/machines', guards: ['globalAdmin'], h: rScalingMachinesGet },
+  {
+    method: 'POST',
+    path: '/api/scaling/machines/join',
+    guards: ['csrf', 'globalAdmin'],
+    h: rScalingJoinPost,
+    audit: 'machine.token',
+  },
+  {
+    method: 'POST',
+    path: '/api/scaling/machines/ssh/probe',
+    guards: ['csrf', 'globalAdmin'],
+    h: rScalingSshProbePost,
+    audit: 'machine.ssh-probe',
+  },
+  // Audits itself (who, host, username, role, result — never the secrets).
+  { method: 'POST', path: '/api/scaling/machines/ssh/join', guards: ['csrf', 'globalAdmin'], h: rScalingSshJoinPost },
+  {
+    method: 'POST',
+    path: RE_SCALING_DRAIN,
+    guards: ['csrf', 'globalAdmin'],
+    h: rScalingDrainPost,
+    audit: 'machine.drain',
+  },
+  {
+    method: 'POST',
+    path: RE_SCALING_REVOKE,
+    guards: ['csrf', 'globalAdmin'],
+    h: rScalingRevokePost,
+    audit: 'machine.revoke',
+  },
+  { method: 'PUT', path: RE_SCALING_CAP, guards: ['csrf', 'globalAdmin'], h: rScalingCapPut, audit: 'machine.cap' },
+  // "Run workloads here": an owner's choice, like the Workloads switch itself.
+  {
+    method: 'POST',
+    path: RE_SCALING_WORKLOADS,
+    guards: ['csrf', 'owner'],
+    h: rScalingWorkloadsPost,
+    audit: 'machine.workloads',
+  },
+  {
+    method: 'DELETE',
+    path: RE_SCALING_MACHINE,
+    guards: ['csrf', 'globalAdmin'],
+    h: rScalingMachineDelete,
+    audit: 'machine.remove',
   },
   // Install-wide egress allowlist (server/routes-egress.ts).
   { method: 'GET', path: '/api/egress', guards: ['globalAdmin'], h: rEgressGet },

@@ -16,6 +16,11 @@
  *     (disk.ts);
  *   - once a night each stack's volumes are backed up (backup.ts), and the
  *     backups of a workload deleted a week ago are removed.
+ *
+ * The preflight and network joins are central's: stacks on workers are left
+ * out of them (a worker checks its own host rules: worker-isolation.ts; its
+ * stacks are reached over its link). Their backups are streamed here over
+ * the link.
  */
 import fs from 'fs';
 
@@ -23,11 +28,13 @@ import { log } from '../../log.js';
 import { backupRoot, backupWorkload, listBackups, removeBackups, stampTime } from './backup.js';
 import { extendWorkload, parsePs, serviceImages, stopWorkload } from './control.js';
 import { diskLevel, gb, measureDisk, recordUsage, type DiskLevel } from './disk.js';
-import { compose, joinAgentContainers } from './docker.js';
+import { isLinked } from '../machines/links.js';
+import { compose, joinAgentContainers, LOCAL_NODE } from './docker.js';
 import { dayText, notifyWorkloadAgent } from './notify.js';
 import { lastOpened, USED_WITHIN_MS } from './opened.js';
 import { preflightDue, runPreflight, type PreflightResult } from './preflight.js';
 import { allNetworks, listWorkloads, quotaFor, updateWorkload, type Workload } from './store.js';
+import { reconcileWorkerIsolation } from './worker-isolation.js';
 
 const EVERY_MS = 2 * 60_000;
 const DISK_EVERY_MS = 10 * 60_000;
@@ -51,6 +58,7 @@ export interface ReconcileDeps {
   join: typeof joinAgentContainers;
   measure: typeof measureDisk;
   backup: typeof backupWorkload;
+  workers: (now: number) => Promise<void>;
 }
 
 const defaults: ReconcileDeps = {
@@ -61,11 +69,14 @@ const defaults: ReconcileDeps = {
   join: joinAgentContainers,
   measure: measureDisk,
   backup: backupWorkload,
+  workers: (now) => reconcileWorkerIsolation(now),
 };
 
-/** Stop every running stack: the host is reachable from workload networks. */
+/** Stop every running stack on this host: it is reachable from workload networks. */
 async function stopAllRunning(deps: ReconcileDeps): Promise<void> {
-  for (const w of (await listWorkloads()).filter((x) => x.state === 'running' || x.state === 'deploying')) {
+  for (const w of (await listWorkloads()).filter(
+    (x) => (x.state === 'running' || x.state === 'deploying') && x.node === LOCAL_NODE,
+  )) {
     await deps
       .stop(w.agentGroupId, w.name, 'host isolation missing')
       .catch((err) => log.error('Workload could not be stopped', { workloadId: w.id, err: String(err).slice(0, 200) }));
@@ -73,6 +84,7 @@ async function stopAllRunning(deps: ReconcileDeps): Promise<void> {
 }
 
 async function checkDisk(deps: ReconcileDeps): Promise<void> {
+  // Every node's stacks count toward the agent's quota (disk.ts: Docker's use on central, backups for all).
   const live = (await listWorkloads()).filter((w) => w.state !== 'deleted');
   if (!live.length) return;
   const byAgent = recordUsage(live, await deps.measure(live, (w) => Object.values(serviceImages(w))));
@@ -117,7 +129,10 @@ async function nightlyBackups(now: Date, deps: ReconcileDeps): Promise<void> {
     if (w.state === 'stopped') return at < w.updatedAt;
     return now.getTime() - at > BACKUP_AGE_MS;
   };
-  for (const w of all.filter((x) => x.state === 'running' || x.state === 'stopped')) {
+  // A stack on a worker is backed up over its link, when that worker is linked.
+  for (const w of all.filter(
+    (x) => (x.state === 'running' || x.state === 'stopped') && (x.node === LOCAL_NODE || isLinked(x.node)),
+  )) {
     if (!due(w)) continue;
     await deps
       .backup(w)
@@ -130,8 +145,14 @@ export async function reconcileWorkloads(now = Date.now(), deps: ReconcileDeps =
     const pre = await deps.preflight();
     if (pre.isolationOpen) await stopAllRunning(deps);
   }
+  // Workers check their own isolation; central asks for a check when one is missing and records what they stopped.
+  await deps.workers(now).catch((err) => log.warn('Worker isolation sweep failed', { err: String(err).slice(0, 200) }));
   // Every sweep: cheap, and a freshly started agent container cannot reach its own stacks until it has joined.
-  for (const n of await allNetworks()) {
+  // Only agents with a stack here: the network of a stack on a worker exists on that worker only.
+  const here = new Set(
+    (await listWorkloads()).filter((w) => w.node === LOCAL_NODE && w.state !== 'deleted').map((w) => w.agentGroupId),
+  );
+  for (const n of (await allNetworks()).filter((x) => here.has(x.agentGroupId))) {
     await deps
       .join(n.agentGroupId, n.network)
       .catch((err) =>
@@ -151,6 +172,8 @@ export async function reconcileWorkloads(now = Date.now(), deps: ReconcileDeps =
   last = now;
   for (let w of await listWorkloads()) {
     if (w.state !== 'running') continue;
+    // A worker that is not linked cannot be asked: its stacks wait until it links again.
+    if (w.node !== LOCAL_NODE && !isLinked(w.node)) continue;
     try {
       w = await renewIfUsed(w, now);
       if (w.expiresAt !== null && w.expiresAt <= now) {

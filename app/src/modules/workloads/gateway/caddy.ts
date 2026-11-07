@@ -30,6 +30,7 @@ import { log } from '../../../log.js';
 import { dockerEnv } from '../docker.js';
 import type { GatewayConfig } from './config.js';
 import { gatewayDir } from './keys.js';
+import { isRelayTarget } from './relay.js';
 
 const run = promisify(execFile);
 
@@ -50,12 +51,13 @@ export interface GatewaySite {
   /** The route's id: how the check finds the app. */
   id: string;
   hostname: string;
-  /** address:port on the workload network. */
+  /** address:port on the workload network, or a relay to a stack on a worker (relay.ts). */
   target: string;
 }
 
 export function validSite(s: GatewaySite): boolean {
-  return UUID_RE.test(s.id) && HOSTNAME_RE.test(s.hostname) && validTarget(s.target);
+  // A stack on a worker is reached through a relay socket over its link (relay.ts).
+  return UUID_RE.test(s.id) && HOSTNAME_RE.test(s.hostname) && (validTarget(s.target) || isRelayTarget(s.target));
 }
 
 /**
@@ -113,7 +115,8 @@ const CREDENTIAL_COOKIES =
 
 export const runDir = (): string => path.join(gatewayDir(), 'caddy');
 /** Inside the container. */
-const MOUNT = '/run/gw';
+/** Where the run folder is mounted in the Caddy container. */
+export const MOUNT = '/run/gw';
 export const containerName = (): string => `nanoclaw-workload-gateway-${INSTALL_SLUG}`;
 
 /** The Caddyfile for these sites. Pure: tested on its own. Throws on anything that is not checked. */

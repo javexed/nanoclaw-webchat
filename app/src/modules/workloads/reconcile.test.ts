@@ -43,6 +43,7 @@ const deps: ReconcileDeps = {
   join: async (g, network) => (log.push(`join ${g} ${network}`), 0),
   measure: async (ws) => new Map(ws.map((w) => [w.id, usage])),
   backup: async () => null,
+  workers: async () => undefined,
 };
 
 async function running(agentGroupId: string, name: string, expiresAt: number | null = null) {
@@ -103,10 +104,15 @@ describe('reconciling workloads', () => {
     expect((await listWorkloads()).find((w) => w.id === gone.id)?.state).toBe('failed');
   });
 
-  it('joins each agent’s containers to its own network', async () => {
+  it('joins each agent’s containers to its own network, where its stacks run here', async () => {
     const net = await claimNetwork('ag-1', (i) => `net-${i}`, 10);
+    const other = await claimNetwork('ag-2', (i) => `net-${i}`, 10);
+    await running('ag-1', 'notes');
+    // ag-2's only stack runs on a worker: its network exists there, not here.
+    await updateWorkload((await running('ag-2', 'away')).id, { node: 'm-0000aaaa' });
     await reconcileWorkloads(1, deps);
     expect(log).toContain(`join ag-1 ${net.network}`);
+    expect(log).not.toContain(`join ag-2 ${other.network}`);
   });
 
   it('warns near the disk quota once, and stops the agent’s stacks over it', async () => {

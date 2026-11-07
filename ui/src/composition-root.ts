@@ -69,7 +69,12 @@ import {
   wirePermsCreate,
   wirePermsNew,
 } from './features/perms.js';
-import { permsCreateChannelTouched, permsGroupFilter, permsSelectedUserId, permsUserFilter } from './features/perms-list-state.js';
+import {
+  permsCreateChannelTouched,
+  permsGroupFilter,
+  permsSelectedUserId,
+  permsUserFilter,
+} from './features/perms-list-state.js';
 import { wireListSearch } from './core/list-filter.js';
 import { addAgentQuery, createAgentQuery } from './features/agent-lists-state.js';
 import { agentSkillsQuery } from './features/agent-skills-state.js';

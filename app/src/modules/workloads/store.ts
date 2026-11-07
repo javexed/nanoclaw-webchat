@@ -1,4 +1,4 @@
-// Workload, network, quota, build and registry rows. Mapping only: the rules live in control.ts.
+// Workload, network, quota, build, registry and pin rows. Mapping only: the rules live in control.ts.
 import { randomUUID } from 'crypto';
 
 import { getDb, hasTable } from '../../db/connection.js';
@@ -22,6 +22,8 @@ export interface Workload {
   approvedCpus: number;
   /** What an owner approved (shape.ts encodeApproved); null before one was recorded. */
   approvedShape: string | null;
+  /** Why it runs on its node, in one line (placement.ts); null for older rows. */
+  placementReason: string | null;
   lastError: string | null;
   expiresAt: number | null;
   /** The expiry its agent was last reminded of (reconcile.ts); a new expiry re-arms the reminder. */
@@ -45,6 +47,7 @@ interface Row {
   approved_memory_mb: number;
   approved_cpus: number;
   approved_shape?: string | null;
+  placement_reason?: string | null;
   last_error: string | null;
   expires_at: number | null;
   expiry_notice_for?: number | null;
@@ -67,6 +70,7 @@ const toWorkload = (r: Row): Workload => ({
   approvedMemoryMb: r.approved_memory_mb,
   approvedCpus: r.approved_cpus,
   approvedShape: r.approved_shape ?? null,
+  placementReason: r.placement_reason ?? null,
   lastError: r.last_error,
   expiresAt: r.expires_at,
   expiryNoticeFor: r.expiry_notice_for ?? null,
@@ -152,6 +156,8 @@ export async function updateWorkload(
       | 'approvedMemoryMb'
       | 'approvedCpus'
       | 'approvedShape'
+      | 'node'
+      | 'placementReason'
     >
   >,
   now = Date.now(),
@@ -176,6 +182,8 @@ export async function updateWorkload(
   if (patch.approvedMemoryMb !== undefined) put('approved_memory_mb', patch.approvedMemoryMb);
   if (patch.approvedCpus !== undefined) put('approved_cpus', patch.approvedCpus);
   if (patch.approvedShape !== undefined) put('approved_shape', patch.approvedShape);
+  if (patch.node !== undefined) put('node', patch.node);
+  if ('placementReason' in patch) put('placement_reason', patch.placementReason);
   put('updated_at', now);
   args.push(id);
   await getDb().run(`UPDATE workloads SET ${sets.join(', ')} WHERE id = ?`, ...args);
@@ -311,5 +319,38 @@ export async function setBuildRegistries(agentGroupId: string, hosts: string[]):
     agentGroupId,
     JSON.stringify(hosts),
     Date.now(),
+  );
+}
+
+// ── placement pins (owners) ─────────────────────────────────────────────────
+
+const pinsReady = async (): Promise<boolean> => hasTable(getDb(), 'workload_pins');
+
+/** The node an owner pinned this agent's workloads to: a machine id or 'local'; null when none. */
+export async function pinFor(agentGroupId: string): Promise<string | null> {
+  if (!(await pinsReady())) return null;
+  const r = (await getDb().get(`SELECT node FROM workload_pins WHERE agent_group_id = ?`, agentGroupId)) as
+    | { node: string }
+    | undefined;
+  return r?.node ?? null;
+}
+
+export async function setPin(
+  agentGroupId: string,
+  node: string | null,
+  by: string | null,
+  now = Date.now(),
+): Promise<void> {
+  if (node === null) {
+    await getDb().run(`DELETE FROM workload_pins WHERE agent_group_id = ?`, agentGroupId);
+    return;
+  }
+  await getDb().run(
+    `INSERT INTO workload_pins (agent_group_id, node, set_by, set_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(agent_group_id) DO UPDATE SET node = excluded.node, set_by = excluded.set_by, set_at = excluded.set_at`,
+    agentGroupId,
+    node,
+    by,
+    now,
   );
 }

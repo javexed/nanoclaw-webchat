@@ -114,7 +114,7 @@ function renderList(): void {
   const list = $('#runner-list');
   if (!list || !data) return;
   if (data.machines.length === 0) {
-    list.innerHTML = '<li style="cursor:default;opacity:.6">No machines.</li>';
+    list.innerHTML = '<li style="cursor:default;opacity:.6">No runners.</li>';
     return;
   }
   list.innerHTML = data.machines
@@ -288,7 +288,7 @@ function wire(): void {
     const m = data?.machines.find((x) => x.fingerprint === fp);
     void (async () => {
       const ok = await showConfirmModal({
-        title: `Revoke ${m?.hostname ?? 'this machine'}?`,
+        title: `Revoke ${m?.hostname ?? 'this runner'}?`,
         body: 'Its agents stop and it must be approved again to come back.',
         confirmLabel: 'Revoke',
         destructive: true,

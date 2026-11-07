@@ -3,9 +3,9 @@
  * container the agent group always comes from the caller. `up` (a first
  * deploy, a new shape, or more resources), `delete` (removes data),
  * `restore` (replaces data) and `extend` (keeps it running longer) wait for
- * an owner's card; `redeploy` within the
- * approved size and shape, and everything that only looks or restarts, runs
- * at once.
+ * an owner's card; `redeploy` within the approved size and shape (and an
+ * `up` without --publish that changes nothing approved), and everything that
+ * only looks or restarts, runs at once.
  *
  * The approval verbs declare a precheck (cli/registry.ts): the stack is
  * checked before any card is made, the card says in words what will run, and
@@ -21,6 +21,7 @@
  */
 import { randomUUID } from 'crypto';
 
+import { audit } from '../../audit.js';
 import { quoteForCard } from '../../card-text.js';
 import { registerResource } from '../../cli/crud.js';
 import type { CallerContext } from '../../cli/frame.js';
@@ -42,8 +43,11 @@ import {
   startWorkload,
   stopWorkload,
   upWorkload,
+  withinApproval,
 } from './control.js';
 import { diskUsed, gb } from './disk.js';
+import { isLinked } from '../machines/links.js';
+import { getMember, isolationStatus, listMembers, setWorkloadsOn } from '../machines/members.js';
 import {
   accessCardLines,
   accessPin,
@@ -68,6 +72,7 @@ import {
   listWorkloads,
   quotaFor,
   setBuildRegistries,
+  setPin,
   setQuota,
   type Workload,
 } from './store.js';
@@ -239,6 +244,7 @@ registerResource({
           limits: r.stack.limits,
           total: r.stack.total,
           replaces: Boolean(r.existing),
+          where: r.placement.node === 'local' ? `central (${r.placement.reason})` : r.placement.reason,
           // Whether `redeploy` would run without a card.
           redeploy_needs_card:
             !r.existing ||
@@ -251,7 +257,7 @@ registerResource({
     up: {
       access: 'approval',
       description:
-        'Deploy a stack for the first time, or with new images, Dockerfiles or more memory/CPU than approved (needs an owner approval). Run `ncl workloads check` first. With --publish, the same card also publishes it for people (see `expose`): prefer this for an app people will open.',
+        'Deploy a stack for the first time, or with new images, Dockerfiles or more memory/CPU than approved (needs an owner approval). An unchanged stack without --publish redeploys at once. Run `ncl workloads check` first. With --publish, the same card also publishes it for people (see `expose`): prefer this for an app people will open.',
       args: [
         GROUP,
         NAME,
@@ -311,6 +317,12 @@ registerResource({
         // The route first: with it off there is nothing to card, and the agent hears how to deploy only.
         const route = pub ? await pickRoute(pub.route).catch((err: unknown) => Promise.reject(deployOnly(err))) : null;
         const c = await checkWorkload(g, name, str(args.file, 'file'));
+        // Nothing here needs an owner: redeploy now and answer with the result,
+        // with no card. redeploy runs its own checks again (shape, size, builds),
+        // so this does nothing \`ncl workloads redeploy\` would not. --publish
+        // always needs its card, so it never takes this path.
+        if (!pub && (await withinApproval(g, c)))
+          return { done: { ...view(await redeployWorkload(g, name, str(args.file, 'file'))), redeployed: true } };
         const size = (mb: number, cpus: number): string => `${gbText(mb)} memory, ${cpus} CPU`;
         const now = size(c.stack.total.memoryMb, c.stack.total.cpus);
         const was = c.existing ? size(c.existing.approvedMemoryMb, c.existing.approvedCpus) : null;
@@ -318,6 +330,9 @@ registerResource({
           'Runs:',
           ...describeShape(c.shape, decodeApproved(c.existing?.approvedShape ?? null)),
           `Size: ${was && was !== now ? `${was} → ${now}` : now}`,
+          ...(c.existing
+            ? []
+            : [`Where: ${c.placement.node === 'local' ? `central — ${c.placement.reason}` : c.placement.reason}`]),
         ];
         const verb = c.existing ? 'update' : 'deploy';
         if (!pub || !route)
@@ -616,6 +631,78 @@ registerResource({
           throw new Error('memory_mb, cpus and disk_gb must be numbers ≥ 0');
         await setQuota(String(args.group), q);
         return quotaFor(String(args.group));
+      },
+    },
+    pin: {
+      access: 'open',
+      hostOnly: true,
+      description:
+        "Keep an agent's new workloads on one node (a worker machine's id, or `local` for central); `--node none` removes the pin (host only). A pin to a worker counts even with its Run workloads here off, never while its isolation check fails.",
+      args: [
+        { name: 'group', type: 'string', description: 'Agent group id.', required: true },
+        { name: 'node', type: 'string', required: true, description: 'Machine id (m-…), `local`, or `none`.' },
+      ],
+      handler: async (args) => {
+        const group = str(args.group, 'group');
+        const node = str(args.node, 'node');
+        if (node !== 'none' && node !== 'local' && !/^m-[0-9a-f]{8}$/.test(node))
+          throw new Error('node must be a machine id (m-…), local, or none');
+        await setPin(group, node === 'none' ? null : node, 'host');
+        audit({ type: 'workload.pin', actor: 'host', effect: 'allow', detail: { agentGroupId: group, node } });
+        return { ok: true, group, node };
+      },
+    },
+    workers: {
+      access: 'open',
+      hostOnly: true,
+      description:
+        'Worker machines and workloads (host only): whether each runs workloads, its isolation check, and the stacks on it.',
+      args: [],
+      handler: async () => {
+        const now = Date.now();
+        const all = await listWorkloads();
+        return (await listMembers())
+          .filter((m) => m.role === 'worker' && m.state !== 'revoked')
+          .map((m) => ({
+            id: m.id,
+            name: m.name,
+            runsWorkloads: m.workloadsOn,
+            linked: isLinked(m.id),
+            isolation: isolationStatus(m, now),
+            checkedAt: m.isolationAt ? new Date(m.isolationAt).toISOString() : null,
+            stacks: all
+              .filter((w) => w.node === m.id)
+              .map((w) => `${w.name} (${w.state}${w.lastError ? `: ${w.lastError}` : ''})`),
+          }));
+      },
+      formatHuman: (rows) =>
+        (rows as Array<Record<string, unknown>>).length
+          ? (rows as Array<Record<string, unknown>>)
+              .map(
+                (r) =>
+                  `${String(r.name)} (${String(r.id)})  workloads ${r.runsWorkloads ? 'on' : 'off'}  ${r.linked ? 'linked' : 'not linked'}  isolation ${String(r.isolation)}${(r.stacks as string[]).length ? `\n  ${(r.stacks as string[]).join('\n  ')}` : ''}`,
+              )
+              .join('\n')
+          : 'No workers.',
+    },
+    'worker-set': {
+      access: 'open',
+      hostOnly: true,
+      description:
+        'Turn "Run workloads here" on or off for a worker machine (host only). New stacks go only to workers with it on, or to the worker an agent is pinned to, and only while its isolation check passes.',
+      args: [
+        { name: 'id', type: 'string', description: 'Machine id (m-…).', required: true },
+        { name: 'workloads', type: 'string', description: 'on | off', required: true },
+      ],
+      handler: async (args) => {
+        const id = str(args.id, 'id');
+        const v = str(args.workloads, 'workloads');
+        if (v !== 'on' && v !== 'off') throw new Error('--workloads must be on or off');
+        const m = await getMember(id);
+        if (!m || m.role !== 'worker' || m.state === 'revoked') throw new Error(`no worker ${id}`);
+        await setWorkloadsOn(id, v === 'on');
+        audit({ type: 'machine.workloads', actor: 'host', effect: 'allow', detail: { machineId: id, on: v === 'on' } });
+        return { id, name: m.name, runsWorkloads: v === 'on', isolation: isolationStatus(m) };
       },
     },
     'build-registries': {
