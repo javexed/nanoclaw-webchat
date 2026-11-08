@@ -1480,9 +1480,9 @@ export const moduleWebchatThreadCreator: Migration = {
 };
 
 /**
- * Agent machines (modules/machines): sites (a backend plus its sizes and
- * caps) and the machines built on them. Deleted machines keep their row, so
- * the record of who had what outlives the VM.
+ * Machine sites and machines built on them by a provisioning backend. That
+ * feature is gone; the migration stays because installs have applied it, and
+ * nothing reads these tables any more.
  */
 export const moduleWebchatMachines: Migration = {
   version: 236,

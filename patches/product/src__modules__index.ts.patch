@@ -36,7 +36,7 @@ index f88885c5..d636fe54 100644
 +// Screens tool output before the model reads it: declares the guard hook in
 +// every Claude group's settings — see the module header.
 +import './tool-result-guard/index.js';
-+// Machines: hosts that join NanoClaw (Admin → Machines, `ncl machines`).
++// Machines: hosts that join NanoClaw (Admin → Scaling → Machines).
 +import './machines/index.js';
 +// Agent workloads: an agent's own Compose stacks, `ncl workloads` (off unless
 +// NANOCLAW_WORKLOADS=1 and the host passes the preflight — see the module).
