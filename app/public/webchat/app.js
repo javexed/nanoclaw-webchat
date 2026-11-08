@@ -5333,8 +5333,8 @@ var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 		* renderAgentKeys, including the one-string meta line (ssh command and target, or what
 		* is missing). The private key is held on the host and never reaches the client, so
 		* copying the public key is the whole workflow; it uses the .btn-icon copy control
-		* (CopyIconButton), paired with Edit and Remove. Edit changes only the login target
-		* (user@host): the key stays the same, so the far end keeps trusting it. A key the
+		* (CopyIconButton), paired with Edit and Remove. Edit changes only the login targets
+		* (user@host, comma-separated): the key stays the same, so the far end keeps trusting it. A key the
 		* agent could once read is marked Exposed; Rotate replaces it with a new one, whose
 		* public half then goes on the server.
 		*/
@@ -5345,7 +5345,7 @@ var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 			cancel: "Cancel",
 			remove: "Remove",
 			rotate: "Rotate",
-			target: "user@host",
+			target: "user@host, user@host",
 			exposed: "Exposed",
 			exposedTip: "The agent could read this key once. Rotate it, then put the new public key on the server."
 		};
@@ -21730,14 +21730,20 @@ async function renderAgentKeys(agentGroupId) {
 		keys = (await apiJson(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? "")}`)).keys || [];
 	} catch {}
 	agentKeysGroupId = agentGroupId;
-	agentKeyRows.value = keys.map((k) => ({
-		name: k.name,
-		meta: !k.target ? "Target needed" : k.command ? `${k.command} · ${k.target}` : `${k.target} · host key not checked yet`,
-		target: k.target || "",
-		publicKey: k.publicKey,
-		exposed: k.exposed === true,
-		key: k
-	}));
+	agentKeyRows.value = keys.map((k) => {
+		const targets = k.targets ?? (k.target ? [{
+			target: k.target,
+			command: k.command
+		}] : []);
+		return {
+			name: k.name,
+			meta: !targets.length ? "Target needed" : targets.map((t) => t.command ? `${t.command} · ${t.target}` : `${t.target} · host key not checked yet`).join(", "),
+			target: targets.map((t) => t.target).join(", "),
+			publicKey: k.publicKey,
+			exposed: k.exposed === true,
+			key: k
+		};
+	});
 	mountAgentKeyList();
 	$("#agent-keys-count").textContent = keys.length ? String(keys.length) : "";
 }
@@ -21775,8 +21781,8 @@ async function createAgentKey() {
 	}
 }
 /**
-* Re-point an existing key at a new user@host. The server re-stamps the
-* target in the key's public half and refreshes the agent's credential note;
+* Re-point an existing key at new targets (user@host, comma-separated). The
+* server pins their host keys and refreshes the agent's credential note;
 * the key material is unchanged, so the far end keeps trusting it. True when
 * saved.
 */

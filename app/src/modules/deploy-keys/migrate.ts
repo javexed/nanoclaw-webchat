@@ -4,10 +4,12 @@
  * Agents could read anything in their group folder, so every private key found
  * there is treated as exposed: it is imported (marked "exposed — rotate"), the
  * original is backed up to a 0600 tarball in the store, and removed from the
- * folder. A key's target comes from the agent's own `.ssh/config`, or from the
- * `.pub` comment of a key NanoClaw generated; otherwise Admin asks for it.
+ * folder. A key's target comes from the operator (`--targets`), the agent's
+ * own `.ssh/config`, or the `.pub` comment of a key NanoClaw generated;
+ * otherwise Admin (or `ncl deploy-keys set-target`) asks for it.
  *
- * Run by the operator: `ncl deploy-keys migrate --dry-run`, then without.
+ * Run by the operator: `ncl deploy-keys migrate --dry-run`, then without;
+ * `--group` moves one agent's keys at a time.
  * Scripts that used `ssh -i /workspace/agent/<file>` stop working; the memory
  * note and the deploy-keys skill point agents to `ssh <name>`.
  */
@@ -24,6 +26,7 @@ import {
   fingerprintOf,
   groupStoreDir,
   listStored,
+  normalizeTargets,
   publicOf,
   putKey,
   storeRoot,
@@ -41,9 +44,29 @@ export interface FoundKey {
   file: string;
   name: string;
   fingerprint: string;
-  target?: string;
+  targets?: string[];
+  /** The targets were given by the operator (`--targets`), not found. */
+  given?: boolean;
   /** Why it is not imported, when it is not. */
   skip?: string;
+}
+
+/** Targets the operator names per key, by the name the dry run shows. */
+export type GivenTargets = Record<string, string | string[]>;
+
+/** Check `--targets` before anything moves: every list valid. Returns them normalized. */
+export function checkGivenTargets(given: unknown): Record<string, string[]> {
+  if (given === undefined) return {};
+  if (!given || typeof given !== 'object' || Array.isArray(given))
+    throw new Error('--targets must be a JSON object: {"<key name>": "user@host,user@host"}');
+  const out: Record<string, string[]> = {};
+  for (const [name, list] of Object.entries(given as Record<string, unknown>)) {
+    if (!NAME_RE.test(name)) throw new Error(`--targets: "${name}" is not a key name`);
+    if (typeof list !== 'string' && !(Array.isArray(list) && list.every((t) => typeof t === 'string')))
+      throw new Error(`--targets: "${name}" must be a string or a list of strings`);
+    out[name] = normalizeTargets(list);
+  }
+  return out;
 }
 
 export interface GroupPlan {
@@ -130,10 +153,22 @@ export function targetFromConfig(config: string, file: string): string | undefin
   return hit && TARGET_RE.test(hit) ? hit : undefined;
 }
 
+export interface PlanOptions {
+  /** Only this agent group. */
+  group?: string;
+  /** Targets the operator names per key (needs `group`: names are per agent). */
+  targets?: Record<string, string[]>;
+}
+
 /** What a migration would do. Reads only; never returns key material. */
-export async function planMigration(): Promise<GroupPlan[]> {
+export async function planMigration(opts: PlanOptions = {}): Promise<GroupPlan[]> {
+  const given = opts.targets ?? {};
+  if (Object.keys(given).length && !opts.group) throw new Error('--targets needs --group: key names are per agent');
+  const groups = await getAllAgentGroups();
+  if (opts.group && !groups.some((g) => g.id === opts.group)) throw new Error(`No agent group "${opts.group}"`);
   const plans: GroupPlan[] = [];
-  for (const g of await getAllAgentGroups()) {
+  for (const g of groups) {
+    if (opts.group && g.id !== opts.group) continue;
     const dir = path.join(GROUPS_DIR, g.folder);
     if (!fs.existsSync(dir)) continue;
     const files = findKeyFiles(dir);
@@ -174,11 +209,15 @@ export async function planMigration(): Promise<GroupPlan[]> {
         } catch {
           /* no .pub beside it */
         }
-      const target = targetFromConfig(config, file) ?? (TARGET_RE.test(comment) ? comment : undefined);
-      keys.push({ file, name, fingerprint, ...(target ? { target } : {}) });
+      const found = targetFromConfig(config, file) ?? (TARGET_RE.test(comment) ? comment : undefined);
+      const targets = given[name] ?? (found ? [found] : undefined);
+      keys.push({ file, name, fingerprint, ...(targets ? { targets } : {}), ...(given[name] ? { given: true } : {}) });
     }
     plans.push({ agentGroupId: g.id, folder: g.folder, keys });
   }
+  const named = new Set(plans.flatMap((p) => p.keys.filter((k) => !k.skip).map((k) => k.name)));
+  const unknown = Object.keys(given).filter((n) => !named.has(n));
+  if (unknown.length) throw new Error(`--targets names no key this migration moves: ${unknown.join(', ')}`);
   return plans;
 }
 
@@ -190,12 +229,14 @@ export interface MigrationResult {
 
 /**
  * Import every key the plan finds, back the originals up, and remove them from
- * the agent folders. `trustTargets` records the found targets as an install
- * admin's (they may then resolve to a private address); otherwise an owner
- * confirms each one in Admin.
+ * the agent folders. Targets the operator gave are an install admin's; found
+ * ones are too with `trustTargets` (they may then resolve to a private
+ * address); otherwise an owner confirms each one in Admin.
  */
-export async function migrateKeys(opts: { dryRun: boolean; trustTargets?: boolean }): Promise<MigrationResult> {
-  const plans = await planMigration();
+export async function migrateKeys(
+  opts: { dryRun: boolean; trustTargets?: boolean } & PlanOptions,
+): Promise<MigrationResult> {
+  const plans = await planMigration(opts);
   if (opts.dryRun) return { plans, imported: 0 };
   const toBackUp: string[] = [];
   let imported = 0;
@@ -206,9 +247,9 @@ export async function migrateKeys(opts: { dryRun: boolean; trustTargets?: boolea
       const priv = fs.readFileSync(path.join(dir, k.file));
       const pub = publicOf(priv);
       if (!pub) continue;
-      const setBy: TargetSetBy = opts.trustTargets ? 'install' : 'agent';
+      const setBy: TargetSetBy = k.given || opts.trustTargets ? 'install' : 'agent';
       putKey(plan.agentGroupId, k.name, priv, pub, {
-        ...(k.target ? { target: k.target, targetSetBy: setBy } : {}),
+        ...(k.targets ? { targets: k.targets, targetSetBy: setBy } : {}),
         exposed: true,
         createdAt: new Date().toISOString(),
       });
@@ -241,7 +282,11 @@ export function formatPlan(r: MigrationResult, dryRun: boolean): string {
       if (!k.skip) n++;
       lines.push(
         `  ${k.file} → ${k.name}` +
-          (k.skip ? `  [skipped: ${k.skip}]` : k.target ? `  ${k.target}` : '  [target needed in Admin]'),
+          (k.skip
+            ? `  [skipped: ${k.skip}]`
+            : k.targets
+              ? `  ${k.targets.join(', ')}`
+              : '  [target needed: ncl deploy-keys set-target, or Admin]'),
       );
     }
   }

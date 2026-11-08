@@ -1,6 +1,7 @@
 /**
  * What an agent's container sees of its deploy keys: a read-only directory at
- * /run/nanoclaw-ssh holding an SSH config (`ssh <name>`), the pinned host
+ * /run/nanoclaw-ssh holding an SSH config (`ssh <name>`; a key with several
+ * targets also gets `<name>.2`, `<name>.3`…, in target order), the pinned host
  * keys, the public halves (which pick the key out of the agent), and the agent
  * socket (agent.ts). Never a private key.
  *
@@ -11,38 +12,45 @@ import fs from 'fs';
 import path from 'path';
 
 import { writeNoFollow } from '../../no-follow-fs.js';
-import { groupViewDir, listStored, pinnedHosts, readKnownHosts, splitTarget, type StoredKey } from './store.js';
+import { groupViewDir, listStored, pinnedHosts, readKnownHosts, resolveTargets, type StoredKey } from './store.js';
 
 export const CONTAINER_SSH_DIR = '/run/nanoclaw-ssh';
 
-/** The SSH config for these keys. Pure: tested on its own. */
+/**
+ * The SSH config for these keys: a Host block per usable target. A target
+ * reached through a jump host gets `ProxyJump <the jump's alias>`, so the
+ * container's ssh opens both connections and the agent signs each (one
+ * destination constraint per hop). Pure: tested on its own.
+ */
 export function renderConfig(keys: StoredKey[], pinned: Set<string>): string {
   const lines = ['# Managed by NanoClaw: deploy keys for this agent. Read-only.'];
   for (const k of keys) {
-    if (!k.meta.target) continue;
-    const { user, host } = splitTarget(k.meta.target);
-    if (!pinned.has(host)) continue;
-    lines.push(
-      '',
-      `Host ${k.name}`,
-      `  HostName ${host}`,
-      `  User ${user}`,
-      `  IdentityAgent ${CONTAINER_SSH_DIR}/agent.sock`,
-      `  IdentityFile ${CONTAINER_SSH_DIR}/${k.name}.pub`,
-      '  IdentitiesOnly yes',
-      '  BatchMode yes',
-      `  UserKnownHostsFile ${CONTAINER_SSH_DIR}/known_hosts`,
-      '  StrictHostKeyChecking yes',
-      // Direct where the container has a route out; through the egress filter where it has none.
-      '  ProxyCommand bun /app/src/ssh-proxy.ts %h %p',
-    );
+    for (const t of resolveTargets(k.name, k.meta, pinned)) {
+      if (!t.usable) continue;
+      lines.push(
+        '',
+        `Host ${t.alias}`,
+        `  HostName ${t.host}`,
+        `  User ${t.user}`,
+        `  IdentityAgent ${CONTAINER_SSH_DIR}/agent.sock`,
+        `  IdentityFile ${CONTAINER_SSH_DIR}/${k.name}.pub`,
+        '  IdentitiesOnly yes',
+        '  BatchMode yes',
+        `  UserKnownHostsFile ${CONTAINER_SSH_DIR}/known_hosts`,
+        '  StrictHostKeyChecking yes',
+        t.jump
+          ? `  ProxyJump ${t.jump}`
+          : // Direct where the container has a route out; through the egress filter where it has none.
+            '  ProxyCommand bun /app/src/ssh-proxy.ts %h %p',
+      );
+    }
   }
   return lines.join('\n') + '\n';
 }
 
 /**
  * Rewrite a group's view. Returns whether it has any usable key (a target with
- * a pinned host key); the view directory exists either way once a group has a
+ * a pinned host key, and every jump on its way pinned too); the view directory exists either way once a group has a
  * key, so a running container's mount stays valid across changes.
  */
 export function syncView(agentGroupId: string): boolean {
@@ -50,7 +58,7 @@ export function syncView(agentGroupId: string): boolean {
   const known = readKnownHosts(agentGroupId);
   const pinned = pinnedHosts(known);
   const dir = groupViewDir(agentGroupId);
-  const usable = keys.filter((k) => k.meta.target && pinned.has(splitTarget(k.meta.target).host));
+  const usable = keys.filter((k) => resolveTargets(k.name, k.meta, pinned).some((t) => t.usable));
   writeNoFollow(dir, 'config', renderConfig(usable, pinned), 0o644);
   writeNoFollow(dir, 'known_hosts', known, 0o644);
   const want = new Set(usable.map((k) => `${k.name}.pub`));

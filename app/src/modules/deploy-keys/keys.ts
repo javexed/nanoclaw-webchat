@@ -8,11 +8,12 @@
  *
  * WHERE THE KEY LIVES: on the host only (store.ts), never in a folder a
  * container mounts. The agent uses a key through a per-agent ssh-agent on the
- * host (agent.ts) that signs only for the key's own target (an OpenSSH
- * destination constraint, checked against the pinned host key). A compromised
- * agent can log in to that target while its session runs; it cannot take the
- * key away or use it anywhere else. The container sees a read-only view
- * (view.ts): `ssh <name>`, the pinned host keys, the agent socket.
+ * host (agent.ts) that signs only for the key's own targets (OpenSSH
+ * destination constraints, checked against the pinned host keys). A
+ * compromised agent can log in to those targets while its session runs; it
+ * cannot take the key away or use it anywhere else. The container sees a
+ * read-only view (view.ts): `ssh <name>`, the pinned host keys, the agent
+ * socket.
  *
  * Earlier versions wrote both halves into the agent's group folder, where the
  * agent could read them. migrate.ts moves those into the store and marks them
@@ -30,11 +31,13 @@ import { ensureAgent, reloadAgent, stopAgent } from './agent.js';
 import { notifyKeyChange } from './notify.js';
 import {
   NAME_RE,
-  TARGET_RE,
   fingerprintOf,
   generatePair,
   groupStoreDir,
+  hopOf,
   listStored,
+  normalizeTargets,
+  pinFromKnownHosts,
   pinHost,
   pinnedHosts,
   putKey,
@@ -42,7 +45,10 @@ import {
   readMeta,
   removeKey,
   replaceKey,
+  resolveTargets,
   splitTarget,
+  targetsOf,
+  withTargets,
   writeMeta,
   type TargetSetBy,
 } from './store.js';
@@ -50,16 +56,28 @@ import { syncView } from './view.js';
 
 const run = promisify(execFile);
 
+/** One target of a key, as the UI and the memory note see it. */
+export interface DeployKeyTarget {
+  /** `user@host`, or `user@host via jumpuser@jumphost`. */
+  target: string;
+  /** The command the agent runs for this target. Present when it is usable. */
+  command?: string;
+  /** Its host key (or a jump's) could not be fetched yet, so it is not usable. */
+  hostKeyMissing?: boolean;
+}
+
 /** A deploy key, as the UI and the memory note see it. Never carries the private half. */
 export interface DeployKeyInfo {
   name: string;
   publicKey: string;
   fingerprint: string;
-  /** `user@host`: who the agent logs in as. */
+  /** The first target: who the agent logs in as, for callers that know one. */
   target?: string;
-  /** The command the agent runs. Present when the key is usable. */
+  /** Every target, in order. */
+  targets: DeployKeyTarget[];
+  /** The first usable target's command. Present when the key is usable. */
   command?: string;
-  /** The target's host key could not be fetched yet, so the key is not loaded. */
+  /** Some target's host key could not be fetched yet. */
   hostKeyMissing?: boolean;
   /** The private half was readable by the agent once: rotate it. */
   exposed?: boolean;
@@ -70,15 +88,19 @@ export async function listDeployKeys(agentGroupId: string): Promise<DeployKeyInf
   if (!(await getAgentGroup(agentGroupId))) return [];
   const pinned = pinnedHosts(readKnownHosts(agentGroupId));
   return listStored(agentGroupId).map((k) => {
-    const target = k.meta.target;
-    const usable = !!target && pinned.has(splitTarget(target).host);
+    const targets: DeployKeyTarget[] = resolveTargets(k.name, k.meta, pinned).map((t) => ({
+      target: t.target,
+      ...(t.usable ? { command: `ssh ${t.alias}` } : { hostKeyMissing: true }),
+    }));
+    const command = targets.find((t) => t.command)?.command;
     return {
       name: k.name,
       publicKey: k.publicKey,
       fingerprint: fingerprintOf(k.publicKey),
-      ...(target ? { target } : {}),
-      ...(usable ? { command: `ssh ${k.name}` } : {}),
-      ...(target && !usable ? { hostKeyMissing: true } : {}),
+      ...(targets.length ? { target: targets[0].target } : {}),
+      targets,
+      ...(command ? { command } : {}),
+      ...(targets.some((t) => t.hostKeyMissing) ? { hostKeyMissing: true } : {}),
       ...(k.meta.exposed ? { exposed: true } : {}),
       ...(k.meta.lastUsedAt ? { lastUsedAt: k.meta.lastUsedAt } : {}),
     };
@@ -107,7 +129,7 @@ export function _setHostKeyScanForTest(fn: ((host: string) => Promise<string[]>)
 
 /** Pin (or re-pin) a target's host key. True when one is pinned afterwards. */
 export async function pinTarget(agentGroupId: string, target: string, rescan: boolean): Promise<boolean> {
-  const { host } = splitTarget(target);
+  const { host } = splitTarget(hopOf(target));
   if (!rescan && pinnedHosts(readKnownHosts(agentGroupId)).has(host)) return true;
   const lines = await scanHostKeys(host);
   if (lines.length) pinHost(agentGroupId, host, lines);
@@ -142,20 +164,21 @@ async function applied(agentGroupId: string, notice: string): Promise<void> {
 export async function createDeployKey(
   agentGroupId: string,
   name: string,
-  target?: string,
+  target?: string | string[],
   setBy: TargetSetBy = 'agent',
 ): Promise<DeployKeyInfo> {
   if (!NAME_RE.test(name)) throw new Error('Name must be lowercase letters, numbers and hyphens');
-  if (target && !TARGET_RE.test(target)) throw new Error('Target must look like user@host');
+  const blank = Array.isArray(target) ? !target.some((t) => String(t).trim()) : !target?.trim();
+  const targets = blank ? [] : normalizeTargets(target);
   const group = await getAgentGroup(agentGroupId);
   if (!group) throw new Error('This agent has no workspace folder yet');
   const first = listStored(agentGroupId).length === 0;
-  const { priv, pub } = generatePair(target || `${name}@${group.folder}`);
+  const { priv, pub } = generatePair(targets.length ? hopOf(targets[0]) : `${name}@${group.folder}`);
   putKey(agentGroupId, name, priv, pub, {
-    ...(target ? { target, targetSetBy: setBy } : {}),
+    ...(targets.length ? { targets, targetSetBy: setBy } : {}),
     createdAt: new Date().toISOString(),
   });
-  if (target) await pinTarget(agentGroupId, target, true);
+  for (const t of targets) await pinTarget(agentGroupId, t, true);
   log.info('Deploy key created', { agentGroupId, name });
   // A first key is mounted at the next spawn; a running session cannot see it.
   await applied(
@@ -167,26 +190,40 @@ export async function createDeployKey(
   return (await listDeployKeys(agentGroupId)).find((k) => k.name === name)!;
 }
 
-/** Re-point a key at a new `user@host`. The key material stays the same. */
+export interface SetTargetOptions {
+  /**
+   * known_hosts text an operator supplies: host keys for these targets are
+   * pinned from it instead of scanned (a server this host cannot reach).
+   */
+  knownHosts?: string;
+}
+
+/**
+ * Re-point a key at new targets (one `user@host`, a comma-separated list, or
+ * an array; see normalizeTargets). The key material stays the same.
+ */
 export async function setDeployKeyTarget(
   agentGroupId: string,
   name: string,
-  target: string,
+  target: string | string[],
   setBy: TargetSetBy = 'agent',
+  opts: SetTargetOptions = {},
 ): Promise<DeployKeyInfo> {
   if (!NAME_RE.test(name)) throw new Error('Name must be lowercase letters, numbers and hyphens');
-  if (!TARGET_RE.test(target)) throw new Error('Target must look like user@host');
+  const targets = normalizeTargets(target);
   if (!listStored(agentGroupId).some((k) => k.name === name)) throw new Error(`No key named "${name}"`);
   const dir = groupStoreDir(agentGroupId);
-  writeMeta(dir, name, { ...readMeta(dir, name), target, targetSetBy: setBy });
-  await pinTarget(agentGroupId, target, true);
-  log.info('Deploy key target set', { agentGroupId, name, target });
-  await applied(agentGroupId, `[SSH keys changed] Deploy key "${name}" now logs in as ${target}.`);
+  writeMeta(dir, name, withTargets(readMeta(dir, name), targets, setBy));
+  const hosts = [...new Set(targets.map((t) => splitTarget(hopOf(t)).host))];
+  const supplied = opts.knownHosts ? pinFromKnownHosts(agentGroupId, hosts, opts.knownHosts) : [];
+  for (const t of targets) if (!supplied.includes(splitTarget(hopOf(t)).host)) await pinTarget(agentGroupId, t, true);
+  log.info('Deploy key target set', { agentGroupId, name, targets });
+  await applied(agentGroupId, `[SSH keys changed] Deploy key "${name}" now logs in as ${targets.join(', ')}.`);
   return (await listDeployKeys(agentGroupId)).find((k) => k.name === name)!;
 }
 
 /**
- * Replace a key's pair: same name and target, new key material, no longer
+ * Replace a key's pair: same name and targets, new key material, no longer
  * marked exposed. The new public half must be installed on the target.
  */
 export async function rotateDeployKey(agentGroupId: string, name: string): Promise<DeployKeyInfo> {
@@ -194,7 +231,8 @@ export async function rotateDeployKey(agentGroupId: string, name: string): Promi
   const key = listStored(agentGroupId).find((k) => k.name === name);
   if (!key) throw new Error(`No key named "${name}"`);
   const group = await getAgentGroup(agentGroupId);
-  const { priv, pub } = generatePair(key.meta.target || `${name}@${group?.folder ?? agentGroupId}`);
+  const first = targetsOf(key.meta)[0];
+  const { priv, pub } = generatePair(first ? hopOf(first) : `${name}@${group?.folder ?? agentGroupId}`);
   replaceKey(agentGroupId, name, priv, pub);
   const dir = groupStoreDir(agentGroupId);
   const { exposed: _old, ...rest } = readMeta(dir, name);
