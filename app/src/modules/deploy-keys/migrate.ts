@@ -9,7 +9,7 @@
  * otherwise Admin (or `ncl deploy-keys set-target`) asks for it.
  *
  * Run by the operator: `ncl deploy-keys migrate --dry-run`, then without;
- * `--group` moves one agent's keys at a time.
+ * `--group` moves one agent's keys at a time, `--all` every agent's.
  * Scripts that used `ssh -i /workspace/agent/<file>` stop working; the memory
  * note and the deploy-keys skill point agents to `ssh <name>`.
  */

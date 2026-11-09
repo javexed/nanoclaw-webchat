@@ -120,7 +120,8 @@ unchanged; the refusal comes from ssh-agent itself.
 `ncl deploy-keys migrate --dry-run` lists every private key found in agent
 folders (deploy-key files, `.ssh/id_*`, and any other file that is a private
 key; dependency trees and fixtures are skipped), with the name and target it
-would get. Without `--dry-run` it:
+would get. Without `--dry-run`, and with `--group <id>` for one agent or
+`--all` for every agent (it refuses to run with neither), it:
 
 1. imports each key into the store, with its target from the agent's own
    `.ssh/config` (or, for a key NanoClaw generated, its `.pub` comment),

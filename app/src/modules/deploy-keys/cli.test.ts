@@ -63,7 +63,7 @@ describe('ncl deploy-keys', () => {
     for (const op of Object.values(reg.ops)) expect(op.hostOnly).toBe(true);
     const setTarget = reg.ops['set-target'].args!;
     expect(setTarget.filter((a) => a.required).map((a) => a.name)).toEqual(['group', 'key', 'targets']);
-    expect(reg.ops.migrate.args!.map((a) => a.name)).toEqual(['dry_run', 'group', 'trust_targets', 'targets']);
+    expect(reg.ops.migrate.args!.map((a) => a.name)).toEqual(['dry_run', 'group', 'all', 'trust_targets', 'targets']);
   });
 
   it('set-target records several targets as an install admin’s', async () => {
@@ -148,5 +148,18 @@ describe('ncl deploy-keys', () => {
     await expect(run('migrate', { dry_run: true, group: 'ag-1', targets: { app: 'nope' } })).rejects.toThrow(
       /Target must/,
     );
+  });
+
+  it('migrate moves nothing without --group or --all', async () => {
+    await expect(run('migrate', {})).rejects.toThrow(/--group <id>, or pass --all/);
+    await expect(run('migrate', { group: 'ag-1', all: true })).rejects.toThrow(/not both/);
+    await expect(run('migrate', { dry_run: true })).resolves.toBeDefined();
+  });
+
+  it('every verb refuses a stray word, so "migrate help" changes nothing', async () => {
+    for (const verb of ['list', 'set-target', 'migrate'])
+      await expect(run(verb, { id: 'help', dry_run: false })).rejects.toThrow(
+        new RegExp(`For help: ncl deploy-keys help ${verb}`),
+      );
   });
 });
