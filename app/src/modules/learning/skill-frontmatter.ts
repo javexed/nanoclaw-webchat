@@ -15,8 +15,9 @@ import { parse as parseYaml } from 'yaml';
  * So the frontmatter is never passed through. It is found at least as
  * leniently as Claude Code finds it, parsed with a real YAML parser, and only
  * `name` and `description` are read out — as strings — and written back into a
- * fresh two-line block. Frontmatter that does not parse, or a name or
- * description that is not a string, rejects the skill rather than guessing.
+ * fresh two-line block. Frontmatter that YAML refuses is read as plain one-line
+ * `key: value` pairs if that is all it holds (plainLines); anything else that
+ * does not parse, or a name or description that is not a string, rejects it.
  */
 const KEPT_FRONTMATTER_KEYS = new Set(['name', 'description']);
 
@@ -33,6 +34,25 @@ function frontmatterValue(v: string): string {
       .replace(/-{3,}/g, '--')
       .trim(),
   );
+}
+
+/**
+ * Frontmatter that YAML refuses, read as plain `key: value` lines: only when
+ * every line is one (no indentation, lists or block values), and every value
+ * is kept as a string. Only name and description are used afterwards anyway.
+ */
+function plainLines(block: string): Record<string, string> | null {
+  const out: Record<string, string> = {};
+  for (const line of block.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const m = /^([A-Za-z][\w-]*):[ \t]+(\S.*?)\s*$/.exec(line);
+    if (!m) return null;
+    let v = m[2]!;
+    if (v.length > 1 && (v[0] === '"' || v[0] === "'") && v.endsWith(v[0])) v = v.slice(1, -1);
+    if (/^[|>&*!%@`{[]/.test(v)) return null;
+    out[m[1]!] = v;
+  }
+  return out;
 }
 
 export type SanitizedSkill = { ok: true; body: string; dropped: string[] } | { ok: false; error: string };
@@ -59,7 +79,10 @@ export function sanitizeSkillFrontmatter(
     try {
       parsed = parseYaml(m[1] ?? '');
     } catch {
-      return { ok: false, error: 'Skill frontmatter is not valid YAML' };
+      // Agents often write an unquoted value with ": " in it (an error message
+      // in a description), which YAML refuses. Only plain one-line keys qualify.
+      parsed = plainLines(m[1] ?? '');
+      if (!parsed) return { ok: false, error: 'Skill frontmatter is not valid YAML' };
     }
     if (parsed !== null && parsed !== undefined) {
       if (typeof parsed !== 'object' || Array.isArray(parsed)) {
