@@ -66,6 +66,17 @@ export function readKnownHostsFile(file: string): string {
   return fs.readFileSync(file, 'utf-8');
 }
 
+/**
+ * These verbs take flags only. ncl reads a word after the verb as an id, so
+ * `ncl deploy-keys migrate help` would otherwise run the migration.
+ */
+function refusePositional(verb: string, args: Record<string, unknown>): void {
+  if (args.id === undefined) return;
+  throw new Error(
+    `ncl deploy-keys ${verb} takes flags only, not "${String(args.id)}". For help: ncl deploy-keys help ${verb}`,
+  );
+}
+
 async function requireGroup(id: unknown): Promise<{ id: string; folder: string }> {
   const g = typeof id === 'string' ? await getAgentGroup(id) : undefined;
   if (!g) throw new Error(`No agent group "${String(id)}"`);
@@ -91,6 +102,7 @@ registerResource({
       args: [{ name: 'group', type: 'string', description: 'Only this agent group (id).' }],
       examples: ['ncl deploy-keys list', 'ncl deploy-keys list --group <agent group id>'],
       handler: async (args) => {
+        refusePositional('list', args);
         const ids = args.group !== undefined ? [(await requireGroup(args.group)).id] : storedGroups();
         const groups = new Map((await getAllAgentGroups()).map((g) => [g.id, g]));
         const out: GroupListing[] = [];
@@ -125,6 +137,7 @@ registerResource({
         'ncl deploy-keys set-target --group <id> --key ops --targets "root@192.0.2.1,ops@198.51.100.7 via root@192.0.2.1" --known-hosts /root/ops-known-hosts',
       ],
       handler: async (args) => {
+        refusePositional('set-target', args);
         const g = await requireGroup(args.group);
         const knownHosts = args.known_hosts !== undefined ? readKnownHostsFile(String(args.known_hosts)) : undefined;
         const { setDeployKeyTarget } = await import('./keys.js');
@@ -142,13 +155,15 @@ registerResource({
         'Finds private keys in agent folders (skipping dependency trees and fixtures), imports each ' +
         'with its target when the agent’s .ssh/config names one (or, for a key NanoClaw made, its comment), marks every ' +
         'one exposed (rotate it in Admin), backs the originals up to a 0600 tarball in the store, and ' +
-        'removes them from the folder. --dry-run lists what would move. --group moves one agent’s keys. ' +
+        'removes them from the folder. --dry-run lists what would move. --group moves one agent’s keys; ' +
+        'moving every agent’s keys at once needs --all. ' +
         '--trust-targets records the targets found as an install admin’s, so a name that resolves to a ' +
         'private address stays reachable. --targets (with --group) gives targets per key, by the name the ' +
         'dry run shows, as a JSON object; they are recorded as an install admin’s.',
       args: [
         { name: 'dry_run', type: 'boolean', description: 'List what would move; change nothing.', default: false },
         { name: 'group', type: 'string', description: 'Only this agent group (id).' },
+        { name: 'all', type: 'boolean', description: 'Move every agent’s keys (without --group).', default: false },
         {
           name: 'trust_targets',
           type: 'boolean',
@@ -165,10 +180,17 @@ registerResource({
         'ncl deploy-keys migrate --dry-run',
         'ncl deploy-keys migrate --group <id> --dry-run',
         'ncl deploy-keys migrate --group <id> --targets \'{"app":"deploy@192.0.2.10,deploy@192.0.2.11"}\'',
-        'ncl deploy-keys migrate --trust-targets',
+        'ncl deploy-keys migrate --all --trust-targets',
       ],
       handler: async (args) => {
+        refusePositional('migrate', args);
         const dryRun = args.dry_run === true;
+        if (args.group !== undefined && args.all === true) throw new Error('Give --group or --all, not both.');
+        if (!dryRun && args.group === undefined && args.all !== true)
+          throw new Error(
+            'Name one agent with --group <id>, or pass --all to move every agent’s keys. ' +
+              'Preview first with --dry-run.',
+          );
         const group = args.group !== undefined ? (await requireGroup(args.group)).id : undefined;
         const targets = checkGivenTargets(args.targets);
         dryRunShown = dryRun;
