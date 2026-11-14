@@ -24,6 +24,10 @@ export interface Workload {
   approvedShape: string | null;
   /** Why it runs on its node, in one line (placement.ts); null for older rows. */
   placementReason: string | null;
+  /** Hours without traffic before the stack is put to sleep (sleep.ts); null = the default, 0 = never. */
+  sleepAfterH: number | null;
+  /** Set while the stack is asleep (state 'stopped'); the next request wakes it. */
+  asleepAt: number | null;
   lastError: string | null;
   expiresAt: number | null;
   /** The expiry its agent was last reminded of (reconcile.ts); a new expiry re-arms the reminder. */
@@ -48,6 +52,8 @@ interface Row {
   approved_cpus: number;
   approved_shape?: string | null;
   placement_reason?: string | null;
+  sleep_after_h?: number | null;
+  asleep_at?: number | null;
   last_error: string | null;
   expires_at: number | null;
   expiry_notice_for?: number | null;
@@ -71,6 +77,8 @@ const toWorkload = (r: Row): Workload => ({
   approvedCpus: r.approved_cpus,
   approvedShape: r.approved_shape ?? null,
   placementReason: r.placement_reason ?? null,
+  sleepAfterH: r.sleep_after_h ?? null,
+  asleepAt: r.asleep_at ?? null,
   lastError: r.last_error,
   expiresAt: r.expires_at,
   expiryNoticeFor: r.expiry_notice_for ?? null,
@@ -158,6 +166,8 @@ export async function updateWorkload(
       | 'approvedShape'
       | 'node'
       | 'placementReason'
+      | 'sleepAfterH'
+      | 'asleepAt'
     >
   >,
   now = Date.now(),
@@ -184,6 +194,8 @@ export async function updateWorkload(
   if (patch.approvedShape !== undefined) put('approved_shape', patch.approvedShape);
   if (patch.node !== undefined) put('node', patch.node);
   if ('placementReason' in patch) put('placement_reason', patch.placementReason);
+  if ('sleepAfterH' in patch) put('sleep_after_h', patch.sleepAfterH);
+  if ('asleepAt' in patch) put('asleep_at', patch.asleepAt);
   put('updated_at', now);
   args.push(id);
   await getDb().run(`UPDATE workloads SET ${sets.join(', ')} WHERE id = ?`, ...args);

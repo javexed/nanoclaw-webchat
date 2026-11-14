@@ -1,7 +1,8 @@
 /**
  * Which published apps the gateway serves right now: the workload runs, its
  * service has an address, the route's kind is on and can name the app's
- * address. Everything else is left out of Caddy, so a stopped workload or a
+ * address (a sleeping one too: its first request wakes it). Everything else
+ * is left out of Caddy, so a stopped workload or a
  * switched-off route answers 404 at the gateway rather than reaching anything.
  * A stack on a worker is served through a relay socket over its link
  * (relay.ts), and left out while that worker is not linked.
@@ -17,7 +18,9 @@ export async function siteFor(route: AppRoute): Promise<GatewaySite | null> {
   const kind = publishingRoute(route.kind);
   if (!kind || !(await kind.enabled().catch(() => false))) return null;
   const w = await getWorkload(route.workloadId);
-  if (!w || w.state !== 'running' || w.agentGroupId !== route.agentGroupId) return null;
+  // A sleeping stack stays served: the gateway's check wakes it (sleep.ts).
+  const asleep = w?.state === 'stopped' && w.asleepAt !== null;
+  if (!w || (w.state !== 'running' && !asleep) || w.agentGroupId !== route.agentGroupId) return null;
   const addr = w.addresses[route.service];
   const hostname = await kind.hostnameFor(route.app).catch(() => null);
   if (!addr || !hostname) return null;

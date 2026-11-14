@@ -160,6 +160,17 @@ extends it in **Agent → Apps** (Extend, 30 days from that day), or you ask
 with `ncl workloads extend --name myapp` (approval). After it stopped, extend
 it and `start` it again. `ncl workloads list` shows `expires`.
 
+## Sleeping when idle
+
+A stack with no requests for 24 hours sleeps: its containers stop, its data,
+addresses and size stay. The next request wakes it in a few seconds: people
+opening its page see "Starting…" briefly; your own requests, `exec`, `start`
+and `redeploy` wake it too. `ncl workloads list` shows it as `asleep`.
+
+- A stack that works in the background (a job worker, a scheduled sync) must
+  not sleep: `ncl workloads sleep --name myapp --after 0`.
+- Another idle time: `--after <hours>`; back to the default: `--after default`.
+
 ## Disk, backups, restore
 
 Disk use (volumes, container files, your images, your build cache and your

@@ -84,7 +84,14 @@ export interface InternalDeps extends OpenDeps {
   isLive(route: AppRoute): Promise<boolean>;
   /** Someone was let in (opened.ts records it, throttled). Must not throw. */
   opened?(route: AppRoute): Promise<unknown>;
+  /** A request for the route's stack: counts as use; true while it is asleep or starting (sleep.ts). */
+  waking?(route: AppRoute): Promise<boolean>;
 }
+
+/** Shown while a sleeping stack starts (sleep.ts); reloads every 3 s. */
+const WAKING_PAGE =
+  '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="3"><title>Starting</title>' +
+  '<p style="font:16px system-ui,sans-serif;margin:3em auto;max-width:20em;text-align:center">Starting…</p>';
 
 const hostOf = (v: string): string => v.trim().toLowerCase().replace(/:\d+$/, '').replace(/\.$/, '');
 
@@ -101,6 +108,14 @@ async function check(req: IncomingMessage, res: ServerResponse, route: AppRoute,
   if (!decision.ok) {
     auditDenied(route, who.userId, decision.reason);
     return send(res, 403, `${who.displayName} cannot open this app.`);
+  }
+  // A sleeping stack wakes on its first request; meanwhile a short page that reloads itself.
+  if (await deps.waking?.(route).catch(() => false)) {
+    const page = /text\/html/.test(header(req, 'accept'));
+    return send(res, 503, page ? WAKING_PAGE : 'Starting\n', {
+      ...(page ? { 'Content-Type': 'text/html; charset=utf-8' } : {}),
+      'Retry-After': '3',
+    });
   }
   send(res, 200, '', identityHeaders(hostname, route.kind, who));
   // After the answer: recording use never slows or fails a request.

@@ -89,9 +89,12 @@ describe('placement', () => {
     expect(r.node).toBe('local');
   });
 
-  it('leaves a worker with too little free disk alone', async () => {
+  it('leaves a worker with too little free disk alone: central takes the stack', async () => {
     const full = machine('m-1', 16000, { health: { ...machine('x', 16000).health!, diskFreeGb: 2 } });
-    await expect(placeWorkload('ag', need(512), deps([full]))).rejects.toThrow(/less than 3 GB of disk free/);
+    expect(await placeWorkload('ag', need(512), deps([full]))).toEqual({
+      node: 'local',
+      reason: 'no worker has 3 GB of disk free',
+    });
   });
 
   it('picks the worker with most free memory, counting what is placed and 15% headroom', async () => {
@@ -106,9 +109,11 @@ describe('placement', () => {
 
   it("counts only NanoClaw's share of a shared machine (other software's peak)", async () => {
     const shared = machine('m-s', 16000, { peaks: { '2026-01-01': { memMb: 10400, cpus: 3 } } }); // 16000 − 10400 − 2400 = 3200
-    await expect(placeWorkload('ag', need(4000), deps([shared]))).rejects.toThrow(
-      /no worker has room for 3.9 GB \(most free: 3.1 GB on M-S\)/,
-    );
+    // No worker with room: central takes it (within central's own ceiling, checked in control.ts).
+    expect(await placeWorkload('ag', need(4000), deps([shared]))).toEqual({
+      node: 'local',
+      reason: 'no worker has room for 3.9 GB (most free: 3.1 GB on M-S)',
+    });
     expect((await placeWorkload('ag', need(3000), deps([shared]))).node).toBe('m-s');
   });
 

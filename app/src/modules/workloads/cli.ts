@@ -66,6 +66,7 @@ import {
 import { dayText } from './notify.js';
 import { isRouteKind } from './gateway/publishing.js';
 import { describeShape, decodeApproved } from './shape.js';
+import { sleepAfterH } from './sleep.js';
 import {
   buildRegistries,
   findWorkload,
@@ -74,6 +75,7 @@ import {
   setBuildRegistries,
   setPin,
   setQuota,
+  updateWorkload,
   type Workload,
 } from './store.js';
 
@@ -106,7 +108,8 @@ export function cardReason(v: unknown): string {
 
 const view = (w: Workload, open?: string) => ({
   name: w.name,
-  state: w.state,
+  state: w.state === 'stopped' && w.asleepAt !== null ? 'asleep' : w.state,
+  sleeps_after: sleepAfterH(w) > 0 ? `${sleepAfterH(w)} h idle` : 'never',
   // Private to the agent's own network: reachable from its container, never by a person.
   services_private: w.addresses,
   ...(open ? { open } : {}),
@@ -449,9 +452,35 @@ registerResource({
       args: [GROUP, NAME],
       handler: async (args, ctx) => view(await stopWorkload(groupOf(args, ctx), str(args.name, 'name'))),
     },
+    sleep: {
+      access: 'open',
+      description:
+        'After how many idle hours a workload sleeps (stops until its next request wakes it). --after 0: never; for stacks that work in the background (a job worker, a scheduled sync).',
+      args: [
+        GROUP,
+        NAME,
+        {
+          name: 'after',
+          type: 'string',
+          description: 'Idle hours before sleeping; 0 = never; "default" = the default.',
+          required: true,
+        },
+      ],
+      handler: async (args, ctx) => {
+        const group = groupOf(args, ctx);
+        const name = str(args.name, 'name');
+        const w = await findWorkload(group, name);
+        if (!w) throw new Error(`you have no workload named "${name}"`);
+        const raw = String(args.after).trim();
+        const hours = raw === 'default' ? null : Number(raw);
+        if (hours !== null && (!Number.isInteger(hours) || hours < 0 || hours > 24 * 90))
+          throw new Error('--after is whole hours from 0 (never) to 2160, or "default"');
+        return view(await updateWorkload(w.id, { sleepAfterH: hours }));
+      },
+    },
     start: {
       access: 'open',
-      description: 'Start a stopped workload (its approved images and Dockerfiles only).',
+      description: 'Start a stopped workload (its approved images and Dockerfiles only; a sleeping one wakes).',
       args: [GROUP, NAME],
       handler: async (args, ctx) => view(await startWorkload(groupOf(args, ctx), str(args.name, 'name'))),
     },

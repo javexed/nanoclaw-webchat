@@ -46,6 +46,7 @@ import { placeWorkload, workerRooms, type Placement } from './placement.js';
 import { checkStack, type CheckedStack } from './policy.js';
 import { requireWorkloads } from './preflight.js';
 import { confinedBuildsOn } from './settings.js';
+import { wakeWorkload } from './sleep.js';
 import {
   decodeApproved,
   dockerfileOf,
@@ -307,7 +308,7 @@ async function deploy(w: Workload, agentGroupId: string): Promise<Workload> {
     w.addresses,
     taken,
   );
-  w = await updateWorkload(w.id, { addresses, state: 'deploying', lastError: null });
+  w = await updateWorkload(w.id, { addresses, state: 'deploying', lastError: null, asleepAt: null });
   try {
     const builds = Object.keys(w.stack.compose.services).filter((n) => w.stack.compose.services[n].build !== undefined);
     if (builds.length) {
@@ -501,6 +502,7 @@ export async function execWorkload(
   const w = await own(agentGroupId, name);
   if (!w.stack.compose.services[service]) throw new Error(`no service "${service}" in ${name}`);
   if (!command.length) throw new Error('nothing to run');
+  if (w.state === 'stopped' && w.asleepAt !== null) await wakeWorkload(w.id);
   return compose(w, ['exec', '-T', service, ...command], 120_000);
 }
 
@@ -516,6 +518,7 @@ export async function stopWorkload(agentGroupId: string, name: string, reason = 
   });
   return updateWorkload(w.id, {
     state: 'stopped',
+    asleepAt: null,
     ...(reason === 'requested' ? {} : { lastError: `stopped: ${reason}` }),
   });
 }
@@ -523,6 +526,11 @@ export async function stopWorkload(agentGroupId: string, name: string, reason = 
 export async function startWorkload(agentGroupId: string, name: string): Promise<Workload> {
   const w = await own(agentGroupId, name);
   if (w.state !== 'stopped' && w.state !== 'failed') return w;
+  // Asleep: its containers are there, so a start is enough (no rebuild).
+  if (w.state === 'stopped' && w.asleepAt !== null) {
+    await wakeWorkload(w.id);
+    return own(agentGroupId, name);
+  }
   requireWorkloads();
   assertDiskRoom(agentGroupId, (await quotaFor(agentGroupId)).diskGb);
   if (hasBuild(w.stack)) await noteUnapprovedBuild(agentGroupId);
@@ -535,7 +543,7 @@ export async function downWorkload(agentGroupId: string, name: string): Promise<
   const w = await own(agentGroupId, name);
   await compose(w, ['down', '--remove-orphans'], 300_000);
   audit({ type: 'workload.down', actor: actor(agentGroupId), effect: 'allow', detail: { workload: w.id } });
-  return updateWorkload(w.id, { state: 'stopped' });
+  return updateWorkload(w.id, { state: 'stopped', asleepAt: null });
 }
 
 /** Remove containers AND volumes. Held for an owner's card by the CLI. */

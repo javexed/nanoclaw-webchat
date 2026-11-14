@@ -175,6 +175,7 @@ describe('moduleWebchat migration', () => {
       'webchat-workload-expiry-notice',
       'webchat-workload-placement',
       'webchat-workload-shape',
+      'webchat-workload-sleep',
       'webchat-workloads',
     ]);
   });

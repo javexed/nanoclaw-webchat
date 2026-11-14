@@ -6,7 +6,8 @@
  *      for (Admin → Machines; off for every machine that joins), that
  *      report, are linked, are neither draining nor revoked, AND passed
  *      their workload isolation check recently (members.ts isolationStatus).
- *      Central while no such worker exists, and the reason says why.
+ *      Central while no such worker exists or none has room (central's own
+ *      ceiling still applies), and the reason says why.
  *   2. fit: the stack's memory within the worker's free share (NanoClaw's
  *      share of the machine — totals minus other software's peak minus 15%
  *      headroom, members.ts availableOn — minus what is placed there already)
@@ -141,15 +142,17 @@ export async function placeWorkload(
     return { node: LOCAL, reason: down.length ? `no worker usable: ${down.join('; ')}` : 'no worker connected' };
   }
   // Keep some of the worker's own disk free: images land there.
+  // No worker with room: central takes it, within its own ceiling (control.ts
+  // checkWorkload refuses there if central is full too).
   const roomy = rooms.filter((r) => (r.machine.health?.diskFreeGb ?? MIN_DISK_FREE_GB) >= MIN_DISK_FREE_GB);
-  if (!roomy.length)
-    throw new Error(`every worker has less than ${MIN_DISK_FREE_GB} GB of disk free; an owner can add a machine`);
+  if (!roomy.length) return { node: LOCAL, reason: `no worker has ${MIN_DISK_FREE_GB} GB of disk free` };
   const fits = roomy.filter((r) => r.freeMemMb >= need.memoryMb);
   if (!fits.length) {
     const best = [...roomy].sort((a, b) => b.freeMemMb - a.freeMemMb)[0];
-    throw new Error(
-      `no worker has room for ${gb(need.memoryMb)} (most free: ${gb(Math.max(0, best.freeMemMb))} on ${best.machine.name}); an owner can add a machine`,
-    );
+    return {
+      node: LOCAL,
+      reason: `no worker has room for ${gb(need.memoryMb)} (most free: ${gb(Math.max(0, best.freeMemMb))} on ${best.machine.name})`,
+    };
   }
   const mine = new Set(
     (await deps.workloads())
