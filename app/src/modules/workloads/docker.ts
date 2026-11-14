@@ -22,6 +22,7 @@ import { parse, stringify } from 'yaml';
 import { DATA_DIR, INSTALL_SLUG } from '../../config.js';
 import { CONTAINER_RUNTIME_BIN } from '../../container-runtime.js';
 import { log } from '../../log.js';
+import { buildRefusalsSince } from '../../channels/webchat/build-refusals.js';
 import { callWorker, openWorkerStream } from '../machines/links.js';
 import { HELPER_IMAGE } from './images.js';
 import { buildOverride, overlappingIndexes, subnetFor } from './override.js';
@@ -420,6 +421,15 @@ const clip = (s: string): string => (s.length > MAX_OUTPUT ? `…${s.slice(-MAX_
  * worker checks the files again with built-ins only (worker-main.ts).
  */
 export const asJson = (file: string): string => JSON.stringify(parse(fs.readFileSync(file, 'utf8')), null, 2);
+
+/**
+ * A failed build or pull, with what the egress filter refused it meanwhile
+ * first: BuildKit reports those only as "Forbidden" or "Bad Gateway".
+ */
+export function withRefusals(agentGroupId: string, since: number, text: string): string {
+  const refused = buildRefusalsSince(agentGroupId, since - 1_000);
+  return refused.length ? `Blocked during the build:\n${refused.map((r) => `- ${r}`).join('\n')}\n\n${text}` : text;
+}
 
 /**
  * Where a build stood when it was stopped, from BuildKit's plain progress

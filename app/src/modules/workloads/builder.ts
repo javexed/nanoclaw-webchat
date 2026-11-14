@@ -28,7 +28,7 @@ import { CONTAINER_RUNTIME_BIN } from '../../container-runtime.js';
 import { BUILD_SESSION, registerFilteredContainer } from '../../channels/webchat/egress-filter.js';
 import { log } from '../../log.js';
 import { filterEndpointForBuilds } from '../container-egress/index.js';
-import { buildFailure, buildProgress, dockerEnv, groupKey, runHelper, sliceName } from './docker.js';
+import { buildFailure, buildProgress, dockerEnv, groupKey, runHelper, sliceName, withRefusals } from './docker.js';
 import { BUILDKIT_IMAGE, HELPER_IMAGE } from './images.js';
 import { workloadSetting } from './settings.js';
 import { normalizeArgs } from './shape.js';
@@ -76,6 +76,8 @@ export interface Builder {
   name: string;
   /** Proxy URL the build steps use (HTTP(S)_PROXY build args). */
   proxy: string;
+  /** Whose builder: what the filter refused it is kept per agent (build-refusals.ts). */
+  agentGroupId: string;
 }
 
 const docker = (args: string[], opts: { timeout?: number; maxBuffer?: number } = {}) =>
@@ -190,7 +192,7 @@ export async function ensureBuilder(agentGroupId: string): Promise<Builder> {
   registerFilteredContainer(name, { agentGroupId, sessionId: BUILD_SESSION });
   if (!(await exists(['buildx', 'inspect', name])))
     await docker(['buildx', 'create', '--name', name, '--driver', 'remote', `docker-container://${name}`]);
-  return { name, proxy };
+  return { name, proxy, agentGroupId };
 }
 
 /** Remove an agent's builder and its cache (no workloads left). */
@@ -319,11 +321,18 @@ export async function buildImage(b: Builder, spec: BuildSpec, name: string, work
       // Where it stood: the step still running and the slowest finished ones (docker.ts buildProgress).
       const where = buildProgress(text);
       throw new Error(
-        `the build timed out after ${Math.round(timeoutMs / 60_000)} min${where ? `\n${where}` : ''}\n${text.slice(-1200)}`,
+        withRefusals(
+          b.agentGroupId,
+          started,
+          `the build timed out after ${Math.round(timeoutMs / 60_000)} min${where ? `\n${where}` : ''}\n${text.slice(-1200)}`,
+        ),
         { cause: err },
       );
     }
-    throw new Error(`the build failed: ${(buildFailure(text) ?? text).slice(-1500)}`, { cause: err });
+    // What the filter refused goes first and is never clipped away.
+    throw new Error(withRefusals(b.agentGroupId, started, `the build failed: ${(buildFailure(text) ?? text).slice(-1500)}`), {
+      cause: err,
+    });
   }
   const before = await protectedImageIds();
   // Read the manifest in a helper: the archive is the builder's, never unpacked on this host.

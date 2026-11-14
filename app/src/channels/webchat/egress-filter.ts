@@ -46,6 +46,7 @@ import {
 import { keyTargetFor } from './egress-key-targets.js';
 import { connectThroughGateway, connectToGateway } from './gateway-connect.js';
 import { serveOllamaFiltered } from './ollama-filter.js';
+import { noteBuildRefusal } from './build-refusals.js';
 import { workloadTunnel } from './workload-tunnel.js';
 
 const MAX_HEAD = 64 * 1024;
@@ -429,22 +430,19 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
   const allowlist = await deps.allowlist(caller.agentGroupId);
   if (!egressAllowed(mode, req.host, req.port, allowlist, always)) {
     recordBlocked(req.host, req.port, caller.agentGroupId, caller.sessionId, mode);
-    return answer(
-      client,
-      '403 Forbidden',
-      building ? buildBlockedMessage(req.host, req.port) : blockedMessage(req.host, req.port, mode),
-    );
+    const why = building ? buildBlockedMessage(req.host, req.port) : blockedMessage(req.host, req.port, mode);
+    // A build's failure says what was blocked (build-refusals.ts): BuildKit shows only "Forbidden".
+    if (building) noteBuildRefusal(caller.agentGroupId, req.host, req.port, why);
+    return answer(client, '403 Forbidden', why);
   }
   if (building) {
     let upstream: net.Socket;
     try {
       upstream = await (deps.direct ?? connectDirect)(req.host, req.port, pinned);
     } catch (err) {
-      return answer(
-        client,
-        '502 Bad Gateway',
-        `could not reach ${req.host}:${req.port}: ${String((err as Error).message).slice(0, 200)}`,
-      );
+      const why = String((err as Error).message).slice(0, 200);
+      noteBuildRefusal(caller.agentGroupId, req.host, req.port, `could not connect: ${why}`);
+      return answer(client, '502 Bad Gateway', `could not reach ${req.host}:${req.port}: ${why}`);
     }
     return spliceDirect(client, req, head.rest, upstream);
   }
