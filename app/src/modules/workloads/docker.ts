@@ -413,7 +413,23 @@ const clip = (s: string): string => (s.length > MAX_OUTPUT ? `…${s.slice(-MAX_
  */
 export const asJson = (file: string): string => JSON.stringify(parse(fs.readFileSync(file, 'utf8')), null, 2);
 
-/** `docker compose` for one workload. Output is clipped; errors carry the tail of stderr. */
+/**
+ * A failed build's own words. BuildKit's plain progress prints each step's
+ * output as `#<step> <time> <line>` and the failure as `#<step> ERROR: …`; the
+ * end of stderr is mostly the Dockerfile echoed back, which says where but not
+ * why. Returns the failing step's last output lines and its error, or null.
+ */
+export function buildFailure(text: string, maxLines = 40): string | null {
+  const lines = text.split(/\r?\n/);
+  const err = [...lines].reverse().find((l) => /^#\d+ ERROR:/.test(l));
+  if (!err) return null;
+  const step = err.slice(0, err.indexOf(' '));
+  const out = lines.filter((l) => l.startsWith(`${step} `) && l !== err && !/^#\d+ \[/.test(l));
+  const done = lines.find((l) => /^(ERROR: )?failed to solve:/.test(l.trim()));
+  return [...out.slice(-maxLines), err, ...(done ? [done.trim()] : [])].join('\n');
+}
+
+/** `docker compose` for one workload. Output is clipped; errors carry the tail of stderr (for a build, its failing step). */
 export async function compose(w: Workload, args: string[], timeoutMs = 600_000): Promise<string> {
   const dir = workDir(w.id);
   const argv = ['compose', '-p', projectName(w), '-f', 'stack.yml', '-f', 'override.yml', ...args];
@@ -432,7 +448,8 @@ export async function compose(w: Workload, args: string[], timeoutMs = 600_000):
     return clip(`${stdout}${stderr}`.trim());
   } catch (err) {
     const e = err as { stderr?: string; stdout?: string; message?: string };
-    throw new Error(clip(`${e.stderr || e.stdout || e.message || String(err)}`.trim()), { cause: err });
+    const text = `${e.stderr || e.stdout || e.message || String(err)}`.trim();
+    throw new Error(clip(buildFailure(text) ?? text), { cause: err });
   }
 }
 

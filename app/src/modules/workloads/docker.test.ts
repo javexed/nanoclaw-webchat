@@ -125,3 +125,34 @@ describe('what Compose is given', () => {
     expect(() => writeFiles(w, 'n', { web: 'x' })).toThrow(/api: no image/);
   });
 });
+
+describe('buildFailure', () => {
+  it("names the failing step's own output and error, not the Dockerfile echo", async () => {
+    const { buildFailure } = await import('./docker.js');
+    const text = [
+      '#5 [api 2/4] RUN npm ci',
+      '#5 0.512 added 120 packages',
+      '#5 DONE 3.1s',
+      '#7 [web 3/6] RUN apt-get update && pecl install apcu',
+      '#7 1.204 Get:1 http://deb.debian.org/debian bookworm InRelease',
+      '#7 9.876 No releases available for package "pecl.php.net/apcu"',
+      '#7 9.877 install failed',
+      '#7 ERROR: process "/bin/sh -c apt-get update && pecl install apcu" did not complete successfully: exit code: 1',
+      '------',
+      ' > [web 3/6] RUN apt-get update && pecl install apcu:',
+      'Dockerfile:12',
+      '  12 | >>> RUN apt-get update && pecl install apcu',
+      'failed to solve: process "/bin/sh -c apt-get update && pecl install apcu" did not complete successfully: exit code: 1',
+    ].join('\n');
+    expect(buildFailure(text)).toBe(
+      [
+        '#7 1.204 Get:1 http://deb.debian.org/debian bookworm InRelease',
+        '#7 9.876 No releases available for package "pecl.php.net/apcu"',
+        '#7 9.877 install failed',
+        '#7 ERROR: process "/bin/sh -c apt-get update && pecl install apcu" did not complete successfully: exit code: 1',
+        'failed to solve: process "/bin/sh -c apt-get update && pecl install apcu" did not complete successfully: exit code: 1',
+      ].join('\n'),
+    );
+    expect(buildFailure('some other error')).toBeNull();
+  });
+});

@@ -28,7 +28,7 @@ import { CONTAINER_RUNTIME_BIN } from '../../container-runtime.js';
 import { BUILD_SESSION, registerFilteredContainer } from '../../channels/webchat/egress-filter.js';
 import { log } from '../../log.js';
 import { filterEndpointForBuilds } from '../container-egress/index.js';
-import { dockerEnv, groupKey, runHelper, sliceName } from './docker.js';
+import { buildFailure, dockerEnv, groupKey, runHelper, sliceName } from './docker.js';
 import { BUILDKIT_IMAGE, HELPER_IMAGE } from './images.js';
 import { workloadSetting } from './settings.js';
 import { normalizeArgs } from './shape.js';
@@ -279,7 +279,9 @@ export async function buildImage(b: Builder, spec: BuildSpec, name: string, work
     );
   } catch (err) {
     const e = err as { stderr?: string; message?: string };
-    throw new Error(`the build failed: ${String(e.stderr || e.message || err).slice(-1500)}`, { cause: err });
+    // The failing step's own output and error (docker.ts buildFailure), not the Dockerfile echoed back.
+    const text = String(e.stderr || e.message || err);
+    throw new Error(`the build failed: ${(buildFailure(text) ?? text).slice(-1500)}`, { cause: err });
   }
   const before = await protectedImageIds();
   // Read the manifest in a helper: the archive is the builder's, never unpacked on this host.
