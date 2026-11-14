@@ -384,13 +384,16 @@ export async function setCap(
   return r.changes === 1;
 }
 
-/** What NanoClaw may use on a machine, from its totals, peaks and the owner's cap. */
+/** What NanoClaw may use on a machine, from its totals, what other software uses now and the owner's cap. */
 export function availableOn(m: Member): Available {
   const totals = {
     memMb: m.health?.memTotalMb || m.facts.memTotalMb,
     cpus: m.health?.cpus || m.facts.cpus,
   };
-  return computeAvailable(totals, m.peaks, { memMb: m.capMemoryMb, cpus: m.capCpus });
+  const other = m.health
+    ? { memMb: m.health.memUsedMb - m.health.memNanoclawMb, cpus: m.health.cpuUsed - m.health.cpuNanoclaw }
+    : null;
+  return computeAvailable(totals, other, { memMb: m.capMemoryMb, cpus: m.capCpus });
 }
 
 export const isHealthy = (m: Member, now = Date.now()): boolean =>

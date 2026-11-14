@@ -18,7 +18,8 @@ import { filterAsync } from './async-array.js';
 
 export async function canAccessRoom(userId: string, roomId: string): Promise<boolean> {
   const agents = await getAgentsForWebchatRoom(roomId);
-  if (agents.length === 0) return false;
+  // A room whose last agent was deleted: only owners see it (to add an agent or delete it).
+  if (agents.length === 0) return isOwner(userId);
   for (const a of agents) {
     if (!(await canAccessAgentGroup(userId, a.id)).allowed) return false;
   }

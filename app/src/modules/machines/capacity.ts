@@ -3,13 +3,18 @@
  * may run other things too — the first worker can be an existing app server —
  * so the share is worked out from what those other things use, not set by hand:
  *
- *   available = total − peak non-NanoClaw use over the last 7 days − 15% of total
+ *   available = total − (current non-NanoClaw use × 1.2) − 15% of total
  *
- * never below 0, recomputed on every health report. Until 7 days of reports
- * exist, the peak so far is used. An owner may set a lower cap; the smaller wins.
+ * never below 0, recomputed on every health report (about every minute), so
+ * stopping something on the machine frees room at once. The 20% buffer covers
+ * other software growing a little; the headroom keeps the machine itself
+ * breathing. An owner may set a lower cap; the smaller wins. Daily peaks are
+ * still kept, to show, but no longer decide the share.
  */
 
 export const HEADROOM = 0.15;
+/** Room left for the other software to grow, on top of what it uses now. */
+export const OTHER_BUFFER = 0.2;
 export const PEAK_DAYS = 7;
 
 /** Peak non-NanoClaw use per UTC day, 'YYYY-MM-DD' → { memMb, cpus }. */
@@ -50,17 +55,17 @@ export interface Available {
   cpusBy: 'auto' | 'cap';
 }
 
-/** What NanoClaw may use on this machine now. */
+/** What NanoClaw may use on this machine now, given what other software uses now (null: no report yet). */
 export function computeAvailable(
   totals: Totals,
-  peaks: Peaks,
+  other: OtherUse | null,
   cap: { memMb: number | null; cpus: number | null } = { memMb: null, cpus: null },
 ): Available {
-  const days = Object.values(peaks);
-  const peakMem = days.reduce((m, d) => Math.max(m, d.memMb), 0);
-  const peakCpu = days.reduce((m, d) => Math.max(m, d.cpus), 0);
-  const autoMem = Math.max(0, Math.floor(totals.memMb - peakMem - HEADROOM * totals.memMb));
-  const autoCpu = Math.max(0, Math.floor((totals.cpus - peakCpu - HEADROOM * totals.cpus) * 100) / 100);
+  const otherMem = Math.max(0, other?.memMb ?? 0) * (1 + OTHER_BUFFER);
+  const otherCpu = Math.max(0, other?.cpus ?? 0) * (1 + OTHER_BUFFER);
+  const autoMem = Math.max(0, Math.floor(totals.memMb - otherMem - HEADROOM * totals.memMb));
+  // + 1e-9: 4 − 1.2 − 0.6 is 2.1999…, which must floor to 2.2, not 2.19.
+  const autoCpu = Math.max(0, Math.floor((totals.cpus - otherCpu - HEADROOM * totals.cpus) * 100 + 1e-9) / 100);
   const memByCap = cap.memMb !== null && cap.memMb < autoMem;
   const cpuByCap = cap.cpus !== null && cap.cpus < autoCpu;
   return {

@@ -107,12 +107,13 @@ describe('placement', () => {
     );
   });
 
-  it("counts only NanoClaw's share of a shared machine (other software's peak)", async () => {
-    const shared = machine('m-s', 16000, { peaks: { '2026-01-01': { memMb: 10400, cpus: 3 } } }); // 16000 − 10400 − 2400 = 3200
+  it("counts only NanoClaw's share of a shared machine (other software's use now)", async () => {
+    const base = machine('m-s', 16000);
+    const shared = { ...base, health: { ...base.health!, memUsedMb: 8000, cpuUsed: 1 } }; // 16000 − 8000×1.2 − 2400 = 4000
     // No worker with room: central takes it (within central's own ceiling, checked in control.ts).
-    expect(await placeWorkload('ag', need(4000), deps([shared]))).toEqual({
+    expect(await placeWorkload('ag', need(4100), deps([shared]))).toEqual({
       node: 'local',
-      reason: 'no worker has room for 3.9 GB (most free: 3.1 GB on M-S)',
+      reason: 'no worker has room for 4.0 GB (most free: 3.9 GB on M-S)',
     });
     expect((await placeWorkload('ag', need(3000), deps([shared]))).node).toBe('m-s');
   });

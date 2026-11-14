@@ -27,7 +27,7 @@ export function noteTraffic(id: string, now = Date.now()): void {
 export const trafficAt = (id: string): number => lastTraffic.get(id) ?? STARTED_AT;
 
 /** Hours without traffic before a stack sleeps, unless it sets its own. */
-export const DEFAULT_SLEEP_H = Number(process.env.NANOCLAW_WORKLOAD_SLEEP_H ?? 24);
+export const DEFAULT_SLEEP_H = Number(process.env.NANOCLAW_WORKLOAD_SLEEP_H ?? 8);
 const HOUR = 3_600_000;
 
 /** Hours this stack may sit idle before it sleeps; 0 = never. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { computeAvailable, HEADROOM, PEAK_DAYS, updatePeaks, type Peaks } from './capacity.js';
+import { computeAvailable, HEADROOM, OTHER_BUFFER, PEAK_DAYS, updatePeaks, type Peaks } from './capacity.js';
 
 const day = (d: string, h = 12): number => Date.parse(`${d}T${String(h).padStart(2, '0')}:00:00Z`);
 
@@ -29,31 +29,30 @@ describe('peaks of other software', () => {
 describe('what NanoClaw may use', () => {
   const totals = { memMb: 16000, cpus: 4 };
 
-  it('is total minus the 7-day peak minus 15% headroom', () => {
-    const peaks: Peaks = { '2026-10-01': { memMb: 4000, cpus: 1 }, '2026-10-02': { memMb: 6000, cpus: 0.5 } };
-    const a = computeAvailable(totals, peaks);
-    expect(a.memMb).toBe(16000 - 6000 - HEADROOM * 16000);
-    expect(a.cpus).toBeCloseTo(4 - 1 - 0.6, 2);
+  it("is total minus other software's current use plus 20%, minus 15% headroom", () => {
+    const a = computeAvailable(totals, { memMb: 5000, cpus: 1 });
+    expect(a.memMb).toBe(16000 - 5000 * (1 + OTHER_BUFFER) - HEADROOM * 16000);
+    expect(a.cpus).toBe(2.2);
     expect(a).toMatchObject({ memBy: 'auto', cpusBy: 'auto' });
   });
 
   it('with no reports yet, is total minus headroom', () => {
-    expect(computeAvailable(totals, {})).toMatchObject({ memMb: 13600, cpus: 3.4 });
+    expect(computeAvailable(totals, null)).toMatchObject({ memMb: 13600, cpus: 3.4 });
   });
 
   it('is never below zero when other software uses (nearly) everything', () => {
-    const a = computeAvailable(totals, { '2026-10-01': { memMb: 15900, cpus: 3.9 } });
+    const a = computeAvailable(totals, { memMb: 15900, cpus: 3.9 });
     expect(a.memMb).toBe(0);
     expect(a.cpus).toBe(0);
   });
 
   it('an owner cap lowers it, and only where it is lower', () => {
-    const a = computeAvailable(totals, {}, { memMb: 8000, cpus: 8 });
+    const a = computeAvailable(totals, null, { memMb: 8000, cpus: 8 });
     expect(a).toMatchObject({ memMb: 8000, memBy: 'cap', cpus: 3.4, cpusBy: 'auto' });
   });
 
   it('a cap of zero means none of it', () => {
-    expect(computeAvailable(totals, {}, { memMb: 0, cpus: 0 })).toMatchObject({
+    expect(computeAvailable(totals, null, { memMb: 0, cpus: 0 })).toMatchObject({
       memMb: 0,
       cpus: 0,
       memBy: 'cap',
