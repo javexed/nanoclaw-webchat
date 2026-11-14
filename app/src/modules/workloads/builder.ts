@@ -41,7 +41,16 @@ const BUILDER_MEMORY = '2g';
 const BUILDER_CPUS = '2';
 export const BUILDER_CACHE_MB = 3000;
 /** Bumped when the builder's run arguments change, so an older builder is replaced. */
-const BUILDER_SPEC = 'v3';
+const BUILDER_SPEC = 'v4';
+/**
+ * BuildKit's storage, kept short on purpose: under gVisor an overlay mount's
+ * options (every layer's full path) must fit in one 4 KB page, so the path
+ * length sets how many layers an image may have (the default
+ * /home/user/.local/share/buildkit allowed ~46; this, ~73). The cache volume
+ * is mounted on /tmp, whose 1777 mode it inherits, so the rootless user can
+ * create it.
+ */
+export const BUILDKIT_ROOT = '/tmp/b';
 /**
  * How long one stack build may run. Builders run under gVisor, where saving
  * a large image's layers is slow (no overlay xattrs, so BuildKit walks every
@@ -113,6 +122,8 @@ export async function ensureBuilder(agentGroupId: string): Promise<Builder> {
   if (state && !running) {
     await docker(['buildx', 'rm', name]).catch(() => undefined);
     await docker(['rm', '-f', name]).catch(() => undefined);
+    // An older builder's cache is laid out for its own arguments: start the new one empty.
+    if (state[1] !== BUILDER_SPEC) await docker(['volume', 'rm', builderCacheVolume(agentGroupId)]).catch(() => undefined);
   }
   if (!running) {
     const image = BUILDKIT_IMAGE();
@@ -150,8 +161,10 @@ export async function ensureBuilder(agentGroupId: string): Promise<Builder> {
       '-e',
       `https_proxy=${proxy}`,
       '-v',
-      `${builderCacheVolume(agentGroupId)}:/home/user/.local/share/buildkit`,
+      `${builderCacheVolume(agentGroupId)}:/tmp`,
       image,
+      '--root',
+      BUILDKIT_ROOT,
       '--oci-worker-no-process-sandbox',
       // Keep the build cache bounded (it counts toward the agent's disk quota).
       '--oci-worker-gc',
