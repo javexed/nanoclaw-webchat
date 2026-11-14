@@ -28,7 +28,7 @@ import { CONTAINER_RUNTIME_BIN } from '../../container-runtime.js';
 import { BUILD_SESSION, registerFilteredContainer } from '../../channels/webchat/egress-filter.js';
 import { log } from '../../log.js';
 import { filterEndpointForBuilds } from '../container-egress/index.js';
-import { buildFailure, dockerEnv, groupKey, runHelper, sliceName } from './docker.js';
+import { buildFailure, buildProgress, dockerEnv, groupKey, runHelper, sliceName } from './docker.js';
 import { BUILDKIT_IMAGE, HELPER_IMAGE } from './images.js';
 import { workloadSetting } from './settings.js';
 import { normalizeArgs } from './shape.js';
@@ -39,7 +39,13 @@ const run = promisify(execFile);
 export const builderRuntime = (): string => workloadSetting('NANOCLAW_WORKLOAD_BUILDER_RUNTIME') || 'runsc';
 const BUILDER_MEMORY = '2g';
 const BUILDER_CPUS = '2';
-export const BUILDER_CACHE_MB = 3000;
+/**
+ * BuildKit's cache cap (NANOCLAW_WORKLOAD_BUILDER_CACHE_MB, default 8000). It
+ * counts toward the agent's disk quota; 3000 was smaller than one large
+ * image's base, layers and export, so its cache was gone by the next build.
+ */
+export const builderCacheMb = (): number =>
+  Math.max(1000, Math.floor(Number(workloadSetting('NANOCLAW_WORKLOAD_BUILDER_CACHE_MB')) || 8000));
 /** Bumped when the builder's run arguments change, so an older builder is replaced. */
 const BUILDER_SPEC = 'v4';
 /**
@@ -52,11 +58,14 @@ const BUILDER_SPEC = 'v4';
  */
 export const BUILDKIT_ROOT = '/tmp/b';
 /**
- * How long one stack build may run. Builders run under gVisor, where saving
- * a large image's layers is slow (no overlay xattrs, so BuildKit walks every
- * file); a full base image can take well over 20 minutes the first time.
+ * How long a stack's build may take (NANOCLAW_WORKLOAD_BUILD_MIN, default 120).
+ * Builders run under gVisor, where saving a large image's layers is slow (no
+ * overlay xattrs, so BuildKit walks every file): a cold build of a ~2 GB image
+ * takes over an hour, most of it exporting, and a build stopped at the limit
+ * keeps none of that export.
  */
-export const BUILD_TIMEOUT_MS = Math.max(5, Number(process.env.NANOCLAW_WORKLOAD_BUILD_MIN) || 60) * 60_000;
+export const buildTimeoutMs = (): number =>
+  Math.max(5, Number(workloadSetting('NANOCLAW_WORKLOAD_BUILD_MIN')) || 120) * 60_000;
 
 /** The builder container and buildx builder name. Never ncl-… (agent containers) or nc-… (workloads). */
 export const builderName = (agentGroupId: string): string => `ncb-${INSTALL_SLUG}-${groupKey(agentGroupId)}`;
@@ -112,13 +121,15 @@ export async function ensureBuilder(agentGroupId: string): Promise<Builder> {
   const state = await docker([
     'inspect',
     '--format',
-    '{{.State.Running}} {{index .Config.Labels "nanoclaw-builder-spec"}}',
+    '{{.State.Running}} {{index .Config.Labels "nanoclaw-builder-spec"}} {{index .Config.Labels "nanoclaw-builder-keep"}}',
     name,
   ]).then(
     (r) => r.stdout.trim().split(' '),
     () => null,
   );
-  let running = state ? state[0] === 'true' && state[1] === BUILDER_SPEC : false;
+  // Running with today's arguments, or (re)created. A new cache cap alone keeps the cache.
+  const keep = String(builderCacheMb());
+  let running = state ? state[0] === 'true' && state[1] === BUILDER_SPEC && state[2] === keep : false;
   if (state && !running) {
     await docker(['buildx', 'rm', name]).catch(() => undefined);
     await docker(['rm', '-f', name]).catch(() => undefined);
@@ -152,6 +163,8 @@ export async function ensureBuilder(agentGroupId: string): Promise<Builder> {
       `nanoclaw-workload-builder=${INSTALL_SLUG}`,
       '--label',
       `nanoclaw-builder-spec=${BUILDER_SPEC}`,
+      '--label',
+      `nanoclaw-builder-keep=${keep}`,
       '-e',
       `HTTP_PROXY=${proxy}`,
       '-e',
@@ -169,7 +182,7 @@ export async function ensureBuilder(agentGroupId: string): Promise<Builder> {
       // Keep the build cache bounded (it counts toward the agent's disk quota).
       '--oci-worker-gc',
       '--oci-worker-gc-keepstorage',
-      String(BUILDER_CACHE_MB),
+      keep,
     ]);
     running = true;
     log.info('Workload builder started', { agentGroupId, builder: name });
@@ -276,6 +289,7 @@ export async function buildImage(b: Builder, spec: BuildSpec, name: string, work
   ];
   const buildArgs = [...normalizeArgs(spec.args), ...proxyArgs].flatMap((a) => ['--build-arg', a]);
   const started = Date.now();
+  const timeoutMs = buildTimeoutMs();
   try {
     await docker(
       [
@@ -294,17 +308,21 @@ export async function buildImage(b: Builder, spec: BuildSpec, name: string, work
         `type=docker,dest=${archive}`,
         spec.context,
       ],
-      { timeout: BUILD_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 },
+      { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 },
     );
   } catch (err) {
     const e = err as { stderr?: string; message?: string };
     // The failing step's own output and error (docker.ts buildFailure), not the Dockerfile echoed back.
     const text = String(e.stderr || e.message || err);
     // Killed at the limit: say so, or the tail reads like a failure of its own ("context canceled").
-    if (Date.now() - started >= BUILD_TIMEOUT_MS - 1_000)
-      throw new Error(`the build timed out after ${Math.round(BUILD_TIMEOUT_MS / 60_000)} min: ${text.slice(-1200)}`, {
-        cause: err,
-      });
+    if (Date.now() - started >= timeoutMs - 1_000) {
+      // Where it stood: the step still running and the slowest finished ones (docker.ts buildProgress).
+      const where = buildProgress(text);
+      throw new Error(
+        `the build timed out after ${Math.round(timeoutMs / 60_000)} min${where ? `\n${where}` : ''}\n${text.slice(-1200)}`,
+        { cause: err },
+      );
+    }
     throw new Error(`the build failed: ${(buildFailure(text) ?? text).slice(-1500)}`, { cause: err });
   }
   const before = await protectedImageIds();

@@ -11,6 +11,7 @@
 import { audit } from '../../audit.js';
 import { log } from '../../log.js';
 import { compose } from './docker.js';
+import { workloadSetting } from './settings.js';
 import { getWorkload, listWorkloads, updateWorkload, type Workload } from './store.js';
 
 // When each stack last had a request. In memory: after a restart every stack
@@ -26,12 +27,15 @@ export function noteTraffic(id: string, now = Date.now()): void {
 /** When this stack last had a request (start-up time if none since). */
 export const trafficAt = (id: string): number => lastTraffic.get(id) ?? STARTED_AT;
 
-/** Hours without traffic before a stack sleeps, unless it sets its own. */
-export const DEFAULT_SLEEP_H = Number(process.env.NANOCLAW_WORKLOAD_SLEEP_H ?? 8);
+/** Hours without traffic before a stack sleeps, unless it sets its own (NANOCLAW_WORKLOAD_SLEEP_H, default 8; 0 = never). */
+export const defaultSleepH = (): number => {
+  const n = Number(workloadSetting('NANOCLAW_WORKLOAD_SLEEP_H') ?? 8);
+  return Number.isFinite(n) && n >= 0 ? n : 8;
+};
 const HOUR = 3_600_000;
 
 /** Hours this stack may sit idle before it sleeps; 0 = never. */
-export const sleepAfterH = (w: Pick<Workload, 'sleepAfterH'>): number => w.sleepAfterH ?? DEFAULT_SLEEP_H;
+export const sleepAfterH = (w: Pick<Workload, 'sleepAfterH'>): number => w.sleepAfterH ?? defaultSleepH();
 
 /** Is a running stack due to sleep? Idle since its last request and its last deploy. */
 export function sleepDue(w: Workload, now: number, lastTraffic: number): boolean {

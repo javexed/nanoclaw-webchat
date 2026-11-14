@@ -156,3 +156,25 @@ describe('buildFailure', () => {
     expect(buildFailure('some other error')).toBeNull();
   });
 });
+
+describe('where a stopped build stood', () => {
+  it('names the step still running and the slowest finished ones', async () => {
+    const { buildProgress } = await import('./docker.js');
+    const text = [
+      '#5 [stage-0 2/16] RUN apt-get update',
+      '#5 0.512 Get:1 http://deb.debian.org trixie InRelease',
+      '#5 DONE 312.4s',
+      '#6 [stage-0 3/16] COPY app/ /opt/app/',
+      '#6 CACHED',
+      '#7 [stage-0 4/16] RUN composer require x',
+      '#7 DONE 95.0s',
+      '#20 exporting to docker image format',
+      '#20 exporting layers',
+      '#20 CANCELED',
+    ].join('\n');
+    expect(buildProgress(text)).toBe(
+      'Still running: exporting to docker image format\nSlowest steps: [stage-0 2/16] RUN apt-get update (5 min); [stage-0 4/16] RUN composer require x (2 min)',
+    );
+    expect(buildProgress('Image x Building')).toBeNull();
+  });
+});

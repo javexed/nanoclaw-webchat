@@ -422,6 +422,35 @@ const clip = (s: string): string => (s.length > MAX_OUTPUT ? `…${s.slice(-MAX_
 export const asJson = (file: string): string => JSON.stringify(parse(fs.readFileSync(file, 'utf8')), null, 2);
 
 /**
+ * Where a build stood when it was stopped, from BuildKit's plain progress
+ * (`#<n> <name>`, then `#<n> DONE 12.3s` or `CACHED`): the steps still
+ * running, and the slowest finished ones, so a timeout says what took the time.
+ */
+export function buildProgress(text: string): string | null {
+  const name = new Map<string, string>();
+  const took = new Map<string, number>();
+  for (const raw of text.split(/\r?\n/)) {
+    const m = /^#(\d+) (.+)$/.exec(raw.trim());
+    if (!m) continue;
+    const [, id, rest] = m as unknown as [string, string, string];
+    const done = /^DONE (\d+(?:\.\d+)?)s$/.exec(rest);
+    if (done) took.set(id, Number(done[1]));
+    else if (/^(CACHED|ERROR)\b/.test(rest)) took.set(id, took.get(id) ?? 0);
+    else if (!name.has(id) && !/^(\d+(\.\d+)? |CANCELED|sha256:)/.test(rest)) name.set(id, rest.slice(0, 120));
+  }
+  const running = [...name].filter(([id]) => !took.has(id)).map(([, n]) => n);
+  const slow = [...took]
+    .filter(([, s]) => s >= 60)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([id, s]) => `${name.get(id) ?? `#${id}`} (${Math.round(s / 60)} min)`);
+  const out: string[] = [];
+  if (running.length) out.push(`Still running: ${running.join('; ')}`);
+  if (slow.length) out.push(`Slowest steps: ${slow.join('; ')}`);
+  return out.length ? out.join('\n') : null;
+}
+
+/**
  * A failed build's own words. BuildKit's plain progress prints each step's
  * output as `#<step> <time> <line>` and the failure as `#<step> ERROR: …`; the
  * end of stderr is mostly the Dockerfile echoed back, which says where but not

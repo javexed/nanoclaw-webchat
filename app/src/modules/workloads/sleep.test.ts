@@ -27,7 +27,7 @@ vi.mock('./docker.js', async (orig) => ({
 }));
 vi.mock('../../audit.js', () => ({ audit: () => undefined }));
 
-const { DEFAULT_SLEEP_H, isWaking, sleepDue, sleepSweep, wakeWorkload } = await import('./sleep.js');
+const { defaultSleepH, isWaking, sleepDue, sleepSweep, wakeWorkload } = await import('./sleep.js');
 
 const H = 3_600_000;
 const NOW = 1_000 * H;
@@ -42,8 +42,8 @@ beforeEach(() => {
 describe('sleepDue', () => {
   it('after the default idle time, counting the last request and the last deploy', () => {
     const w = wl('a');
-    expect(sleepDue(w, NOW, NOW - DEFAULT_SLEEP_H * H)).toBe(true);
-    expect(sleepDue(w, NOW, NOW - DEFAULT_SLEEP_H * H + 1)).toBe(false);
+    expect(sleepDue(w, NOW, NOW - defaultSleepH() * H)).toBe(true);
+    expect(sleepDue(w, NOW, NOW - defaultSleepH() * H + 1)).toBe(false);
     expect(sleepDue({ ...w, updatedAt: NOW - H }, NOW, 0)).toBe(false);
   });
 
