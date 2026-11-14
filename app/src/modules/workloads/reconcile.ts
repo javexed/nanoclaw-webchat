@@ -26,7 +26,7 @@ import fs from 'fs';
 
 import { log } from '../../log.js';
 import { backupRoot, backupWorkload, listBackups, removeBackups, stampTime } from './backup.js';
-import { extendWorkload, parsePs, serviceImages, stopWorkload } from './control.js';
+import { deployInFlight, extendWorkload, parsePs, serviceImages, stopWorkload } from './control.js';
 import { diskLevel, gb, measureDisk, recordUsage, type DiskLevel } from './disk.js';
 import { isLinked } from '../machines/links.js';
 import { compose, joinAgentContainers, LOCAL_NODE } from './docker.js';
@@ -170,6 +170,9 @@ export async function reconcileWorkloads(now = Date.now(), deps: ReconcileDeps =
   }
   if (now - last < EVERY_MS) return;
   last = now;
+  await settleInterrupted({ now }).catch((err) =>
+    log.warn('Workload reconcile failed', { err: String(err).slice(0, 200) }),
+  );
   for (let w of await listWorkloads()) {
     if (w.state !== 'running') continue;
     // A worker that is not linked cannot be asked: its stacks wait until it links again.
@@ -210,6 +213,61 @@ export async function renewIfUsed(w: Workload, now = Date.now()): Promise<Worklo
   const opened = await lastOpened(w.id);
   if (opened === null || now - opened > USED_WITHIN_MS) return w;
   return extendWorkload(w.agentGroupId, w.name, 'system:renew-while-used', now);
+}
+
+/**
+ * A deploy cut off by a NanoClaw restart stays 'deploying' for good: nothing
+ * finishes it. It is never re-run on its own; it is recorded as it is —
+ * running when every service's previous container still runs, else failed —
+ * and the agent is told what to do. (A restore never goes through a deploy:
+ * restoreWorkload stops, restores and starts, so this is never a half-restore.)
+ */
+export async function settleInterrupted(
+  deps: {
+    list?: typeof listWorkloads;
+    /** The stack's containers: service and state. */
+    states?: (w: Workload) => Promise<Array<{ service: string; state: string }>>;
+    update?: typeof updateWorkload;
+    tell?: (agentGroupId: string, text: string) => Promise<unknown>;
+    linked?: (node: string) => boolean;
+    now?: number;
+  } = {},
+): Promise<void> {
+  const now = deps.now ?? Date.now();
+  const list = deps.list ?? listWorkloads;
+  const update = deps.update ?? updateWorkload;
+  const tell = deps.tell ?? notifyWorkloadAgent;
+  const linked = deps.linked ?? ((n: string) => n === LOCAL_NODE || isLinked(n));
+  const states =
+    deps.states ??
+    (async (w: Workload) =>
+      parsePs(await compose(w, ['ps', '--all', '--format', 'json'], 60_000)).map((c) => ({
+        service: String(c.Service ?? ''),
+        state: String(c.State ?? ''),
+      })));
+  for (const w of await list()) {
+    // A minute's grace: a new stack is recorded 'deploying' a moment before its deploy starts.
+    if (w.state !== 'deploying' || deployInFlight(w.id) || now - w.updatedAt < 60_000 || !linked(w.node)) continue;
+    try {
+      // Running only when every service has a running container: half a stack is a failed one.
+      const running = new Set((await states(w)).filter((c) => c.state === 'running').map((c) => c.service));
+      const up = Object.keys(w.stack.compose.services).every((s) => running.has(s));
+      const why = 'its last deploy was cut off by a NanoClaw restart';
+      await update(w.id, {
+        state: up ? 'running' : 'failed',
+        lastError: up ? `${why}; the previous version is still running` : why,
+      });
+      log.info('Workload deploy interrupted', { workloadId: w.id, name: w.name, running: up });
+      await tell(
+        w.agentGroupId,
+        `[System] The deploy of your workload "${w.name}" was cut off by a NanoClaw restart. ${
+          up ? 'The previous version is still running.' : 'It is not running.'
+        } Run \`ncl workloads redeploy --name ${w.name}\` with the same file to finish it.`,
+      );
+    } catch (err) {
+      log.warn('Workload reconcile failed', { workloadId: w.id, err: String(err).slice(0, 200) });
+    }
+  }
 }
 
 export function __resetWorkloadReconcileForTest(): void {

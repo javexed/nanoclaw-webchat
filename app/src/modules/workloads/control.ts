@@ -320,7 +320,20 @@ async function shipImages(
   return sent;
 }
 
+/** Deploys this process is running. A stack left 'deploying' outside it was cut off by a restart (reconcile.ts). */
+const inFlight = new Set<string>();
+export const deployInFlight = (workloadId: string): boolean => inFlight.has(workloadId);
+
 async function deploy(w: Workload, agentGroupId: string): Promise<Workload> {
+  inFlight.add(w.id);
+  try {
+    return await deployOnce(w, agentGroupId);
+  } finally {
+    inFlight.delete(w.id);
+  }
+}
+
+async function deployOnce(w: Workload, agentGroupId: string): Promise<Workload> {
   requireWorkloads();
   const approved = decodeApproved(w.approvedShape);
   if (!approved) throw new Error(`${w.name} has no approval on record: run \`ncl workloads up\``);
