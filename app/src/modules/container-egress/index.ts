@@ -60,6 +60,23 @@ import { gatewayHostForCentral } from '../../channels/webchat/gateway-connect.js
 const modes = new Map<string, EgressMode>();
 
 /**
+ * Open agents that use the filter as their proxy anyway, while staying on
+ * Docker's default bridge (their own connections unfiltered): those with a
+ * stack on a worker, whose addresses only the filter reaches (over the
+ * worker's link). The filter applies the Open policy to them, so nothing they
+ * reach through the proxy changes. Filled by the prepare hook from the checks
+ * modules register (workloads: registerOpenViaFilter).
+ */
+const openViaFilter = new Map<string, boolean>();
+type OpenViaFilterCheck = (agentGroupId: string) => Promise<boolean>;
+const openViaFilterChecks: OpenViaFilterCheck[] = [];
+export function registerOpenViaFilter(fn: OpenViaFilterCheck): void {
+  openViaFilterChecks.push(fn);
+}
+/** Marks such a container, so adoption after a restart starts the filter for it too. */
+export const OPEN_VIA_FILTER_LABEL = 'nanoclaw-egress-proxy=filter';
+
+/**
  * Host-local model endpoints (Ollama, LiteLLM on the host), refreshed by the
  * prepare hook. A container dials these DIRECTLY (its NO_PROXY names the
  * host), so on the lockdown network they must be listeners on the bridge
@@ -95,7 +112,14 @@ function modelListeners(gatewayPort: number, relayPort: number): ModelListener[]
 registerSessionPrepareHook(async (agentGroupId): Promise<void> => {
   await refreshModelListeners();
   // The relay's own decision, so both paths agree (and both fail closed).
-  modes.set(agentGroupId, await groupEgressMode(agentGroupId));
+  const mode = await groupEgressMode(agentGroupId);
+  modes.set(agentGroupId, mode);
+  if (mode !== 'open') openViaFilter.delete(agentGroupId);
+  else {
+    let want = false;
+    for (const fn of openViaFilterChecks) want ||= await fn(agentGroupId).catch(() => false);
+    openViaFilter.set(agentGroupId, want);
+  }
 });
 
 /** The gateway the container's proxy URL names, as central reaches it — the filter forwards there. */
@@ -296,22 +320,27 @@ const runtime = (args: string[]): Promise<string> =>
 /** Exported for tests, which pass their own `run` for the container runtime. */
 export function adoptFilteredContainers(run: (args: string[]) => Promise<string> = runtime): Promise<void> {
   return (async () => {
-    const names = (
-      await run([
+    const ps = (only: string[]) =>
+      run([
         'ps',
         '--filter',
         `label=nanoclaw-install=${INSTALL_SLUG}`,
         '--filter',
         'label=nanoclaw-role=agent',
-        '--filter',
-        `network=${EGRESS_NETWORK}`,
+        ...only,
         '--format',
         '{{.Names}}',
-      ])
-    )
-      .split('\n')
-      .map((n) => n.trim())
-      .filter(Boolean);
+      ]);
+    // Agents on the lockdown network, and Open agents using the filter as their proxy.
+    const names = [
+      ...new Set(
+        [await ps(['--filter', `network=${EGRESS_NETWORK}`]), await ps(['--filter', `label=${OPEN_VIA_FILTER_LABEL}`])]
+          .join('\n')
+          .split('\n')
+          .map((n) => n.trim())
+          .filter(Boolean),
+      ),
+    ];
     if (!names.length) return;
     await refreshModelListeners();
     const bridge = egressBridgeAddress();
@@ -435,6 +464,35 @@ export function filteredNetworkArgs(
 }
 
 /**
+ * An Open agent that uses the filter as its proxy: it stays on Docker's
+ * default bridge, and only `host.docker.internal` (its proxy's host) points at
+ * the filter's address, as for a filtered agent. Throws on any failure (the
+ * resolver then leaves it as an ordinary Open agent).
+ */
+export function openViaFilterArgs(spec: Parameters<Parameters<typeof registerNetworkPolicyResolver>[0]>[0]): string[] {
+  const agent = spec.containers.find((c) => c.role === 'agent') ?? spec.containers[0];
+  const gateway = gatewayFromSpec({ ...(agent?.contributedEnv ?? {}), ...(agent?.env ?? {}) });
+  if (!gateway) throw new Error('the agent has no proxy URL (the credential gateway contributed none)');
+  ensureEgressNetwork(spec.networkAccess, true);
+  const bridge = egressBridgeAddress();
+  const relay = mcpRelayTarget();
+  rememberGateway(gateway);
+  ensureEgressFilter(
+    bridge,
+    gateway.port,
+    defaultFilterDeps(EGRESS_NETWORK, () => gateway),
+    [{ port: relay.port, target: relay }],
+    modelListeners(gateway.port, relay.port),
+  );
+  registerFilteredContainer(agentContainerName(spec), {
+    agentGroupId: spec.key.agentGroupId,
+    sessionId: spec.key.sessionId ?? '',
+  });
+  const endpoint = spec.networkAccess?.endpoint || 'host.docker.internal';
+  return [`--add-host=${endpoint}:${bridge}`, '--label', OPEN_VIA_FILTER_LABEL];
+}
+
+/**
  * Whether this group's agent goes behind the egress filter — the resolver's
  * own decision, without its side effects (no listener, no registration).
  */
@@ -454,7 +512,22 @@ export function wouldFilter(agentGroupId: string): boolean {
 registerSidecarEgressCheck((spec) => wouldFilter(spec.key.agentGroupId));
 
 registerNetworkPolicyResolver((spec) => {
-  if (!wouldFilter(spec.key.agentGroupId)) return null;
+  if (!wouldFilter(spec.key.agentGroupId)) {
+    // Open: an ordinary network, unless it needs the filter as its proxy (see openViaFilter).
+    if (execRelayEnabled() || !openViaFilter.get(spec.key.agentGroupId)) return null;
+    try {
+      const args = openViaFilterArgs(spec);
+      log.info('Egress: open, proxy through the filter', { agentGroupId: spec.key.agentGroupId });
+      return args;
+    } catch (err) {
+      // Open anyway: falling back to the plain open network loses only the reach to its worker stacks.
+      log.warn('Egress: could not route an open agent through the filter; plain open network', {
+        agentGroupId: spec.key.agentGroupId,
+        err: String((err as Error)?.message ?? err),
+      });
+      return null;
+    }
+  }
   const mode = modes.get(spec.key.agentGroupId) ?? 'host-only';
   try {
     const relayed = execRelayEnabled();

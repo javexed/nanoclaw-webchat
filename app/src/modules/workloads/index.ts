@@ -9,6 +9,7 @@ import { registerBuildRegistries, registerOwnNetworks } from '../../channels/web
 import { registerWorkloadTunnel } from '../../channels/webchat/workload-tunnel.js';
 import { log } from '../../log.js';
 import { registerModuleSweep } from '../../module-sweep.js';
+import { registerOpenViaFilter } from '../container-egress/index.js';
 import { isLinked, openWorkerTcp, whenLinked } from '../machines/links.js';
 import './cli.js';
 import { tickGateway } from './gateway/index.js';
@@ -33,6 +34,13 @@ registerModuleSweep('workloads-reconcile', async () => {
 registerOwnNetworks(async (agentGroupId) => {
   if (!(await workloadsReady())) return [];
   return (await listWorkloads({ agentGroupId })).flatMap((w) => Object.values(w.addresses).map((a) => `${a}/32`));
+});
+
+// An Open agent with a stack on a worker uses the egress filter as its proxy
+// (container-egress), the only way to that stack's addresses; at its next start.
+registerOpenViaFilter(async (agentGroupId) => {
+  if (!(await workloadsReady())) return false;
+  return (await listWorkloads({ agentGroupId })).some((w) => w.state !== 'deleted' && w.node !== 'local');
 });
 
 // The agent's proxy (egress filter) asks here for every request to its own
