@@ -3,13 +3,15 @@
  * may run other things too — the first worker can be an existing app server —
  * so the share is worked out from what those other things use, not set by hand:
  *
- *   available = total − (current non-NanoClaw use × 1.2) − 1 GB and 0.25 CPU for the OS
+ *   available = total − (recent peak non-NanoClaw use × 1.2) − 1 GB and 0.25 CPU for the OS
  *
- * never below 0, recomputed on every health report (about every minute), so
- * stopping something on the machine frees room at once. The 20% buffer covers
- * other software growing a little; the fixed reserve keeps the operating
- * system itself running, so a dedicated worker offers nearly all of its box. An owner may set a lower cap; the smaller wins. Daily peaks are
- * still kept, to show, but no longer decide the share.
+ * never below 0, recomputed on every health report (about every minute). The
+ * recent peak is the highest of now, today's and yesterday's (recentOther):
+ * a shared machine whose software swings by gigabytes offers no room during a
+ * quiet moment, and something stopped frees its room within a day. The 20%
+ * buffer covers other software growing a little; the fixed reserve keeps the
+ * operating system itself running, so a dedicated worker offers nearly all of
+ * its box. An owner may set a lower cap; the smaller wins.
  */
 
 /** Kept back for the operating system on every machine, whatever its size. */
@@ -47,6 +49,20 @@ export function updatePeaks(peaks: Peaks, use: OtherUse, at: number): Peaks {
   };
   const keep = Object.keys(next).sort().slice(-PEAK_DAYS);
   return Object.fromEntries(keep.map((d) => [d, next[d]!]));
+}
+
+/**
+ * Other software's use at its highest in the last day (now, today's peak and
+ * yesterday's). Placement sizes a worker by this (members.ts availableOn), so
+ * it never fills a machine during a quiet moment of the software already on
+ * it (an app server whose stacks swing by gigabytes).
+ */
+export function recentOther(current: OtherUse, peaks: Peaks, now: number): OtherUse {
+  const recent = [dayOf(now), dayOf(now - 86_400_000)].map((d) => peaks[d]).filter((p) => p !== undefined);
+  return {
+    memMb: Math.max(current.memMb, ...recent.map((p) => p.memMb)),
+    cpus: Math.max(current.cpus, ...recent.map((p) => p.cpus)),
+  };
 }
 
 export interface Available {

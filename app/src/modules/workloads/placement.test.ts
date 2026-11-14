@@ -116,6 +116,14 @@ describe('placement', () => {
     expect((await placeWorkload('ag', need(4000), deps([shared]))).node).toBe('m-s');
   });
 
+  it("sizes a shared machine by its software's recent peak, not a quiet moment", async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const base = machine('m-p', 16000, { peaks: { [today]: { memMb: 12000, cpus: 1 } } });
+    const quiet = { ...base, health: { ...base.health!, memUsedMb: 2000, cpuUsed: 1 } }; // now 2000; today's peak 12000
+    // 16000 − 12000×1.2 − 1024 = 576 free: a 1 GB stack does not fit, though the machine is quiet now.
+    expect((await placeWorkload('ag', need(1024), deps([quiet]))).node).toBe('local');
+  });
+
   it("keeps an agent's stacks together when its worker still fits them", async () => {
     const a = machine('m-a', 16000);
     const b = machine('m-b', 32000);

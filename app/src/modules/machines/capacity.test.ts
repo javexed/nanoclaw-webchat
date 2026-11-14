@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { computeAvailable, OS_RESERVE_MB, OTHER_BUFFER, PEAK_DAYS, updatePeaks, type Peaks } from './capacity.js';
+import { computeAvailable, OS_RESERVE_MB, OTHER_BUFFER, PEAK_DAYS, recentOther, updatePeaks, type Peaks } from './capacity.js';
 
 const day = (d: string, h = 12): number => Date.parse(`${d}T${String(h).padStart(2, '0')}:00:00Z`);
 
@@ -60,3 +60,24 @@ describe('what NanoClaw may use', () => {
     });
   });
 });
+
+describe('other software at its recent peak (automatic moves)', () => {
+  const now = Date.parse('2026-11-13T20:44:00Z');
+  const peaks: Peaks = {
+    '2026-11-10': { memMb: 14349, cpus: 4 },
+    '2026-11-12': { memMb: 8165, cpus: 3.4 },
+    '2026-11-13': { memMb: 12744, cpus: 3.9 },
+  };
+  it('takes the highest of now, today and yesterday, never older days', () => {
+    expect(recentOther({ memMb: 7000, cpus: 1 }, peaks, now)).toEqual({ memMb: 12744, cpus: 3.9 });
+    expect(recentOther({ memMb: 13000, cpus: 1 }, peaks, now).memMb).toBe(13000);
+    expect(recentOther({ memMb: 100, cpus: 0.1 }, {}, now)).toEqual({ memMb: 100, cpus: 0.1 });
+  });
+  it('leaves a busy shared worker no room during a quiet moment', () => {
+    const quiet = computeAvailable({ memMb: 15933, cpus: 4 }, { memMb: 7000, cpus: 1 });
+    const atPeak = computeAvailable({ memMb: 15933, cpus: 4 }, recentOther({ memMb: 7000, cpus: 1 }, peaks, now));
+    expect(quiet.memMb).toBeGreaterThan(5000);
+    expect(atPeak.memMb).toBe(0);
+  });
+});
+

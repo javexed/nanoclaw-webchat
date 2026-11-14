@@ -9,7 +9,7 @@
  *      Central while no such worker exists or none has room (central's own
  *      ceiling still applies), and the reason says why.
  *   2. fit: the stack's memory within the worker's free share (NanoClaw's
- *      share of the machine — totals minus other software's current use plus
+ *      share of the machine — totals minus other software's recent peak plus
  *      20%, minus an OS reserve, members.ts availableOn — minus what is placed there already)
  *   3. together: an agent's stacks go where its other stacks run
  *   4. an owner's pin wins over the switch (also on a draining machine: drain
