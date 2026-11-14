@@ -4,9 +4,10 @@ description: >-
   Workloads: run the apps you build (a Compose stack — web app, API, database)
   on NanoClaw itself with `ncl workloads`, and reach them from your own
   container. Use this skill whenever you need to deploy, run, host or test an
-  app or service, or think you need a server or VM for one. Covers the rules a
-  stack must follow, approvals, addresses, logs/exec, disk quota, backups and
-  restore, and publishing an app to people.
+  app or service, think you need a server or VM for one, or bring an existing
+  project's docker-compose.yml over. Covers the rules a stack must follow,
+  converting a Compose project, builds, approvals, addresses, logs/exec, disk
+  quota, backups and restore, and publishing an app to people.
 ---
 
 # Workloads
@@ -25,7 +26,8 @@ it.
 
 1. Write the Compose file under `/workspace/agent/`.
 2. `ncl workloads check --name myapp --file myapp/compose.yml` — lists what the
-   rules refuse, and the memory/CPU it will take. Fix and repeat.
+   rules refuse, the memory/CPU it will take, and what was `translated`. Fix
+   every refusal and repeat.
 3. `ncl workloads up --name myapp --file myapp/compose.yml --reason "<what it is for, one line>"`
    — waits for an owner's approval card, which shows each image with the exact
    version (digest) it will run. You are told the result.
@@ -57,7 +59,66 @@ Where builds are on:
   from Docker Hub (`FROM node:22`) need **Allow Docker Hub for builds**, which
   an admin of this agent turns on in **Agent → Apps** (an owner approves it).
   If a build is refused reaching a registry, tell the person that;
+- tools that ignore the proxy (e.g. `pecl`, some installers) have no way out:
+  fetch with `curl` first, then install from the file;
+- builds never go through the credential gateway and never get your Secrets:
+  a gateway answer such as `credential_not_found` says nothing about a build;
+- private images (`FROM` or `image:` from a registry that needs a login) cannot
+  be used: tell the person. Never work around one by vendoring its files,
+  merging its Dockerfile into yours or rebuilding it;
+- up to about 70 image layers (each `RUN`, `COPY`, `ADD` adds one, on top of
+  the base image's); past that a step fails with an `overlay` mount `invalid
+  argument`: join `RUN` steps with `&&`;
 - at most 20 builds an hour without a card; a build may run up to 120 minutes.
+  Saving very large layers is slow here, so keep big downloads and caches out
+  of the image.
+
+## Bringing in an existing project
+
+To deploy a project that already has a `docker-compose.yml` (one people
+also run locally), keep its files as they are, so local builds stay the
+same:
+
+1. `check` the project's own file, unchanged. Most of it is translated
+   (see What a stack may contain); read what is still refused.
+2. Put the changes in a copy beside it, `compose.workload.yml`, never in
+   the original. Non-secret values may go in a `.env` beside it. Change only
+   what `check` refuses, and tell the person each change and why.
+3. Host-path mounts are the usual refusal. For each one:
+   - the Dockerfile already copies that folder in → drop the mount;
+   - data the app writes (uploads, backups, a database) → a named volume;
+   - files the image doesn't carry (excluded by `.dockerignore`) → add the
+     few the app needs with a `COPY` (and a `.dockerignore` exception), or
+     a named volume; a small config file (≤64 KB) → `configs`.
+4. Set `deploy.resources.limits` if the project sets none: the default
+   (512 MB, 0.5 CPU) is too small for most web apps with a database.
+5. Apps that check the host name (Drupal `trusted_host_patterns`, Django
+   `ALLOWED_HOSTS`, Rails `hosts`, Vite `allowedHosts`) refuse other names:
+   allow the service name, `198.18.*` addresses, and the app's published
+   host name (from `ncl workloads routes`). "The provided host name is not
+   valid" or a 400 on every page means this.
+6. Secret values in the project's files (keys, connection strings,
+   passwords) do not belong in a workload: use test values, never copy real
+   ones into the copy or `.env`, and tell the person that a key that sat in
+   a file in plain text should be rotated.
+7. `check` again, show the person its output, then `up`.
+
+A workload is a sandbox for the people who use you, not the project's
+dev, test or production environment. Leave those where they are (their
+servers, sign-in and deployments); never stop or change them unless the
+person asks.
+
+### Moving an existing deployment's data
+
+When the person wants a running copy's data in the workload too:
+- databases: dump and restore into the workload (`ncl workloads exec`
+  into its database; `pg_dump | pg_restore`, `mysqldump | mysql`), then
+  the app's own update step (`drush updb`, migrations);
+- uploaded files: copy into the named volume that holds them;
+- compare a few counts (rows, files) between the two copies, and tell the
+  person;
+- never run a step that resets settings from files (`drush cim`, fixtures,
+  seeds) on migrated data: settings that live only in the database are lost.
 
 ## What a stack may contain
 
@@ -159,6 +220,14 @@ for the app's own hostname, valid two minutes; the public key is at
 own credentials or cookies from elsewhere. Serve plain HTTP on the port you
 publish; the address is HTTPS for people.
 
+An app with its own sign-in (Entra/MSAL, OAuth) doesn't need it here: people
+are already signed in to NanoClaw. If the project also runs elsewhere with
+a real sign-in, add a switch only the workload sets (an environment value,
+off by default) that skips it. When the switch is on, the app must check
+`X-NanoClaw-Identity` (signature, its own hostname, expiry) and read the
+person from that token, never trust `X-NanoClaw-User` alone; keep the real
+sign-in for the other environments.
+
 ## Operating it
 
 - `ncl workloads ps --name myapp` — services, state, address.
@@ -201,8 +270,20 @@ Volumes are backed up nightly; the newest 3 are kept.
 
 ## When something fails
 
+Read the error before changing anything; each says what to fix. Don't
+guess, and don't change the project's approach to get around one.
+
 - `check` or `up` says "refused": read each line — it names the key to change.
 - State `failed`: `ncl workloads list` shows the error; `logs` shows why.
+- A build error starting **"Blocked during the build:"** names each host
+  NanoClaw refused and why: not on your allowed hosts (ask an owner), or
+  not reachable. Fix that first; the rest of the error follows from it.
+- `Dockerfile:<line>` with a step's own output: that step failed; fix it.
+- "timed out after 120 min": the build was too slow (usually very large
+  layers); it names the steps that took the time. Make the image smaller.
+- `overlay` mount `invalid argument`: too many layers (Builds).
+- A build that ran twice: each `up`/`redeploy` is one build. Wait for its
+  result message; never retry while one runs.
 - "changed after the approval": the file, an image's version or a Dockerfile
   changed between the card and the owner's answer — run `up` again.
 - Your curl gets 403 for another address: you can only reach your own services.
