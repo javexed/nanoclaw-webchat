@@ -506,7 +506,7 @@ var _hoisted_10$21 = {
 	key: 4,
 	class: "approval-actions"
 };
-var _hoisted_11$15 = ["disabled", "onClick"];
+var _hoisted_11$16 = ["disabled", "onClick"];
 var _hoisted_12$13 = {
 	key: 5,
 	class: "approval-error"
@@ -633,7 +633,7 @@ var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 						class: normalizeClass(btnClass(o.value)),
 						disabled: unref(approvalBusy).has(__props.approval.questionId) || void 0,
 						onClick: ($event) => pick(o.value)
-					}, toDisplayString(o.label || o.value), 11, _hoisted_11$15);
+					}, toDisplayString(o.label || o.value), 11, _hoisted_11$16);
 				}), 128))])),
 				unref(approvalErrors)[__props.approval.questionId] ? (openBlock(), createElementBlock("div", _hoisted_12$13, toDisplayString(unref(approvalErrors)[__props.approval.questionId]), 1)) : createCommentVNode("", true)
 			], 8, _hoisted_1$84);
@@ -1193,7 +1193,7 @@ var _hoisted_7$31 = ["hidden"];
 var _hoisted_8$23 = ["hidden"];
 var _hoisted_9$20 = ["hidden"];
 var _hoisted_10$20 = ["hidden"];
-var _hoisted_11$14 = {
+var _hoisted_11$15 = {
 	ref: "trace",
 	class: "thinking-fulltrace"
 };
@@ -1293,7 +1293,7 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 					class: "thinking-preview",
 					hidden: !__props.turn.preview
 				}, toDisplayString(__props.turn.preview), 9, _hoisted_10$20),
-				createElementVNode("div", _hoisted_11$14, [createTextVNode(toDisplayString(traceEmpty.value), 1), liveView.value && !traceEmpty.value ? (openBlock(), createBlock(TraceView_default, {
+				createElementVNode("div", _hoisted_11$15, [createTextVNode(toDisplayString(traceEmpty.value), 1), liveView.value && !traceEmpty.value ? (openBlock(), createBlock(TraceView_default, {
 					key: 0,
 					view: liveView.value
 				}, null, 8, ["view"])) : createCommentVNode("", true)], 512),
@@ -3089,7 +3089,7 @@ var _hoisted_10$18 = {
 	key: 4,
 	class: "skill-draft-card"
 };
-var _hoisted_11$13 = { class: "skill-head" };
+var _hoisted_11$14 = { class: "skill-head" };
 var _hoisted_12$12 = { class: "skill-name" };
 var _hoisted_13$12 = { class: "skill-desc" };
 var _hoisted_14$12 = { class: "skill-draft-actions" };
@@ -3184,7 +3184,7 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 				label: UNDO$1,
 				"busy-label": UNDOING
 			}, null, 8, ["busy"])], 8, _hoisted_7$29)])) : unref(draftAction)[__props.draftId]?.phase === "undone" ? (openBlock(), createElementBlock("div", _hoisted_8$21, " ↩ " + toDisplayString(unref(draftAction)[__props.draftId].name) + " — undone ", 1)) : __props.resolved ? (openBlock(), createElementBlock("div", _hoisted_9$18, toDisplayString(__props.status === "kept" ? `✅ ${__props.title} — kept` : `🗑 ${__props.title} — discarded`), 1)) : (openBlock(), createElementBlock("div", _hoisted_10$18, [
-				createElementVNode("div", _hoisted_11$13, [createElementVNode("span", _hoisted_12$12, toDisplayString(__props.title), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
+				createElementVNode("div", _hoisted_11$14, [createElementVNode("span", _hoisted_12$12, toDisplayString(__props.title), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
 					key: 0,
 					origin: {
 						label: `loads in every ${__props.agentName} session`,
@@ -3525,7 +3525,7 @@ var _hoisted_10$17 = {
 	key: 2,
 	class: "approval-error"
 };
-var _hoisted_11$12 = ["data-draft-id"];
+var _hoisted_11$13 = ["data-draft-id"];
 var _hoisted_12$11 = {
 	key: 0,
 	class: "msg-body"
@@ -3597,7 +3597,7 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 					key: 4,
 					class: "msg skill-draft-msg",
 					"data-draft-id": row.id || ""
-				}, [createVNode(SkillDraftCard_default, mergeProps({ ref_for: true }, row.payload), null, 16)], 8, _hoisted_11$12)) : (openBlock(), createElementBlock("div", mergeProps({
+				}, [createVNode(SkillDraftCard_default, mergeProps({ ref_for: true }, row.payload), null, 16)], 8, _hoisted_11$13)) : (openBlock(), createElementBlock("div", mergeProps({
 					key: 5,
 					class: row.cls
 				}, { ref_for: true }, row.id ? { "data-message-id": row.id } : {}, { style: row.isA2a ? { "--a2a-accent": row.a2aAccent } : void 0 }), [
@@ -5317,7 +5317,7 @@ var _hoisted_7$24 = { class: "secret-actions" };
 var _hoisted_8$18 = ["disabled", "onClick"];
 var _hoisted_9$15 = ["onClick"];
 var _hoisted_10$15 = ["onClick"];
-var _hoisted_11$11 = ["onClick"];
+var _hoisted_11$12 = ["onClick"];
 //#endregion
 //#region src/features/AgentKeyList.vue
 var AgentKeyList_default = /* @__PURE__ */ defineComponent({
@@ -5417,7 +5417,7 @@ var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 						class: "btn btn-danger",
 						type: "button",
 						onClick: ($event) => props.onRemove(r)
-					}, toDisplayString(T.remove), 9, _hoisted_11$11)
+					}, toDisplayString(T.remove), 9, _hoisted_11$12)
 				], 64))])]);
 			}), 128);
 		};
@@ -6484,12 +6484,18 @@ var _hoisted_6$27 = [
 ];
 var _hoisted_7$22 = ["title"];
 var _hoisted_8$16 = [
-	"checked",
+	"aria-checked",
+	"aria-label",
 	"data-approval",
-	"disabled"
+	"disabled",
+	"onClick"
 ];
-var _hoisted_9$14 = ["disabled"];
-var _hoisted_10$14 = {
+var _hoisted_9$14 = {
+	key: 0,
+	class: "setting-hint"
+};
+var _hoisted_10$14 = ["disabled"];
+var _hoisted_11$11 = {
 	key: 4,
 	class: "room-prime-note"
 };
@@ -6498,6 +6504,7 @@ var APPROVE = "Review + re-approve";
 var SAVE_TOOLS = "Save tool selection";
 var CARD = "Card";
 var CARD_HINT = "Each call needs approval";
+var CARD_OPEN = "No credential here, so Open agents can call this server directly, without a card.";
 //#endregion
 //#region src/features/McpHardening.vue
 var McpHardening_default = /* @__PURE__ */ defineComponent({
@@ -6517,6 +6524,15 @@ var McpHardening_default = /* @__PURE__ */ defineComponent({
 		const props = __props;
 		const BOLD = { fontWeight: "600" };
 		const s = computed(() => hardeningServer.value);
+		/** Tools marked "Card" — a switch per tool; Save reads them back from the DOM (aria-checked). */
+		const cards = ref(/* @__PURE__ */ new Set());
+		watch(() => s.value?.approval_tools, (a) => cards.value = new Set(Array.isArray(a) ? a : []), { immediate: true });
+		function toggleCard(name) {
+			const next = new Set(cards.value);
+			if (next.has(name)) next.delete(name);
+			else next.add(name);
+			cards.value = next;
+		}
 		const show = computed(() => !!s.value && s.value.transport !== "stdio");
 		const healthText = computed(() => {
 			const h = s.value?.health;
@@ -6541,12 +6557,10 @@ var McpHardening_default = /* @__PURE__ */ defineComponent({
 			const p = s.value?.pinned_tools;
 			if (!Array.isArray(p) || !p.length) return null;
 			const enabled = Array.isArray(s.value.enabled_tools) ? new Set(s.value.enabled_tools) : null;
-			const approval = new Set(Array.isArray(s.value.approval_tools) ? s.value.approval_tools : []);
 			return p.map((t) => ({
 				name: t.name,
 				desc: t.description || "",
-				checked: enabled ? enabled.has(t.name) : true,
-				approval: approval.has(t.name)
+				checked: enabled ? enabled.has(t.name) : true
 			}));
 		});
 		const oauthLabel = computed(() => s.value?.auth?.kind === "oauth" ? "Reconnect (OAuth)" : "Connect with OAuth…");
@@ -6572,24 +6586,29 @@ var McpHardening_default = /* @__PURE__ */ defineComponent({
 					createElementVNode("div", _hoisted_4$34, [(openBlock(true), createElementBlock(Fragment, null, renderList(tools.value, (t) => {
 						return openBlock(), createElementBlock("div", {
 							key: t.name,
-							class: "mcp-tool-row"
+							class: "mcp-tool-line"
 						}, [createElementVNode("label", _hoisted_5$30, [createElementVNode("input", {
 							type: "checkbox",
 							checked: t.checked,
 							"data-tool": t.name,
 							disabled: !unref(isWorkspaceAdminView) || void 0
-						}, null, 8, _hoisted_6$27), createElementVNode("span", { title: t.desc }, toDisplayString(t.name), 9, _hoisted_7$22)]), createElementVNode("label", {
+						}, null, 8, _hoisted_6$27), createElementVNode("span", { title: t.desc }, toDisplayString(t.name), 9, _hoisted_7$22)]), createElementVNode("span", {
 							class: "mcp-tool-approval",
 							title: CARD_HINT
-						}, [createElementVNode("input", {
-							type: "checkbox",
-							checked: t.approval,
+						}, [createElementVNode("button", {
+							type: "button",
+							class: normalizeClass(["perms-switch", { on: cards.value.has(t.name) }]),
+							role: "switch",
+							"aria-checked": cards.value.has(t.name) ? "true" : "false",
+							"aria-label": `${CARD}: ${t.name}`,
 							"data-approval": t.name,
-							disabled: !unref(isWorkspaceAdminView) || void 0
-						}, null, 8, _hoisted_8$16), createTextVNode(toDisplayString(CARD))])]);
+							disabled: !unref(isWorkspaceAdminView) || void 0,
+							onClick: ($event) => toggleCard(t.name)
+						}, null, 10, _hoisted_8$16), createTextVNode(" " + toDisplayString(CARD))])]);
 					}), 128))]),
+					cards.value.size && !s.value.auth ? (openBlock(), createElementBlock("p", _hoisted_9$14, toDisplayString(CARD_OPEN))) : createCommentVNode("", true),
 					unref(isWorkspaceAdminView) ? (openBlock(), createElementBlock("button", {
-						key: 0,
+						key: 1,
 						type: "button",
 						class: "btn btn-secondary",
 						onClick: _cache[1] || (_cache[1] = ($event) => props.onSaveTools())
@@ -6601,8 +6620,8 @@ var McpHardening_default = /* @__PURE__ */ defineComponent({
 					class: "btn btn-ghost",
 					disabled: unref(oauthBusy) || void 0,
 					onClick: _cache[2] || (_cache[2] = ($event) => props.onOauth())
-				}, toDisplayString(oauthLabel.value), 9, _hoisted_9$14)) : createCommentVNode("", true),
-				s.value.auth ? (openBlock(), createElementBlock("p", _hoisted_10$14, toDisplayString(authNote.value), 1)) : createCommentVNode("", true)
+				}, toDisplayString(oauthLabel.value), 9, _hoisted_10$14)) : createCommentVNode("", true),
+				s.value.auth ? (openBlock(), createElementBlock("p", _hoisted_11$11, toDisplayString(authNote.value), 1)) : createCommentVNode("", true)
 			], 64)) : createCommentVNode("", true);
 		};
 	}
@@ -6938,7 +6957,7 @@ function mountMcpHardening() {
 			if (!server || !listEl) return;
 			const boxes = [...listEl.querySelectorAll("input[data-tool]")];
 			const chosen = boxes.filter((b) => b.checked).map((b) => b.dataset.tool);
-			const approval = [...listEl.querySelectorAll("input[data-approval]")].filter((b) => b.checked).map((b) => b.dataset.approval);
+			const approval = [...listEl.querySelectorAll("[data-approval][aria-checked=\"true\"]")].map((b) => b.dataset.approval);
 			const body = {
 				enabled: chosen.length === boxes.length ? null : chosen,
 				approval

@@ -20,8 +20,12 @@ vi.mock('../../audit.js', () => ({ audit: (e: Record<string, unknown>) => void a
 vi.mock('../../modules/approvals/primitive.js', () => ({
   requestApproval: async () => undefined,
   registerApprovalHandler: () => undefined,
+  registerApprovalResolvedHandler: () => undefined,
 }));
-vi.mock('../../db/sessions.js', () => ({ getSessionsByAgentGroup: async () => [{ id: 's1', last_active: 'x' }] }));
+vi.mock('../../db/sessions.js', () => ({
+  getSessionsByAgentGroup: async () => [{ id: 's1', last_active: 'x', status: 'active' }],
+}));
+vi.mock('../../container-runner.js', () => ({ isContainerRunning: () => true }));
 vi.mock('../../db/agent-groups.js', () => ({ getAgentGroup: async () => ({ name: 'Agent' }) }));
 
 afterEach(async () => {
@@ -223,11 +227,73 @@ describe('the MCP relay forward', () => {
       await ok.text();
       expect(JSON.parse(bodies[0]!)).toMatchObject({ params: { name: 'explain_test_case' } });
       await new Promise((r) => setTimeout(r, 20));
-      expect(audits.map((e) => (e.detail as { tool: string; outcome: string }))).toEqual([
+      expect(audits.map((e) => e.detail as { tool: string; outcome: string })).toEqual([
         expect.objectContaining({ tool: 'check_in_all', outcome: 'held' }),
         expect.objectContaining({ tool: 'explain_test_case', outcome: 'http 200' }),
       ]);
     } finally {
+      mcp.server.close();
+    }
+  });
+
+  it('refuses a body it cannot read as JSON, whatever its content type, without calling upstream', async () => {
+    let hits = 0;
+    const mcp = await listen((_req, res) => {
+      hits++;
+      res.writeHead(200).end('{}');
+    });
+    try {
+      assign(`${mcp.base}/mcp`);
+      db.rows.server = { ...(db.rows.server as object), approval_tools: JSON.stringify(['check_in_all']) };
+      const relay = await startRelay();
+      const call = '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"check_in_all","arguments":{}}}';
+      const send = (body: string, type?: string, method = 'POST') =>
+        fetch(`${relay}/relay/srv1`, {
+          method,
+          headers: { 'x-nanoclaw-relay': 'tok', ...(type ? { 'content-type': type } : {}) },
+          body,
+        });
+      expect((await send(`\uFEFF${call}`, 'application/json')).status).toBe(400); // BOM
+      expect((await send(call.replace('{}}}', '{"n":NaN}}}'), 'application/json')).status).toBe(400); // NaN
+      expect((await send(`${call} trailing`, 'text/plain')).status).toBe(400);
+      expect((await send('', undefined)).status).toBe(400);
+      expect((await send(call, 'application/json', 'PUT')).status).toBe(405);
+      expect(hits).toBe(0);
+      // Valid JSON under the wrong content type is still read, so still held.
+      const held = await send(call, 'text/plain');
+      expect(((await held.json()) as { result: { isError: boolean } }).result.isError).toBe(true);
+      expect(hits).toBe(0);
+    } finally {
+      mcp.server.close();
+    }
+  });
+
+  it('audits a call whose response is cut off mid-stream', async () => {
+    const mcp = await listen((req, res) => {
+      req.resume();
+      req.on('end', () => {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.write('event: message\ndata: {}\n\n'); // never ends
+      });
+    });
+    try {
+      assign(`${mcp.base}/mcp`);
+      audits.length = 0;
+      const relay = await startRelay();
+      const ac = new AbortController();
+      const r = await fetch(`${relay}/relay/srv1`, {
+        method: 'POST',
+        headers: { 'x-nanoclaw-relay': 'tok', 'content-type': 'application/json' },
+        body: '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"slow","arguments":{}}}',
+        signal: ac.signal,
+      });
+      expect(r.status).toBe(200);
+      ac.abort();
+      for (let i = 0; i < 150 && !audits.length; i++) await new Promise((res) => setTimeout(res, 20));
+      expect(audits).toHaveLength(1);
+      expect(audits[0]!.detail).toMatchObject({ tool: 'slow', outcome: 'http 200, cut off' });
+    } finally {
+      mcp.server.closeAllConnections?.();
       mcp.server.close();
     }
   });

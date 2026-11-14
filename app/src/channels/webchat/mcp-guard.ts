@@ -12,10 +12,15 @@
 import { createHash } from 'crypto';
 
 import { audit } from '../../audit.js';
+import { isContainerRunning } from '../../container-runner.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { getSessionsByAgentGroup } from '../../db/sessions.js';
 import { log } from '../../log.js';
-import { registerApprovalHandler, requestApproval } from '../../modules/approvals/primitive.js';
+import {
+  registerApprovalHandler,
+  registerApprovalResolvedHandler,
+  requestApproval,
+} from '../../modules/approvals/primitive.js';
 import { approvalTools, type WebchatMcpServer } from './mcp-registry.js';
 
 export const MCP_TOOL_ACTION = 'mcp_tool_call';
@@ -55,47 +60,103 @@ function canonical(v: unknown): string {
 }
 
 export const callKey = (agentGroupId: string, serverId: string, c: ToolCall): string =>
-  createHash('sha256').update(`${agentGroupId}\n${serverId}\n${c.name}\n${canonical(c.args)}`).digest('hex');
+  createHash('sha256')
+    .update(`${agentGroupId}\n${serverId}\n${c.name}\n${canonical(c.args)}`)
+    .digest('hex');
 
 const grants = new Map<string, number>();
 const pending = new Map<string, number>();
 
 export type Decision = 'allow' | 'approved' | 'held' | 'refused';
 
-/**
- * What happens to one call: allowed (no approval needed), approved (a grant
- * is used up), or held (a card is raised, or already waits).
- */
+type Outcome = { decision: Decision; note?: string };
+
+/** One call, decided alone (a batch of one). */
 export async function decide(
   agentGroupId: string,
   server: WebchatMcpServer,
   c: ToolCall,
   now = Date.now(),
-): Promise<{ decision: Decision; note?: string }> {
-  if (!approvalTools(server).includes(c.name)) return { decision: 'allow' };
-  const key = callKey(agentGroupId, server.id, c);
-  const until = grants.get(key);
-  if (until !== undefined && until > now) {
-    grants.delete(key);
-    return { decision: 'approved' };
-  }
-  if ((pending.get(key) ?? 0) > now)
-    return { decision: 'held', note: `${c.name} is waiting for an owner's approval already. Do not call it again until you are told the result.` };
-  const args = JSON.stringify(c.args, null, 2);
-  if (args.length > CARD_ARGS_MAX)
-    return {
-      decision: 'refused',
-      note: `${c.name} needs an owner's approval, and its arguments are too long to show on a card (${args.length} characters, at most ${CARD_ARGS_MAX}). Use smaller arguments.`,
-    };
-  const raised = await raiseCard(agentGroupId, server, c, key, args);
-  if (!raised) return { decision: 'refused', note: `${c.name} needs an owner's approval, and no card could be raised (no active session).` };
-  pending.set(key, now + PENDING_MS);
-  return {
-    decision: 'held',
-    note: `${c.name} needs an owner's approval; a card was sent. You will be told the result: once approved, call it again with exactly the same arguments.`,
-  };
+): Promise<Outcome> {
+  return (await decideAll(agentGroupId, server, [c], now))[0]!;
 }
 
+/**
+ * What happens to each call of one request: allowed (no approval needed),
+ * approved (a grant is used up), held (a card is raised, or already waits) or
+ * refused. Decided in two passes so a request that is held as a whole has no
+ * side effects on its other calls: a grant is used only when the request will
+ * actually run, and identical held calls in one request raise one card.
+ */
+export async function decideAll(
+  agentGroupId: string,
+  server: WebchatMcpServer,
+  calls: ToolCall[],
+  now = Date.now(),
+): Promise<Outcome[]> {
+  ensureMcpGuardHandlers();
+  const gated = approvalTools(server);
+  // Pass 1: look, don't touch.
+  const looks = calls.map((c) => {
+    if (!gated.includes(c.name)) return { kind: 'allow' as const };
+    const key = callKey(agentGroupId, server.id, c);
+    if ((grants.get(key) ?? 0) > now) return { kind: 'grant' as const, key };
+    if ((pending.get(key) ?? 0) > now) return { kind: 'pending' as const, key };
+    const args = JSON.stringify(c.args, null, 2);
+    if (args.length > CARD_ARGS_MAX) return { kind: 'too-long' as const, key, args };
+    return { kind: 'card' as const, key, args };
+  });
+  const runs = looks.every((l) => l.kind === 'allow' || l.kind === 'grant');
+  // Pass 2: act. A request that runs uses its grants; one that is held raises
+  // its cards (once per distinct call) and leaves its grants for the retry.
+  const raised = new Map<string, boolean>();
+  const out: Outcome[] = [];
+  for (const [i, l] of looks.entries()) {
+    const c = calls[i]!;
+    if (l.kind === 'allow') out.push({ decision: 'allow' });
+    else if (l.kind === 'grant') {
+      if (runs) grants.delete(l.key);
+      out.push({ decision: 'approved' });
+    } else if (l.kind === 'pending')
+      out.push({
+        decision: 'held',
+        note: `${c.name} is waiting for an owner's approval already. Do not call it again until you are told the result.`,
+      });
+    else if (l.kind === 'too-long')
+      out.push({
+        decision: 'refused',
+        note: `${c.name} needs an owner's approval, and its arguments are too long to show on a card (${l.args.length} characters, at most ${CARD_ARGS_MAX}). Use smaller arguments.`,
+      });
+    else {
+      let ok = raised.get(l.key);
+      if (ok === undefined) {
+        ok = await raiseCard(agentGroupId, server, c, l.key, l.args);
+        raised.set(l.key, ok);
+        if (ok) pending.set(l.key, now + PENDING_MS);
+      }
+      out.push(
+        ok
+          ? {
+              decision: 'held',
+              note: `${c.name} needs an owner's approval; a card was sent. You will be told the result: once approved, call it again with exactly the same arguments.`,
+            }
+          : {
+              decision: 'refused',
+              note: `${c.name} needs an owner's approval, and no card could be raised (no active session).`,
+            },
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * The card goes to the room of the session making the call. The relay token
+ * names the agent group, not the session, so the caller is inferred: the one
+ * session with a live container. When several run at once the caller is
+ * unknown — the card goes to the most recently active one WITHOUT the
+ * arguments, since they may belong to a conversation in another room.
+ */
 async function raiseCard(
   agentGroupId: string,
   server: WebchatMcpServer,
@@ -103,9 +164,13 @@ async function raiseCard(
   key: string,
   args: string,
 ): Promise<boolean> {
-  const sessions = await getSessionsByAgentGroup(agentGroupId);
-  const session = sessions.sort((a, b) => String(b.last_active ?? '').localeCompare(String(a.last_active ?? '')))[0];
+  const sessions = (await getSessionsByAgentGroup(agentGroupId))
+    .filter((x) => x.status === 'active')
+    .sort((a, b) => String(b.last_active ?? '').localeCompare(String(a.last_active ?? '')));
+  const running = sessions.filter((x) => isContainerRunning(x.id));
+  const session = running.length === 1 ? running[0] : (running[0] ?? sessions[0]);
   if (!session) return false;
+  const showArgs = running.length === 1 || (running.length === 0 && sessions.length === 1);
   const agentName = (await getAgentGroup(agentGroupId))?.name ?? agentGroupId;
   await requestApproval({
     session,
@@ -113,20 +178,45 @@ async function raiseCard(
     action: MCP_TOOL_ACTION,
     payload: { key, serverId: server.id, server: server.name, tool: c.name },
     title: `${server.name}: ${c.name}`,
-    question: `"${agentName}" wants to call ${c.name} on ${server.name}:\n\`\`\`json\n${args}\n\`\`\``,
+    question: showArgs
+      ? `"${agentName}" wants to call ${c.name} on ${server.name}:\n\`\`\`json\n${args}\n\`\`\``
+      : `"${agentName}" wants to call ${c.name} on ${server.name}. It is active in more than one room, so the arguments are not shown here.`,
   });
   return true;
 }
 
-registerApprovalHandler(MCP_TOOL_ACTION, async ({ payload, notify }) => {
-  const key = String(payload.key ?? '');
-  if (!key) return;
-  pending.delete(key);
-  grants.set(key, Date.now() + GRANT_MS);
-  await notify(
-    `Approved: call ${String(payload.tool)} on ${String(payload.server)} again with exactly the same arguments (within an hour).`,
-  );
-});
+/**
+ * The approval handlers, registered once: when the relay starts (so a card
+ * raised before a restart can still be answered) and before any decision.
+ * Not at import time — the approvals module may still be initialising then
+ * (an import cycle through the relay), and registering would throw.
+ */
+let registered = false;
+export function ensureMcpGuardHandlers(): void {
+  if (registered) return;
+  registered = true;
+  registerApprovalHandler(MCP_TOOL_ACTION, async ({ payload, notify }) => {
+    const key = String(payload.key ?? '');
+    if (!key) return;
+    pending.delete(key);
+    grants.set(key, Date.now() + GRANT_MS);
+    await notify(
+      `Approved: call ${String(payload.tool)} on ${String(payload.server)} again with exactly the same arguments (within an hour).`,
+    );
+  });
+
+  // A rejected (or expired) card clears its wait, so the next identical call
+  // raises a fresh card instead of being told to wait for a decision already made.
+  registerApprovalResolvedHandler(({ approval, outcome }) => {
+    if (approval.action !== MCP_TOOL_ACTION || outcome !== 'reject') return;
+    try {
+      const key = String((JSON.parse(approval.payload) as { key?: unknown }).key ?? '');
+      if (key) pending.delete(key);
+    } catch {
+      /* malformed payload: the wait simply lapses after PENDING_MS */
+    }
+  });
+}
 
 /** One audit entry per call: who, which server and tool, and what happened to it. */
 export function auditCall(agentGroupId: string, server: WebchatMcpServer, c: ToolCall, outcome: string): void {
