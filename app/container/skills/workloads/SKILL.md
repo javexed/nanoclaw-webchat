@@ -101,6 +101,9 @@ approved size, stopped or not.
 Each service gets a fixed address on your private network, shown by
 `ncl workloads list` / `ps` (e.g. `web` → `198.18.0.12`). From your container:
 `curl http://198.18.0.12:8080/`. Addresses stay the same across redeploys.
+Go through the proxy your container is given (`HTTP_PROXY`/`http_proxy`;
+curl uses it): a stack on another machine is reached only that way, so raw
+sockets (`/dev/tcp`, `nc`, a database client) time out there.
 Services reach each other by service name, as in any Compose project.
 Stacks have **no internet access** and cannot reach the host — pulls and
 builds happen at deploy time, so put dependencies in the image.
