@@ -135,9 +135,10 @@ card shows them too):
 
 - `${VAR}` forms are filled from the `.env` next to the Compose file (never
   from anywhere else); unset ones are left empty and listed.
-- `include`, `extends`, `env_file`, `configs` and `secrets` read files from
-  your workspace only (ones that come from an environment variable are
-  refused).
+- `include`, `extends`, `env_file` and `configs` read files from your
+  workspace only (configs that come from an environment variable are
+  refused). `secrets` are refused: their values would be stored with the
+  stack, so a workload gets test values, never real ones.
 - `ports` become `expose` (nothing is published on the host); `networks`,
   `links` and `container_name` are dropped, and those names still reach the
   service; services with `profiles` are left out, as Compose does.
@@ -252,6 +253,13 @@ addresses and size stay. The next request wakes it in a few seconds: people
 opening its page see "Starting…" briefly; your own requests, `exec`, `start`
 and `redeploy` wake it too. `ncl workloads list` shows it as `asleep`.
 
+- Only web requests count as use and wake it (people through the gateway,
+  your own `curl` through the proxy). A direct connection from your
+  container (`psql`, `redis-cli`, `/dev/tcp`) neither counts nor wakes it: if
+  you use a stack only that way, or a request fails while it starts, run
+  `ncl workloads start --name myapp` first.
+- If a wake fails, people opening it are told it could not start and you
+  get a `[System]` notice; another try happens a few minutes later.
 - A stack that works in the background (a job worker, a scheduled sync) must
   not sleep: `ncl workloads sleep --name myapp --after 0`.
 - Another idle time: `--after <hours>`; back to the default: `--after default`.

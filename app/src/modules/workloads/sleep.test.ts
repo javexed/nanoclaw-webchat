@@ -6,7 +6,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Workload } from './store.js';
 
-const rows = vi.hoisted(() => ({ byId: new Map<string, Workload>(), composeCalls: [] as string[][] }));
+const rows = vi.hoisted(() => ({
+  byId: new Map<string, Workload>(),
+  composeCalls: [] as string[][],
+  failStart: false,
+  duringStop: null as null | (() => void),
+  told: [] as string[],
+}));
 vi.mock('./store.js', async (orig) => ({
   ...(await orig<typeof import('./store.js')>()),
   listWorkloads: async () => [...rows.byId.values()],
@@ -22,12 +28,27 @@ vi.mock('./docker.js', async (orig) => ({
   compose: async (_w: Workload, args: string[]) => {
     rows.composeCalls.push(args);
     await new Promise((r) => setTimeout(r, 5));
+    if (args[0] === 'stop') rows.duringStop?.();
+    if (args[0] === 'start' && rows.failStart) throw new Error('no space left on device');
     return '';
   },
 }));
 vi.mock('../../audit.js', () => ({ audit: () => undefined }));
+vi.mock('./notify.js', () => ({
+  notifyWorkloadAgent: async (_g: string, text: string) => void rows.told.push(text),
+}));
 
-const { defaultSleepH, isWaking, sleepDue, sleepSweep, wakeWorkload } = await import('./sleep.js');
+const {
+  __resetSleepForTest,
+  defaultSleepH,
+  isWaking,
+  registerDeployBusy,
+  sleepDue,
+  sleepSweep,
+  wakeOnUse,
+  wakeWorkload,
+  WAKE_RETRY_MS,
+} = await import('./sleep.js');
 
 const H = 3_600_000;
 const NOW = 1_000 * H;
@@ -37,6 +58,10 @@ const wl = (id: string, patch: Partial<Workload> = {}): Workload =>
 beforeEach(() => {
   rows.byId.clear();
   rows.composeCalls.length = 0;
+  rows.failStart = false;
+  rows.duringStop = null;
+  rows.told.length = 0;
+  __resetSleepForTest();
 });
 
 describe('sleepDue', () => {
@@ -81,6 +106,45 @@ describe('sleep and wake', () => {
   it('a stack stopped on purpose does not wake', async () => {
     rows.byId.set('a', wl('a', { state: 'stopped', asleepAt: null }));
     await wakeWorkload('a');
+    expect(rows.composeCalls).toEqual([]);
+  });
+
+  it('reads each stack again before stopping it: one that changed since the list stays up', async () => {
+    rows.byId.set('a', wl('a'));
+    rows.byId.set('b', wl('b'));
+    registerDeployBusy((id) => id === 'b');
+    const list = [...rows.byId.values()];
+    rows.byId.set('a', wl('a', { state: 'deploying' }));
+    const slept = await sleepSweep(NOW, () => 0);
+    expect(slept).toEqual([]);
+    expect(rows.composeCalls).toEqual([]);
+    expect(list).toHaveLength(2);
+  });
+
+  it('never overwrites what happened during the stop (a redeploy wins)', async () => {
+    rows.byId.set('a', wl('a'));
+    rows.duringStop = () => rows.byId.set('a', wl('a', { state: 'deploying', updatedAt: NOW }));
+    expect(await sleepSweep(NOW, () => 0)).toEqual([]);
+    expect(rows.byId.get('a')).toMatchObject({ state: 'deploying', asleepAt: null });
+  });
+
+  it('a failed wake is recorded, the agent told, and visitors answered for a while instead of retried', async () => {
+    rows.byId.set('a', wl('a', { state: 'stopped', asleepAt: NOW }));
+    rows.failStart = true;
+    expect(await wakeOnUse('a', NOW)).toBe('starting');
+    await wakeWorkload('a');
+    expect(rows.byId.get('a')).toMatchObject({ state: 'stopped', lastError: expect.stringMatching(/did not wake/) });
+    expect(rows.told[0]).toMatch(/did not start again/);
+    const starts = rows.composeCalls.length;
+    expect(await wakeOnUse('a', Date.now())).toBe('failed');
+    expect(rows.composeCalls).toHaveLength(starts);
+    rows.failStart = false;
+    expect(await wakeOnUse('a', Date.now() + WAKE_RETRY_MS + 1)).toBe('starting');
+  });
+
+  it('a running stack is just counted', async () => {
+    rows.byId.set('a', wl('a'));
+    expect(await wakeOnUse('a', NOW)).toBe('running');
     expect(rows.composeCalls).toEqual([]);
   });
 });

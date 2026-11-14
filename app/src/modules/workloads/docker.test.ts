@@ -124,6 +124,41 @@ describe('what Compose is given', () => {
     expect(path.dirname(files.stack)).toBe(workDir(w.id));
     expect(() => writeFiles(w, 'n', { web: 'x' })).toThrow(/api: no image/);
   });
+
+  it("writes a translated project's configs (escaped) and its aliases on the stack network", () => {
+    const w = {
+      id: `test-${process.pid}-${Date.now()}-cfg`,
+      agentGroupId: 'ag-1',
+      name: 'shop',
+      addresses: { web: '198.18.0.10', db: '198.18.0.11' },
+      stack: {
+        compose: {
+          services: {
+            web: { image: 'nginx:1.27', configs: [{ source: 'config-site', target: '/etc/nginx/conf.d/site.conf' }] },
+            db: { image: 'postgres:17', 'x-nanoclaw-aliases': ['shop-db'] },
+          },
+          configs: { 'config-site': { content: 'proxy_set_header Host $host;' } },
+        },
+        limits: {},
+        total: { memoryMb: 1024, cpus: 1 },
+      },
+    } as unknown as Workload;
+    created.push(workDir(w.id));
+    const files = writeFiles(w, 'nc-wl-x-0', { web: 'nginx:1.27', db: 'postgres:17' });
+    const stack = parse(fs.readFileSync(files.stack, 'utf-8')) as {
+      services: Record<string, Record<string, unknown>>;
+      configs: Record<string, { content: string }>;
+    };
+    // Compose would read `$host` as a variable: written as `$$host`, the file gets `$host`.
+    expect(stack.configs).toEqual({ 'config-site': { content: 'proxy_set_header Host $$host;' } });
+    expect(stack.services.web.configs).toEqual([{ source: 'config-site', target: '/etc/nginx/conf.d/site.conf' }]);
+    expect(stack.services.db['x-nanoclaw-aliases']).toBeUndefined();
+    const override = parse(fs.readFileSync(files.override, 'utf-8')) as {
+      services: Record<string, { networks: { nanoclaw: Record<string, unknown> } }>;
+    };
+    expect(override.services.db.networks.nanoclaw).toEqual({ ipv4_address: '198.18.0.11', aliases: ['shop-db'] });
+    expect(override.services.web.networks.nanoclaw).toEqual({ ipv4_address: '198.18.0.10' });
+  });
 });
 
 describe('buildFailure', () => {

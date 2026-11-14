@@ -138,12 +138,30 @@ services:
     expect(c.ok ? [] : c.errors.join('\n')).toMatch(/privileged/);
   });
 
-  it('a secret must come from a workspace file', () => {
+  it('refuses secrets: their content would be stored with the stack', () => {
+    write('proj/key.txt', 'not-for-the-database');
     const t = translateCompose(
-      'secrets:\n  k: { environment: API_KEY }\nservices:\n  a:\n    image: busybox\n    secrets: [k]\n',
+      'secrets:\n  k: { file: ./key.txt }\nservices:\n  a:\n    image: busybox\n    secrets: [k]\n',
       root,
       path.join(root, 'proj'),
     );
-    expect(t.errors.join('\n')).toMatch(/must come from a file in your workspace/);
+    expect(t.errors.join('\n')).toMatch(/a: secrets are not supported here/);
+    expect(t.text).not.toContain('not-for-the-database');
+  });
+
+  it('an optional env_file outside the workspace is refused whether or not it exists', () => {
+    const missing = translateCompose(
+      'services:\n  a:\n    image: busybox\n    env_file: [{ path: ../../no-such-file.env, required: false }]\n',
+      root,
+      path.join(root, 'proj'),
+    );
+    expect(missing.errors.join('\n')).toMatch(/outside your workspace/);
+    expect(missing.errors.join('\n')).not.toMatch(/does not exist/);
+    const inside = translateCompose(
+      'services:\n  a:\n    image: busybox\n    env_file: [{ path: ./none.env, required: false }]\n',
+      root,
+      path.join(root, 'proj'),
+    );
+    expect(inside.errors).toEqual([]);
   });
 });

@@ -46,7 +46,7 @@ import { placeWorkload, workerRooms, type Placement } from './placement.js';
 import { checkStack, type CheckedStack } from './policy.js';
 import { requireWorkloads } from './preflight.js';
 import { confinedBuildsOn } from './settings.js';
-import { wakeWorkload } from './sleep.js';
+import { registerDeployBusy, wakeWorkload } from './sleep.js';
 import { translateCompose } from './translate.js';
 import {
   decodeApproved,
@@ -323,6 +323,8 @@ async function shipImages(
 /** Deploys this process is running. A stack left 'deploying' outside it was cut off by a restart (reconcile.ts). */
 const inFlight = new Set<string>();
 export const deployInFlight = (workloadId: string): boolean => inFlight.has(workloadId);
+// A stack being deployed is never put to sleep (sleep.ts).
+registerDeployBusy(deployInFlight);
 
 async function deploy(w: Workload, agentGroupId: string): Promise<Workload> {
   inFlight.add(w.id);

@@ -11,6 +11,7 @@
 import { audit } from '../../audit.js';
 import { log } from '../../log.js';
 import { compose } from './docker.js';
+import { notifyWorkloadAgent } from './notify.js';
 import { workloadSetting } from './settings.js';
 import { getWorkload, listWorkloads, updateWorkload, type Workload } from './store.js';
 
@@ -44,8 +45,14 @@ export function sleepDue(w: Workload, now: number, lastTraffic: number): boolean
   return now - Math.max(lastTraffic, w.updatedAt) >= h * HOUR;
 }
 
-export async function sleepWorkload(w: Workload, now = Date.now()): Promise<Workload> {
+/**
+ * Stop an idle stack and mark it asleep. The row is read again after the stop:
+ * if something changed it meanwhile (a deploy, a start), that wins.
+ */
+export async function sleepWorkload(w: Workload, now = Date.now()): Promise<Workload | null> {
   await compose(w, ['stop'], 300_000);
+  const after = await getWorkload(w.id);
+  if (!after || after.state !== 'running' || after.updatedAt !== w.updatedAt) return null;
   audit({
     type: 'workload.sleep',
     actor: 'system',
@@ -56,13 +63,22 @@ export async function sleepWorkload(w: Workload, now = Date.now()): Promise<Work
 }
 
 const waking = new Map<string, Promise<void>>();
+/** When a wake last failed: no new attempt for WAKE_RETRY_MS, so every visit does not start one. */
+const wakeFailedAt = new Map<string, number>();
+export const WAKE_RETRY_MS = 5 * 60_000;
 
 /** Is this stack starting up after a sleep right now? */
 export const isWaking = (id: string): boolean => waking.has(id);
 
+/** Deploys in progress (control.ts registers its own), which a sleep must never stop. */
+let deployBusy: (id: string) => boolean = () => false;
+export function registerDeployBusy(fn: (id: string) => boolean): void {
+  deployBusy = fn;
+}
+
 /**
  * Wake a sleeping stack; once at a time per stack. Resolves when it runs (or
- * failed: the failure is recorded on the workload and logged).
+ * failed: the failure is recorded on the workload, logged, and the agent told).
  */
 export function wakeWorkload(id: string): Promise<void> {
   const busy = waking.get(id);
@@ -72,27 +88,40 @@ export function wakeWorkload(id: string): Promise<void> {
     if (!w || w.state !== 'stopped' || w.asleepAt === null) return;
     try {
       await compose(w, ['start'], 300_000);
+      wakeFailedAt.delete(id);
       await updateWorkload(w.id, { state: 'running', asleepAt: null, lastError: null });
       audit({ type: 'workload.wake', actor: `agent:${w.agentGroupId}`, effect: 'allow', detail: { workload: w.id } });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      wakeFailedAt.set(id, Date.now());
       log.warn('Workload did not wake', { workload: w.id, name: w.name, err: msg });
-      await updateWorkload(w.id, { lastError: `did not wake: ${msg}` });
+      await updateWorkload(w.id, { lastError: `did not wake: ${msg.slice(-500)}` });
+      await notifyWorkloadAgent(
+        w.agentGroupId,
+        `[System] Your workload "${w.name}" was asleep and did not start again when it was used: ${msg.slice(-300)}. Look at \`ncl workloads logs --name ${w.name}\`, then \`ncl workloads start --name ${w.name}\`. Until then people opening it are told it could not start.`,
+      ).catch(() => undefined);
     }
   })().finally(() => waking.delete(id));
   waking.set(id, run);
   return run;
 }
 
-/** Put idle stacks to sleep. Called by the module sweep; a slow stop holds only that stack. */
+/**
+ * Put idle stacks to sleep. Called by the module sweep; a slow stop holds only
+ * that stack. Each one is read again right before it is stopped, so a request,
+ * a deploy or a start since the list was taken keeps it running.
+ */
 export async function sleepSweep(now = Date.now(), traffic: (id: string) => number = trafficAt): Promise<string[]> {
   const slept: string[] = [];
-  for (const w of await listWorkloads()) {
-    if (!sleepDue(w, now, traffic(w.id))) continue;
+  for (const listed of await listWorkloads()) {
+    if (!sleepDue(listed, now, traffic(listed.id))) continue;
+    const w = await getWorkload(listed.id);
+    if (!w || deployBusy(w.id) || !sleepDue(w, Math.max(now, Date.now()), traffic(w.id))) continue;
     try {
-      await sleepWorkload(w, now);
-      slept.push(w.name);
-      log.info('Workload asleep', { workload: w.id, name: w.name });
+      if (await sleepWorkload(w, now)) {
+        slept.push(w.name);
+        log.info('Workload asleep', { workload: w.id, name: w.name });
+      }
     } catch (e) {
       log.warn('Workload did not sleep', { workload: w.id, err: e instanceof Error ? e.message : String(e) });
     }
@@ -100,21 +129,28 @@ export async function sleepSweep(now = Date.now(), traffic: (id: string) => numb
   return slept;
 }
 
+export type UseState = 'running' | 'starting' | 'failed';
+
 /**
  * A request for this stack arrived (gateway check, agent's proxy): count it,
- * and wake the stack if it sleeps. True while it is asleep or starting, so the
- * caller answers "Starting…" instead of dialling stopped containers.
+ * and wake the stack if it sleeps. 'starting' while it starts, so the caller
+ * answers "Starting…" (or waits) instead of dialling stopped containers;
+ * 'failed' for a while after a wake failed, so visitors get an answer instead
+ * of a page that reloads forever.
  */
-export async function wakeOnUse(id: string): Promise<boolean> {
-  noteTraffic(id);
-  if (isWaking(id)) return true;
+export async function wakeOnUse(id: string, now = Date.now()): Promise<UseState> {
+  noteTraffic(id, now);
+  if (isWaking(id)) return 'starting';
   const w = await getWorkload(id);
-  if (!w || w.state !== 'stopped' || w.asleepAt === null) return false;
+  if (!w || w.state !== 'stopped' || w.asleepAt === null) return 'running';
+  if (now - (wakeFailedAt.get(id) ?? -Infinity) < WAKE_RETRY_MS) return 'failed';
   void wakeWorkload(id);
-  return true;
+  return 'starting';
 }
 
 export function __resetSleepForTest(): void {
   lastTraffic.clear();
   waking.clear();
+  wakeFailedAt.clear();
+  deployBusy = () => false;
 }

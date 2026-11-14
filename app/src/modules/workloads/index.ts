@@ -17,7 +17,7 @@ import { tickCloudflare } from './cloudflare/index.js';
 import { tickTailnet } from './tailnet/index.js';
 import { pruneRoutes } from './publish.js';
 import { reconcileWorkloads } from './reconcile.js';
-import { sleepSweep, wakeOnUse } from './sleep.js';
+import { sleepSweep, wakeOnUse, wakeWorkload } from './sleep.js';
 import { workloadsSwitchedOn } from './settings.js';
 import { buildRegistries, listWorkloads, workloadsReady } from './store.js';
 import { ensureWatcher } from './watch.js';
@@ -50,13 +50,18 @@ registerWorkloadTunnel(async (host, port) => {
   if (!(await workloadsReady())) return null;
   const w = (await listWorkloads()).find((x) => Object.values(x.addresses).includes(host));
   if (!w) return null;
-  // Every request to a stack, here or on a worker, counts as its traffic; a sleeping one wakes (sleep.ts).
-  void wakeOnUse(w.id);
+  // Every request to a stack, here or on a worker, counts as its traffic. A
+  // sleeping one wakes (sleep.ts), and the agent's request waits for it (a
+  // minute at most) rather than dialling stopped containers.
+  if ((await wakeOnUse(w.id)) === 'starting')
+    await Promise.race([wakeWorkload(w.id), new Promise((r) => setTimeout(r, WAKE_WAIT_MS).unref())]);
   if (w.node === 'local' || !isLinked(w.node)) return null;
   return () => openWorkerTcp(w.node, host, port);
 });
 
 registerBuildRegistries(buildRegistries);
+
+const WAKE_WAIT_MS = 60_000;
 
 // Idle stacks sleep (sleep.ts), checked every five minutes.
 let lastSleepSweep = 0;

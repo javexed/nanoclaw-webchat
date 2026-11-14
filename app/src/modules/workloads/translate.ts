@@ -12,7 +12,8 @@
  *   ports            become `expose`: nothing is published on a machine
  *   networks, links, container_name   dropped; names become aliases on the stack network
  *   profiles         a service with profiles is left out, as Compose does by default
- *   secrets/configs  files from the workspace, mounted as configs with inline content
+ *   configs          files from the workspace, mounted with inline content
+ *   secrets          refused: a secret's value would be stored with the stack
  *   volume name/external              dropped: a local volume of the stack's own
  */
 import fs from 'fs';
@@ -45,9 +46,16 @@ class Ctx {
       this.errors.push(`${what}: ${p} is not a file in your workspace`);
       return null;
     }
+    // Outside by its own spelling: refused before the file system is asked, so
+    // the answer never says whether a host path exists.
+    const lexical = path.resolve(fromDir, p);
+    if (lexical !== this.root && !lexical.startsWith(this.root + path.sep)) {
+      this.errors.push(`${what}: ${p} is outside your workspace`);
+      return null;
+    }
     let real: string;
     try {
-      real = fs.realpathSync(path.resolve(fromDir, p));
+      real = fs.realpathSync(lexical);
     } catch {
       this.errors.push(`${what}: ${p} does not exist`);
       return null;
@@ -280,10 +288,10 @@ export function translateCompose(text: string, groupDir: string, composeDir = gr
     if (v.labels !== undefined) delete v.labels;
   }
 
-  // Configs and secrets from workspace files → configs with inline content.
+  // Configs from workspace files → configs with inline content.
   const configs: Obj = {};
-  const defined = (key: 'configs' | 'secrets'): Obj => (isObj(doc[key]) ? (doc[key] as Obj) : {});
-  const mountFile = (key: 'configs' | 'secrets', src: string, where: string): string | null => {
+  const defined = (key: 'configs'): Obj => (isObj(doc[key]) ? (doc[key] as Obj) : {});
+  const mountFile = (key: 'configs', src: string, where: string): string | null => {
     const def = defined(key)[src];
     if (!isObj(def)) return (ctx.errors.push(`${where}: ${key.slice(0, -1)} ${src} is not defined`), null);
     if (typeof def.file !== 'string') {
@@ -294,7 +302,7 @@ export function translateCompose(text: string, groupDir: string, composeDir = gr
     }
     const content = ctx.read(root, def.file, `${key.slice(0, -1)} ${src}`, MAX_CONFIG_BYTES);
     if (content === null) return null;
-    const id = `${key === 'secrets' ? 'secret' : 'config'}-${src}`;
+    const id = `config-${src}`;
     configs[id] = { content };
     return id;
   };
@@ -317,7 +325,9 @@ export function translateCompose(text: string, groupDir: string, composeDir = gr
       for (const e of Array.isArray(svc.env_file) ? svc.env_file : [svc.env_file]) {
         const p = isObj(e) ? String(e.path ?? '') : String(e);
         const required = isObj(e) ? e.required !== false : true;
-        if (!required && !fs.existsSync(path.resolve(root, p))) continue;
+        // Inside the workspace first: an optional file outside it must not reveal whether it exists.
+        const target = path.resolve(root, p);
+        if (!required && (target === root || target.startsWith(root + path.sep)) && !fs.existsSync(target)) continue;
         const t = ctx.read(root, p, `${name}: env_file`);
         if (t !== null) Object.assign(env, parseEnvFile(t));
       }
@@ -351,7 +361,14 @@ export function translateCompose(text: string, groupDir: string, composeDir = gr
       delete svc.links;
       ctx.notes.add(`${name}: links dropped (services reach each other by name)`);
     }
-    for (const key of ['configs', 'secrets'] as const) {
+    // A secret's content would be stored with the stack (the database) and shown on cards: refused.
+    if (svc.secrets !== undefined) {
+      ctx.errors.push(
+        `${name}: secrets are not supported here (their values would be stored with the stack); keep secret values out of files in your workspace`,
+      );
+      delete svc.secrets;
+    }
+    for (const key of ['configs'] as const) {
       if (svc[key] === undefined) continue;
       const mounts: Obj[] = [];
       for (const m of Array.isArray(svc[key]) ? (svc[key] as unknown[]) : []) {
@@ -359,15 +376,7 @@ export function translateCompose(text: string, groupDir: string, composeDir = gr
         const id = mountFile(key, src, name);
         if (!id) continue;
         const target =
-          isObj(m) && typeof m.target === 'string'
-            ? m.target.startsWith('/')
-              ? m.target
-              : key === 'secrets'
-                ? `/run/secrets/${m.target}`
-                : `/${m.target}`
-            : key === 'secrets'
-              ? `/run/secrets/${src}`
-              : `/${src}`;
+          isObj(m) && typeof m.target === 'string' ? (m.target.startsWith('/') ? m.target : `/${m.target}`) : `/${src}`;
         mounts.push({ source: id, target, ...(isObj(m) && m.mode !== undefined ? { mode: m.mode } : {}) });
       }
       delete svc[key];
