@@ -9,8 +9,8 @@
  *      Central while no such worker exists or none has room (central's own
  *      ceiling still applies), and the reason says why.
  *   2. fit: the stack's memory within the worker's free share (NanoClaw's
- *      share of the machine — totals minus other software's peak minus 15%
- *      headroom, members.ts availableOn — minus what is placed there already)
+ *      share of the machine — totals minus other software's current use plus
+ *      20%, minus an OS reserve, members.ts availableOn — minus what is placed there already)
  *   3. together: an agent's stacks go where its other stacks run
  *   4. an owner's pin wins over the switch (also on a draining machine: drain
  *      it and pin one agent to it, and only that agent's stacks go there),
@@ -163,11 +163,11 @@ export async function placeWorkload(
   if (together)
     return {
       node: together.machine.id,
-      reason: `${together.machine.name} (runs workloads, turned on by an owner): with this agent's other stacks; fits ${gb(need.memoryMb)} with 15% spare`,
+      reason: `${together.machine.name} (runs workloads, turned on by an owner): with this agent's other stacks; fits ${gb(need.memoryMb)}`,
     };
   const best = [...fits].sort((a, b) => b.freeMemMb - a.freeMemMb || b.freeCpus - a.freeCpus)[0];
   return {
     node: best.machine.id,
-    reason: `${best.machine.name} (runs workloads, turned on by an owner): most free memory; fits ${gb(need.memoryMb)} with 15% spare`,
+    reason: `${best.machine.name} (runs workloads, turned on by an owner): most free memory; fits ${gb(need.memoryMb)}`,
   };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { computeAvailable, HEADROOM, OTHER_BUFFER, PEAK_DAYS, updatePeaks, type Peaks } from './capacity.js';
+import { computeAvailable, OS_RESERVE_MB, OTHER_BUFFER, PEAK_DAYS, updatePeaks, type Peaks } from './capacity.js';
 
 const day = (d: string, h = 12): number => Date.parse(`${d}T${String(h).padStart(2, '0')}:00:00Z`);
 
@@ -29,15 +29,15 @@ describe('peaks of other software', () => {
 describe('what NanoClaw may use', () => {
   const totals = { memMb: 16000, cpus: 4 };
 
-  it("is total minus other software's current use plus 20%, minus 15% headroom", () => {
+  it("is total minus other software's current use plus 20%, minus the OS reserve", () => {
     const a = computeAvailable(totals, { memMb: 5000, cpus: 1 });
-    expect(a.memMb).toBe(16000 - 5000 * (1 + OTHER_BUFFER) - HEADROOM * 16000);
-    expect(a.cpus).toBe(2.2);
+    expect(a.memMb).toBe(16000 - 5000 * (1 + OTHER_BUFFER) - OS_RESERVE_MB);
+    expect(a.cpus).toBe(2.55);
     expect(a).toMatchObject({ memBy: 'auto', cpusBy: 'auto' });
   });
 
-  it('with no reports yet, is total minus headroom', () => {
-    expect(computeAvailable(totals, null)).toMatchObject({ memMb: 13600, cpus: 3.4 });
+  it('with no reports yet, is nearly the whole box: total minus the OS reserve', () => {
+    expect(computeAvailable(totals, null)).toMatchObject({ memMb: 14976, cpus: 3.75 });
   });
 
   it('is never below zero when other software uses (nearly) everything', () => {
@@ -48,7 +48,7 @@ describe('what NanoClaw may use', () => {
 
   it('an owner cap lowers it, and only where it is lower', () => {
     const a = computeAvailable(totals, null, { memMb: 8000, cpus: 8 });
-    expect(a).toMatchObject({ memMb: 8000, memBy: 'cap', cpus: 3.4, cpusBy: 'auto' });
+    expect(a).toMatchObject({ memMb: 8000, memBy: 'cap', cpus: 3.75, cpusBy: 'auto' });
   });
 
   it('a cap of zero means none of it', () => {

@@ -3,16 +3,18 @@
  * may run other things too — the first worker can be an existing app server —
  * so the share is worked out from what those other things use, not set by hand:
  *
- *   available = total − (current non-NanoClaw use × 1.2) − 15% of total
+ *   available = total − (current non-NanoClaw use × 1.2) − 1 GB and 0.25 CPU for the OS
  *
  * never below 0, recomputed on every health report (about every minute), so
  * stopping something on the machine frees room at once. The 20% buffer covers
- * other software growing a little; the headroom keeps the machine itself
- * breathing. An owner may set a lower cap; the smaller wins. Daily peaks are
+ * other software growing a little; the fixed reserve keeps the operating
+ * system itself running, so a dedicated worker offers nearly all of its box. An owner may set a lower cap; the smaller wins. Daily peaks are
  * still kept, to show, but no longer decide the share.
  */
 
-export const HEADROOM = 0.15;
+/** Kept back for the operating system on every machine, whatever its size. */
+export const OS_RESERVE_MB = 1024;
+export const OS_RESERVE_CPUS = 0.25;
 /** Room left for the other software to grow, on top of what it uses now. */
 export const OTHER_BUFFER = 0.2;
 export const PEAK_DAYS = 7;
@@ -63,9 +65,9 @@ export function computeAvailable(
 ): Available {
   const otherMem = Math.max(0, other?.memMb ?? 0) * (1 + OTHER_BUFFER);
   const otherCpu = Math.max(0, other?.cpus ?? 0) * (1 + OTHER_BUFFER);
-  const autoMem = Math.max(0, Math.floor(totals.memMb - otherMem - HEADROOM * totals.memMb));
+  const autoMem = Math.max(0, Math.floor(totals.memMb - otherMem - OS_RESERVE_MB));
   // + 1e-9: 4 − 1.2 − 0.6 is 2.1999…, which must floor to 2.2, not 2.19.
-  const autoCpu = Math.max(0, Math.floor((totals.cpus - otherCpu - HEADROOM * totals.cpus) * 100 + 1e-9) / 100);
+  const autoCpu = Math.max(0, Math.floor((totals.cpus - otherCpu - OS_RESERVE_CPUS) * 100 + 1e-9) / 100);
   const memByCap = cap.memMb !== null && cap.memMb < autoMem;
   const cpuByCap = cap.cpus !== null && cap.cpus < autoCpu;
   return {
