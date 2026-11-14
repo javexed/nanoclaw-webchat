@@ -16,7 +16,13 @@ interface Refusal {
 
 const byAgent = new Map<string, Refusal[]>();
 
-export function noteBuildRefusal(agentGroupId: string, host: string, port: number, reason: string, now = Date.now()): void {
+export function noteBuildRefusal(
+  agentGroupId: string,
+  host: string,
+  port: number,
+  reason: string,
+  now = Date.now(),
+): void {
   const list = (byAgent.get(agentGroupId) ?? []).filter((r) => now - r.at < KEEP_MS);
   list.push({ at: now, host: host.toLowerCase(), port, reason: reason.slice(0, 300) });
   byAgent.set(agentGroupId, list.slice(-MAX_PER_AGENT));

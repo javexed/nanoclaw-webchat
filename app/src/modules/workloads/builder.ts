@@ -136,7 +136,8 @@ export async function ensureBuilder(agentGroupId: string): Promise<Builder> {
     await docker(['buildx', 'rm', name]).catch(() => undefined);
     await docker(['rm', '-f', name]).catch(() => undefined);
     // An older builder's cache is laid out for its own arguments: start the new one empty.
-    if (state[1] !== BUILDER_SPEC) await docker(['volume', 'rm', builderCacheVolume(agentGroupId)]).catch(() => undefined);
+    if (state[1] !== BUILDER_SPEC)
+      await docker(['volume', 'rm', builderCacheVolume(agentGroupId)]).catch(() => undefined);
   }
   if (!running) {
     const image = BUILDKIT_IMAGE();
@@ -330,9 +331,12 @@ export async function buildImage(b: Builder, spec: BuildSpec, name: string, work
       );
     }
     // What the filter refused goes first and is never clipped away.
-    throw new Error(withRefusals(b.agentGroupId, started, `the build failed: ${(buildFailure(text) ?? text).slice(-1500)}`), {
-      cause: err,
-    });
+    throw new Error(
+      withRefusals(b.agentGroupId, started, `the build failed: ${(buildFailure(text) ?? text).slice(-1500)}`),
+      {
+        cause: err,
+      },
+    );
   }
   const before = await protectedImageIds();
   // Read the manifest in a helper: the archive is the builder's, never unpacked on this host.

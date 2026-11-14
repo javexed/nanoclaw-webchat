@@ -786,9 +786,7 @@ function runtime(args: string[]): Promise<string> {
  * agent. Refreshed at most every two seconds and on a miss, so an address a
  * dead container gave up is re-read rather than trusted.
  */
-export function containerIdentifier(
-  network: string,
-): (ip: string, allowRefresh?: boolean) => Promise<Caller | null> {
+export function containerIdentifier(network: string): (ip: string, allowRefresh?: boolean) => Promise<Caller | null> {
   return async (ip, allowRefresh = true) => {
     const addr = ip.replace(/^::ffff:/, '');
     const lookup = async (fresh: boolean): Promise<string | undefined> => {

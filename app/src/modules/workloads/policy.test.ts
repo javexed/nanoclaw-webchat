@@ -235,7 +235,9 @@ describe('the override', () => {
       addresses: { db: '198.18.3.11' },
       aliases: { db: ['shop-db'] },
     }) as { services: Record<string, Record<string, unknown>> };
-    expect(withAliases.services.db.networks).toEqual({ nanoclaw: { ipv4_address: '198.18.3.11', aliases: ['shop-db'] } });
+    expect(withAliases.services.db.networks).toEqual({
+      nanoclaw: { ipv4_address: '198.18.3.11', aliases: ['shop-db'] },
+    });
   });
 
   it('keeps addresses across redeploys and never reuses another stack’s', () => {

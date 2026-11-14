@@ -122,7 +122,10 @@ describe('per-group egress', () => {
       'nanoclaw-egress-proxy=filter',
     ]);
     expect(ensureEgressFilter).toHaveBeenCalledWith('203.0.113.1', 10255, expect.anything(), expect.anything(), []);
-    expect(registerFilteredContainer).toHaveBeenCalledWith('ncl-test-s1', { agentGroupId: 'ag-open-worker', sessionId: 's1' });
+    expect(registerFilteredContainer).toHaveBeenCalledWith('ncl-test-s1', {
+      agentGroupId: 'ag-open-worker',
+      sessionId: 's1',
+    });
     expect(resolve(specFor('ag-open-plain'))).toBeNull();
     // Without a proxy URL it stays an ordinary open agent rather than failing.
     expect(resolve(specFor('ag-open-worker', null))).toBeNull();

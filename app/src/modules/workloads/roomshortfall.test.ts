@@ -10,7 +10,9 @@ describe('roomShortfall', () => {
     expect(roomShortfall('w', 'App', -4665, 64, 128)).toBeNull();
   });
   it('refuses growth the worker has no room for, and allows it when it has', () => {
-    expect(roomShortfall('w', 'App', -4665, 256, 128)).toBe("w's worker App has 0 MB free for it, and this asks for 256 MB");
+    expect(roomShortfall('w', 'App', -4665, 256, 128)).toBe(
+      "w's worker App has 0 MB free for it, and this asks for 256 MB",
+    );
     expect(roomShortfall('w', 'App', 300, 256, 128)).toBeNull();
   });
 });

@@ -85,7 +85,10 @@ export function parseEnvFile(text: string): Record<string, string> {
     const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*=\s*(.*)$/.exec(line);
     if (!m) continue;
     let v = m[2]!;
-    if ((v.startsWith('"') && v.endsWith('"') && v.length > 1) || (v.startsWith("'") && v.endsWith("'") && v.length > 1)) {
+    if (
+      (v.startsWith('"') && v.endsWith('"') && v.length > 1) ||
+      (v.startsWith("'") && v.endsWith("'") && v.length > 1)
+    ) {
       const q = v[0];
       v = v.slice(1, -1);
       if (q === '"') v = v.replace(/\\n/g, '\n').replace(/\\"/g, '"');
@@ -122,7 +125,8 @@ export function interpolate(s: string, env: Record<string, string>, unset: Set<s
 function interpolateAll(v: unknown, env: Record<string, string>, unset: Set<string>, errors: string[]): unknown {
   if (typeof v === 'string') return interpolate(v, env, unset, errors);
   if (Array.isArray(v)) return v.map((x) => interpolateAll(x, env, unset, errors));
-  if (isObj(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, interpolateAll(x, env, unset, errors)]));
+  if (isObj(v))
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, interpolateAll(x, env, unset, errors)]));
   return v;
 }
 
@@ -149,7 +153,8 @@ function loadText(ctx: Ctx, text: string, dir: string, depth: number, what: stri
   const env = fs.existsSync(envPath) ? parseEnvFile(ctx.read(dir, '.env', `${what} .env`) ?? '') : {};
   const unset = new Set<string>();
   const doc = interpolateAll(raw, env, unset, ctx.errors) as Obj;
-  if (unset.size) ctx.notes.add(`not set, left empty: ${[...unset].sort().join(', ')} (add them to the .env next to ${what})`);
+  if (unset.size)
+    ctx.notes.add(`not set, left empty: ${[...unset].sort().join(', ')} (add them to the .env next to ${what})`);
   rebaseAll(doc, dir, ctx.root);
   const includes = doc.include;
   delete doc.include;
@@ -180,7 +185,9 @@ function loadText(ctx: Ctx, text: string, dir: string, depth: number, what: stri
  */
 function rebaseAll(doc: Obj, dir: string, root: string): void {
   const rel = (p: unknown): unknown =>
-    typeof p === 'string' && !/^[a-z]+:\/\//i.test(p) && !path.isAbsolute(p) ? path.relative(root, path.resolve(dir, p)) || '.' : p;
+    typeof p === 'string' && !/^[a-z]+:\/\//i.test(p) && !path.isAbsolute(p)
+      ? path.relative(root, path.resolve(dir, p)) || '.'
+      : p;
   for (const svc of Object.values((doc.services as Obj | undefined) ?? {})) {
     if (!isObj(svc)) continue;
     if (typeof svc.build === 'string') svc.build = rel(svc.build);
@@ -201,7 +208,9 @@ function rebaseAll(doc: Obj, dir: string, root: string): void {
       if (isObj(def) && typeof def.file === 'string') def.file = rel(def.file);
   if (Array.isArray(doc.include) || typeof doc.include === 'string' || isObj(doc.include)) {
     const list = Array.isArray(doc.include) ? doc.include : [doc.include];
-    doc.include = list.map((i) => (typeof i === 'string' ? rel(i) : isObj(i) ? { ...i, path: [i.path].flat().map(rel) } : i));
+    doc.include = list.map((i) =>
+      typeof i === 'string' ? rel(i) : isObj(i) ? { ...i, path: [i.path].flat().map(rel) } : i,
+    );
   }
 }
 
@@ -295,9 +304,7 @@ export function translateCompose(text: string, groupDir: string, composeDir = gr
     const def = defined(key)[src];
     if (!isObj(def)) return (ctx.errors.push(`${where}: ${key.slice(0, -1)} ${src} is not defined`), null);
     if (typeof def.file !== 'string') {
-      ctx.errors.push(
-        `${where}: ${key.slice(0, -1)} ${src} must come from a file in your workspace`,
-      );
+      ctx.errors.push(`${where}: ${key.slice(0, -1)} ${src} must come from a file in your workspace`);
       return null;
     }
     const content = ctx.read(root, def.file, `${key.slice(0, -1)} ${src}`, MAX_CONFIG_BYTES);
@@ -340,7 +347,9 @@ export function translateCompose(text: string, groupDir: string, composeDir = gr
       svc.expose = [...new Set([...((svc.expose as unknown[]) ?? []).map(String), ...ports])];
       delete svc.ports;
       if (ports.length)
-        ctx.notes.add(`${name}: ports → expose ${ports.join(', ')} (nothing is published on the machine; people reach it through ncl workloads expose)`);
+        ctx.notes.add(
+          `${name}: ports → expose ${ports.join(', ')} (nothing is published on the machine; people reach it through ncl workloads expose)`,
+        );
     }
     if (svc.networks !== undefined) {
       if (isObj(svc.networks))

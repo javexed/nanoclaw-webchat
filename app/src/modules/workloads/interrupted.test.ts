@@ -54,16 +54,27 @@ describe('settleInterrupted', () => {
       linked: () => true,
       now: 120_000,
     });
-    expect(update).toHaveBeenCalledWith('w1', { state: 'failed', lastError: 'its last deploy was cut off by a NanoClaw restart' });
+    expect(update).toHaveBeenCalledWith('w1', {
+      state: 'failed',
+      lastError: 'its last deploy was cut off by a NanoClaw restart',
+    });
   });
 
   it('marks it failed when nothing runs, and waits for a worker link and a minute’s grace', async () => {
     const update = vi.fn(async () => ({}));
     const base = { states: async () => [], update: update as never, tell: async () => undefined };
     await settleInterrupted({ ...base, list: async () => [wl({})], linked: () => false, now: 120_000 });
-    await settleInterrupted({ ...base, list: async () => [wl({ updatedAt: 100_000 })], linked: () => true, now: 120_000 });
+    await settleInterrupted({
+      ...base,
+      list: async () => [wl({ updatedAt: 100_000 })],
+      linked: () => true,
+      now: 120_000,
+    });
     expect(update).not.toHaveBeenCalled();
     await settleInterrupted({ ...base, list: async () => [wl({})], linked: () => true, now: 120_000 });
-    expect(update).toHaveBeenCalledWith('w1', { state: 'failed', lastError: 'its last deploy was cut off by a NanoClaw restart' });
+    expect(update).toHaveBeenCalledWith('w1', {
+      state: 'failed',
+      lastError: 'its last deploy was cut off by a NanoClaw restart',
+    });
   });
 });

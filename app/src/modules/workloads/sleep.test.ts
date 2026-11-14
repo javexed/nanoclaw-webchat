@@ -53,7 +53,16 @@ const {
 const H = 3_600_000;
 const NOW = 1_000 * H;
 const wl = (id: string, patch: Partial<Workload> = {}): Workload =>
-  ({ id, name: id, agentGroupId: 'ag', state: 'running', sleepAfterH: null, asleepAt: null, updatedAt: 0, ...patch }) as Workload;
+  ({
+    id,
+    name: id,
+    agentGroupId: 'ag',
+    state: 'running',
+    sleepAfterH: null,
+    asleepAt: null,
+    updatedAt: 0,
+    ...patch,
+  }) as Workload;
 
 beforeEach(() => {
   rows.byId.clear();

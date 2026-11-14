@@ -49,7 +49,7 @@ describe('env files and ${VAR}', () => {
 });
 
 describe('translateCompose', () => {
-  it("translates a typical project file into one policy.ts accepts, and says what changed", () => {
+  it('translates a typical project file into one policy.ts accepts, and says what changed', () => {
     write('proj/.env', 'TAG=16\nDB_PASS=s3cret\n');
     write('proj/app.env', 'MODE=prod\nDB_PASS=fromfile\n');
     write('proj/web/Dockerfile', 'FROM nginx\n');
@@ -108,14 +108,21 @@ services:
   });
 
   it('merges include and extends from workspace files, paths kept right', () => {
-    write('inc/common/base.yml', 'services:\n  worker:\n    build: ./w\n    environment: { A: "1", B: "1" }\n    depends_on: [x]\n');
+    write(
+      'inc/common/base.yml',
+      'services:\n  worker:\n    build: ./w\n    environment: { A: "1", B: "1" }\n    depends_on: [x]\n',
+    );
     write('inc/common/w/Dockerfile', 'FROM busybox\n');
     write('inc/extra.yml', 'services:\n  cache:\n    image: redis:7\n');
     write(
       'inc/compose.yml',
       'include: [extra.yml]\nservices:\n  worker:\n    extends: { file: common/base.yml, service: worker }\n    environment: { B: "2" }\n',
     );
-    const t = translateCompose(fs.readFileSync(path.join(root, 'inc/compose.yml'), 'utf8'), root, path.join(root, 'inc'));
+    const t = translateCompose(
+      fs.readFileSync(path.join(root, 'inc/compose.yml'), 'utf8'),
+      root,
+      path.join(root, 'inc'),
+    );
     expect(t.errors).toEqual([]);
     const doc = parse(t.text);
     expect(doc.services.cache.image).toBe('redis:7');
@@ -125,7 +132,11 @@ services:
   it('reads nothing from outside the workspace, and leaves unsafe settings to the rules', () => {
     fs.writeFileSync(path.join(outside, 'leak.env'), 'X=1\n');
     const rel = path.relative(path.join(root, 'proj'), path.join(outside, 'leak.env'));
-    const t = translateCompose(`services:\n  a:\n    image: busybox\n    env_file: ["${rel}"]\n`, root, path.join(root, 'proj'));
+    const t = translateCompose(
+      `services:\n  a:\n    image: busybox\n    env_file: ["${rel}"]\n`,
+      root,
+      path.join(root, 'proj'),
+    );
     expect(t.errors.join('\n')).toMatch(/outside your workspace/);
 
     const unsafe = translateCompose(

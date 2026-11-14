@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { computeAvailable, OS_RESERVE_MB, OTHER_BUFFER, PEAK_DAYS, recentOther, updatePeaks, type Peaks } from './capacity.js';
+import {
+  computeAvailable,
+  OS_RESERVE_MB,
+  OTHER_BUFFER,
+  PEAK_DAYS,
+  recentOther,
+  updatePeaks,
+  type Peaks,
+} from './capacity.js';
 
 const day = (d: string, h = 12): number => Date.parse(`${d}T${String(h).padStart(2, '0')}:00:00Z`);
 
@@ -80,4 +88,3 @@ describe('other software at its recent peak (automatic moves)', () => {
     expect(atPeak.memMb).toBe(0);
   });
 });
-

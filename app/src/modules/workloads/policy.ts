@@ -236,7 +236,9 @@ function checkConfigs(top: Record<string, unknown>, errors: string[]): Set<strin
   for (const [n, d] of Object.entries(defs as Record<string, unknown>)) {
     const keys = d && typeof d === 'object' ? Object.keys(d as object) : [];
     if (keys.length !== 1 || keys[0] !== 'content' || typeof (d as { content?: unknown }).content !== 'string')
-      errors.push(`config ${n}: only a file from your workspace (content); not external, an environment variable or a host file`);
+      errors.push(
+        `config ${n}: only a file from your workspace (content); not external, an environment variable or a host file`,
+      );
     else names.add(n);
   }
   return names;
