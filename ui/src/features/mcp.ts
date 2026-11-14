@@ -391,9 +391,11 @@ function mountMcpHardening(): void {
         const server = hardeningServer.value;
         const listEl = $('#mcp-hardening .mcp-tools-list');
         if (!server || !listEl) return;
-        const boxes = [...listEl.querySelectorAll('input[type=checkbox]')] as HTMLInputElement[];
+        const boxes = [...listEl.querySelectorAll('input[data-tool]')] as HTMLInputElement[];
         const chosen = boxes.filter((b) => b.checked).map((b) => b.dataset.tool);
-        const body = { enabled: chosen.length === boxes.length ? null : chosen };
+        const cards = [...listEl.querySelectorAll('input[data-approval]')] as HTMLInputElement[];
+        const approval = cards.filter((b) => b.checked).map((b) => b.dataset.approval);
+        const body = { enabled: chosen.length === boxes.length ? null : chosen, approval };
         try {
           await apiJson(`/api/mcp-servers/${encodeURIComponent(server.id)}/tools`, { method: 'PUT', body });
           showToast(body.enabled ? `${chosen.length} of ${boxes.length} tools enabled` : 'All tools enabled', {

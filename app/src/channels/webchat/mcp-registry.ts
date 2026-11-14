@@ -28,6 +28,7 @@ export interface WebchatMcpServer {
   pinned_tools: string | null; // {hash, at, tools:[{name,description}]}
   drift: string | null; // {at, added:[], removed:[], changed:[]}
   enabled_tools: string | null; // string[] — allowlist, null = all tools
+  approval_tools?: string | null; // string[] — each call needs an owner's card (mcp-guard.ts); relayed
   auth: string | null; // {kind:'bearer'|'oauth', token?, oauth?:{...}} — host-side only
 }
 
@@ -88,6 +89,28 @@ export async function setMcpServerEnabledTools(id: string, tools: string[] | nul
   );
 }
 
+/** Tools whose every call waits for an owner's approval card (mcp-guard.ts); null/empty = none. */
+export async function setMcpServerApprovalTools(id: string, tools: string[] | null): Promise<void> {
+  await getDb().run(
+    `UPDATE webchat_mcp_servers SET approval_tools = ? WHERE id = ?`,
+    tools && tools.length ? JSON.stringify(tools) : null,
+    id,
+  );
+}
+
+export function approvalTools(s: Pick<WebchatMcpServer, 'approval_tools'>): string[] {
+  try {
+    const t = s.approval_tools ? (JSON.parse(s.approval_tools) as unknown) : null;
+    return Array.isArray(t) ? t.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Does this remote server go through the relay? Host-side auth, or tools that need approval. */
+export const isRelayed = (s: WebchatMcpServer): boolean =>
+  s.transport !== 'stdio' && (!!s.auth || approvalTools(s).length > 0);
+
 export async function setMcpServerAuth(id: string, auth: Record<string, unknown> | null): Promise<void> {
   await getDb().run(`UPDATE webchat_mcp_servers SET auth = ? WHERE id = ?`, auth ? JSON.stringify(auth) : null, id);
 }
@@ -131,6 +154,7 @@ export async function createWebchatMcpServer(input: WebchatMcpServerInput): Prom
     pinned_tools: null,
     drift: null,
     enabled_tools: null,
+    approval_tools: null,
     auth: null,
   };
   await getDb().run(
@@ -248,7 +272,7 @@ export function mcpServerToConfig(s: WebchatMcpServer, relayToken?: string): Mcp
       ...(enabledTools ? { enabledTools } : {}),
     };
   }
-  if (s.auth && relayToken) {
+  if (relayToken) {
     return {
       type: 'http', // the relay speaks Streamable HTTP to the container side
       url: `http://host.docker.internal:${MCP_RELAY_PORT}/relay/${s.id}`,
@@ -307,7 +331,7 @@ export async function syncAgentMcpConfig(
   if (!row) return false;
   const servers = JSON.parse(row.mcp_servers) as Record<string, McpServerConfig>;
   if (present) {
-    const relayToken = server.auth ? await ensureRelayToken(agentGroupId, server.id) : null;
+    const relayToken = isRelayed(server) ? await ensureRelayToken(agentGroupId, server.id) : null;
     servers[server.name] = mcpServerToConfig(server, relayToken ?? undefined);
   } else {
     delete servers[server.name];

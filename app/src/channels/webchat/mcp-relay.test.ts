@@ -15,6 +15,15 @@ vi.mock('../../db/connection.js', () => ({
   }),
 }));
 
+const audits = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+vi.mock('../../audit.js', () => ({ audit: (e: Record<string, unknown>) => void audits.push(e) }));
+vi.mock('../../modules/approvals/primitive.js', () => ({
+  requestApproval: async () => undefined,
+  registerApprovalHandler: () => undefined,
+}));
+vi.mock('../../db/sessions.js', () => ({ getSessionsByAgentGroup: async () => [{ id: 's1', last_active: 'x' }] }));
+vi.mock('../../db/agent-groups.js', () => ({ getAgentGroup: async () => ({ name: 'Agent' }) }));
+
 afterEach(async () => {
   const relay = await import('./mcp-relay.js');
   relay.stopMcpRelay();
@@ -175,6 +184,49 @@ describe('the MCP relay forward', () => {
         expect(await rawGet(relay, path)).toBe(400);
       }
       expect(seen).toHaveLength(1);
+    } finally {
+      mcp.server.close();
+    }
+  });
+
+  it('holds a tool that needs approval without calling upstream, forwards the rest, and audits both', async () => {
+    const bodies: string[] = [];
+    const mcp = await listen((req, res) => {
+      let t = '';
+      req.on('data', (c) => (t += c));
+      req.on('end', () => {
+        bodies.push(t);
+        res.writeHead(200, { 'content-type': 'application/json' }).end('{"jsonrpc":"2.0","id":2,"result":{}}');
+      });
+    });
+    try {
+      assign(`${mcp.base}/mcp`);
+      db.rows.server = { ...(db.rows.server as object), approval_tools: JSON.stringify(['check_in_all']) };
+      audits.length = 0;
+      const relay = await startRelay();
+      const post = (name: string, id: number) =>
+        fetch(`${relay}/relay/srv1`, {
+          method: 'POST',
+          headers: { 'x-nanoclaw-relay': 'tok', 'content-type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: { a: 1 } } }),
+        });
+      const held = await post('check_in_all', 1);
+      expect(held.status).toBe(200);
+      const j = (await held.json()) as { id: number; result: { isError: boolean; content: Array<{ text: string }> } };
+      expect(j.id).toBe(1);
+      expect(j.result.isError).toBe(true);
+      expect(j.result.content[0]!.text).toMatch(/needs an owner's approval; a card was sent/);
+      expect(bodies).toEqual([]);
+
+      const ok = await post('explain_test_case', 2);
+      expect(ok.status).toBe(200);
+      await ok.text();
+      expect(JSON.parse(bodies[0]!)).toMatchObject({ params: { name: 'explain_test_case' } });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(audits.map((e) => (e.detail as { tool: string; outcome: string }))).toEqual([
+        expect.objectContaining({ tool: 'check_in_all', outcome: 'held' }),
+        expect.objectContaining({ tool: 'explain_test_case', outcome: 'http 200' }),
+      ]);
     } finally {
       mcp.server.close();
     }

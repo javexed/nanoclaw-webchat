@@ -7,7 +7,7 @@
 import { restartAgentGroupContainers } from '../../../container-restart.js';
 import { log } from '../../../log.js';
 import { parseMcpAuth } from '../mcp-auth.js';
-import { getAgentsAssignedToMcpServer } from '../mcp-registry.js';
+import { approvalTools, getAgentsAssignedToMcpServer } from '../mcp-registry.js';
 import type { WebchatMcpServer, WebchatMcpTransport } from '../mcp-registry.js';
 
 /** Restart a group's containers so an mcp_servers change is picked up at spawn. */
@@ -31,6 +31,8 @@ export interface McpServerForUI {
   drift: Record<string, unknown> | null;
   pinned_tools: { name: string; description: string }[] | null;
   enabled_tools: string[] | null;
+  /** Tools whose every call waits for an owner's approval card. */
+  approval_tools: string[];
   /** Presence + kind only — the credential never leaves the host. */
   auth: { kind: string } | null;
 }
@@ -54,6 +56,7 @@ export async function mcpServerForUI(s: WebchatMcpServer): Promise<McpServerForU
     drift: parse(s.drift),
     pinned_tools: pinned?.tools ?? null,
     enabled_tools: (parse(s.enabled_tools) as unknown as string[] | null) ?? null,
+    approval_tools: approvalTools(s),
     // Presence only — the credential itself never leaves the host.
     auth: (() => {
       const a = parseMcpAuth(s);

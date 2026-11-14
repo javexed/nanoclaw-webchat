@@ -65,3 +65,4 @@ moduleWebchatMachines
 moduleWebchatMachineMembers
 moduleWebchatWorkloadPlacement
 moduleWebchatMachineIsolation
+moduleWebchatMcpApprovalTools

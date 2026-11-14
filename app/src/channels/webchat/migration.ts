@@ -1608,3 +1608,15 @@ export const moduleWebchatMachineIsolation: Migration = {
     `);
   },
 };
+
+/**
+ * MCP tools whose every call waits for an owner's approval card (mcp-guard.ts).
+ * A server with any goes through the relay, which audits each call.
+ */
+export const moduleWebchatMcpApprovalTools: Migration = {
+  version: 240,
+  name: 'webchat-mcp-approval-tools',
+  async up(db) {
+    await db.exec(`ALTER TABLE webchat_mcp_servers ADD COLUMN approval_tools TEXT;`);
+  },
+};

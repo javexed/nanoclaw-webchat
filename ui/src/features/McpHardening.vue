@@ -14,6 +14,8 @@ const props = defineProps<{ onApprove: () => void; onSaveTools: () => void; onOa
 const DRIFT_HEAD = 'Tools changed since you approved this server';
 const APPROVE = 'Review + re-approve';
 const SAVE_TOOLS = 'Save tool selection';
+const CARD = 'Card';
+const CARD_HINT = 'Each call needs approval';
 const BOLD = { fontWeight: '600' };
 
 const s = computed(() => hardeningServer.value);
@@ -44,7 +46,13 @@ const tools = computed(() => {
   const p = s.value?.pinned_tools;
   if (!Array.isArray(p) || !p.length) return null;
   const enabled = Array.isArray(s.value.enabled_tools) ? new Set(s.value.enabled_tools) : null;
-  return p.map((t: any) => ({ name: t.name, desc: t.description || '', checked: enabled ? enabled.has(t.name) : true }));
+  const approval = new Set(Array.isArray(s.value.approval_tools) ? s.value.approval_tools : []);
+  return p.map((t: any) => ({
+    name: t.name,
+    desc: t.description || '',
+    checked: enabled ? enabled.has(t.name) : true,
+    approval: approval.has(t.name),
+  }));
 });
 
 const oauthLabel = computed(() => (s.value?.auth?.kind === 'oauth' ? 'Reconnect (OAuth)' : 'Connect with OAuth…'));
@@ -68,9 +76,14 @@ const authNote = computed(() =>
     <div v-if="tools">
       <span class="form-label">Tools ({{ tools.length }})</span>
       <div class="mcp-tools-list">
-        <label v-for="t in tools" :key="t.name" class="mcp-tool-row">
-          <input type="checkbox" :checked="t.checked" :data-tool="t.name" :disabled="!isWorkspaceAdminView || undefined" /><span :title="t.desc">{{ t.name }}</span>
-        </label>
+        <div v-for="t in tools" :key="t.name" class="mcp-tool-row">
+          <label class="mcp-tool-row">
+            <input type="checkbox" :checked="t.checked" :data-tool="t.name" :disabled="!isWorkspaceAdminView || undefined" /><span :title="t.desc">{{ t.name }}</span>
+          </label>
+          <label class="mcp-tool-approval" :title="CARD_HINT">
+            <input type="checkbox" :checked="t.approval" :data-approval="t.name" :disabled="!isWorkspaceAdminView || undefined" />{{ CARD }}
+          </label>
+        </div>
       </div>
       <button v-if="isWorkspaceAdminView" type="button" class="btn btn-secondary" @click="props.onSaveTools()">
         {{ SAVE_TOOLS }}
