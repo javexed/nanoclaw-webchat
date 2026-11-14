@@ -57,7 +57,7 @@ Where builds are on:
   from Docker Hub (`FROM node:22`) need **Allow Docker Hub for builds**, which
   an admin of this agent turns on in **Agent → Apps** (an owner approves it).
   If a build is refused reaching a registry, tell the person that;
-- at most 20 builds an hour without a card.
+- at most 20 builds an hour without a card; a build may run up to 60 minutes.
 
 ## What a stack may contain
 

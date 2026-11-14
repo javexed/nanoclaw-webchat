@@ -42,7 +42,12 @@ const BUILDER_CPUS = '2';
 export const BUILDER_CACHE_MB = 3000;
 /** Bumped when the builder's run arguments change, so an older builder is replaced. */
 const BUILDER_SPEC = 'v3';
-const BUILD_TIMEOUT_MS = 20 * 60_000;
+/**
+ * How long one stack build may run. Builders run under gVisor, where saving
+ * a large image's layers is slow (no overlay xattrs, so BuildKit walks every
+ * file); a full base image can take well over 20 minutes the first time.
+ */
+export const BUILD_TIMEOUT_MS = Math.max(5, Number(process.env.NANOCLAW_WORKLOAD_BUILD_MIN) || 60) * 60_000;
 
 /** The builder container and buildx builder name. Never ncl-… (agent containers) or nc-… (workloads). */
 export const builderName = (agentGroupId: string): string => `ncb-${INSTALL_SLUG}-${groupKey(agentGroupId)}`;
@@ -257,6 +262,7 @@ export async function buildImage(b: Builder, spec: BuildSpec, name: string, work
     'no_proxy=',
   ];
   const buildArgs = [...normalizeArgs(spec.args), ...proxyArgs].flatMap((a) => ['--build-arg', a]);
+  const started = Date.now();
   try {
     await docker(
       [
@@ -281,6 +287,11 @@ export async function buildImage(b: Builder, spec: BuildSpec, name: string, work
     const e = err as { stderr?: string; message?: string };
     // The failing step's own output and error (docker.ts buildFailure), not the Dockerfile echoed back.
     const text = String(e.stderr || e.message || err);
+    // Killed at the limit: say so, or the tail reads like a failure of its own ("context canceled").
+    if (Date.now() - started >= BUILD_TIMEOUT_MS - 1_000)
+      throw new Error(`the build timed out after ${Math.round(BUILD_TIMEOUT_MS / 60_000)} min: ${text.slice(-1200)}`, {
+        cause: err,
+      });
     throw new Error(`the build failed: ${(buildFailure(text) ?? text).slice(-1500)}`, { cause: err });
   }
   const before = await protectedImageIds();
