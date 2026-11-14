@@ -44,7 +44,7 @@ import tls from 'tls';
 
 import { Mux, type Message } from './mux.js';
 
-export const WORKER_VERSION = '6';
+export const WORKER_VERSION = '7';
 const CONF_DIR = process.env.NC_MACHINE_DIR || '/etc/nanoclaw-machine';
 const WORK = process.env.NC_WORKER_DIR || '/var/lib/nanoclaw-worker';
 const MAX_OUT = 20_000;
@@ -170,6 +170,7 @@ const SERVICE_KEYS = new Set([
   'platform',
   'restart',
   'cap_add',
+  'configs',
 ]);
 /** Capabilities a service may add back (policy.ts CAP_ADD_ALLOWED). */
 const CAPS = new Set(['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'FSETID', 'SETUID', 'SETGID', 'NET_BIND_SERVICE', 'KILL']);
@@ -207,7 +208,14 @@ function hasKeyDeep(v: unknown, key: string): boolean {
 
 function refuseStack(stack: unknown, project: string): string | null {
   if (!isObj(stack)) return 'stack.yml must be an object';
-  for (const k of Object.keys(stack)) if (k !== 'services' && k !== 'volumes') return `stack.yml: ${k} not allowed`;
+  for (const k of Object.keys(stack))
+    if (k !== 'services' && k !== 'volumes' && k !== 'configs') return `stack.yml: ${k} not allowed`;
+  // Configs: inline content only (central's translate.ts), never a file or variable of this machine.
+  const configs = stack.configs ?? {};
+  if (!isObj(configs)) return 'stack.yml: configs must be an object';
+  for (const [name, c] of Object.entries(configs))
+    if (!isObj(c) || Object.keys(c).join() !== 'content' || typeof c.content !== 'string')
+      return `config ${name}: inline content only`;
   const volumes = stack.volumes ?? {};
   if (!isObj(volumes)) return 'stack.yml: volumes must be an object';
   for (const [name, v] of Object.entries(volumes)) {
@@ -229,6 +237,18 @@ function refuseStack(stack: unknown, project: string): string | null {
       for (const c of svc.cap_add)
         if (typeof c !== 'string' || !CAPS.has(c.toUpperCase().replace(/^CAP_/, '')))
           return `${name}: capability ${String(c)} not allowed`;
+    }
+    if (svc.configs !== undefined) {
+      if (!Array.isArray(svc.configs)) return `${name}: configs must be a list`;
+      for (const c of svc.configs)
+        if (
+          !isObj(c) ||
+          typeof c.source !== 'string' ||
+          !Object.hasOwn(configs, c.source) ||
+          (c.target !== undefined && (typeof c.target !== 'string' || !c.target.startsWith('/'))) ||
+          Object.keys(c).some((k) => !['source', 'target', 'mode', 'uid', 'gid'].includes(k))
+        )
+          return `${name}: configs name a config of the stack`;
     }
     if (svc.volumes !== undefined) {
       if (!Array.isArray(svc.volumes)) return `${name}: volumes must be a list`;
@@ -264,8 +284,16 @@ function refuseOverride(o: unknown, stack: Record<string, unknown>, project: str
     const addr = isObj(s.networks) && isObj(s.networks.nanoclaw) ? s.networks.nanoclaw.ipv4_address : undefined;
     if (!isObj(s.networks) || Object.keys(s.networks).length !== 1 || !isObj(s.networks.nanoclaw))
       return bad(`${name}: the stack network only`);
-    if (Object.keys(s.networks.nanoclaw).join() !== 'ipv4_address' || !serviceAddress(addr))
+    const netKeys = Object.keys(s.networks.nanoclaw).sort().join();
+    if ((netKeys !== 'ipv4_address' && netKeys !== 'aliases,ipv4_address') || !serviceAddress(addr))
       return bad(`${name}: a service address`);
+    const aliases = s.networks.nanoclaw.aliases;
+    if (
+      aliases !== undefined &&
+      (!Array.isArray(aliases) ||
+        !aliases.every((a) => typeof a === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$/.test(a)))
+    )
+      return bad(`${name}: aliases are host names`);
     if (!sameJson(s.logging, { driver: 'json-file', options: { 'max-size': '10m', 'max-file': '3' } }))
       return bad(`${name}: logging`);
     const labels = labelKeys(s.labels);

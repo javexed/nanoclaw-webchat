@@ -68,14 +68,27 @@ memory/CPU limits, labels, and `cap_add` from a short list (`CHOWN`,
 `KILL`) — every other capability is dropped. Databases that start as root and
 switch user usually need `cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER]`.
 
-Refused: `ports` (nothing is published on the host), host-path or socket
-volumes (`./data:/data`, `/var/run/docker.sock`), `privileged`, other
-capabilities, `cap_drop`, `devices`, `network_mode`, `networks`, `pid`/`ipc`,
-`security_opt`, `env_file`, `secrets`/`configs`, `container_name`,
-`pull_policy`, `logging`, external volumes, volume `name:`, `include`, YAML
-anchors merged with `<<`, and YAML tags (`!something`). Write values out in
-full. There is no `${VAR}` substitution: values are used exactly as written.
-Images and labels may not carry `nanoclaw*` or `com.docker.*` labels.
+A project's own `docker-compose.yml` usually works as it is: NanoClaw
+translates what is safe and `check` lists every translation (the approval
+card shows them too):
+
+- `${VAR}` forms are filled from the `.env` next to the Compose file (never
+  from anywhere else); unset ones are left empty and listed.
+- `include`, `extends`, `env_file`, `configs` and `secrets` read files from
+  your workspace only (ones that come from an environment variable are
+  refused).
+- `ports` become `expose` (nothing is published on the host); `networks`,
+  `links` and `container_name` are dropped, and those names still reach the
+  service; services with `profiles` are left out, as Compose does.
+- Volume `name:` and `external` are dropped: the stack gets its own volume,
+  which starts empty.
+
+Still refused: host-path or socket volumes (`./data:/data`,
+`/var/run/docker.sock`), `privileged`, other capabilities, `cap_drop`,
+`devices`, `network_mode`, `pid`/`ipc`, `security_opt`, `gpus`, `dns`,
+`extra_hosts`, `pull_policy`, `logging`, `build.additional_contexts`, YAML
+anchors merged with `<<`, and YAML tags (`!something`). Images and labels may
+not carry `nanoclaw*` or `com.docker.*` labels.
 
 Limits: a service without one gets 512 MB and 0.5 CPU. All your stacks
 together share your quota: `ncl workloads quota`. Small services rarely need

@@ -47,6 +47,7 @@ import { checkStack, type CheckedStack } from './policy.js';
 import { requireWorkloads } from './preflight.js';
 import { confinedBuildsOn } from './settings.js';
 import { wakeWorkload } from './sleep.js';
+import { translateCompose } from './translate.js';
 import {
   decodeApproved,
   dockerfileOf,
@@ -113,6 +114,8 @@ export interface Checked {
   composeHash: string;
   /** Where it runs: a new stack is placed now (placement.ts); an existing one stays put. */
   placement: Placement;
+  /** What was translated to fit (translate.ts), for the agent and the card. */
+  translated: string[];
 }
 
 /**
@@ -138,11 +141,14 @@ export async function checkWorkload(
   const others = (await listWorkloads({ agentGroupId })).filter((w) => w.id !== existing?.id);
   const usedMem = others.reduce((a, w) => a + w.approvedMemoryMb, 0);
   const usedCpu = others.reduce((a, w) => a + w.approvedCpus, 0);
+  // A project's own Compose file: the safe parts translated first (translate.ts); paths are workspace-relative after.
+  const t = translateCompose(text, dir, path.dirname(path.join(dir, relOf(file))));
+  if (t.errors.length) throw new Error(`the stack was refused:\n- ${t.errors.join('\n- ')}`);
   const r = checkStack(
-    text,
+    t.text,
     dir,
     { memoryMb: quota.memoryMb - usedMem, cpus: quota.cpus - usedCpu },
-    { composeDir: path.dirname(path.join(dir, relOf(file))), allowBuild: confinedBuildsOn() },
+    { composeDir: dir, allowBuild: confinedBuildsOn() },
   );
   if (!r.ok) throw new Error(`the stack was refused:\n- ${r.errors.join('\n- ')}`);
   // A workload stays where it was placed; a new one is placed now (placement.ts).
@@ -174,7 +180,16 @@ export async function checkWorkload(
       );
   }
   const shape = await stackShape(dir, r.stack, resolver, approved);
-  return { text, stack: r.stack, existing, shape, composeHash: sha256(text).slice(0, 32), placement };
+  // The pin covers what runs: the translated file, so an included file or .env changed later needs a new card.
+  return {
+    text,
+    stack: r.stack,
+    existing,
+    shape,
+    composeHash: sha256(t.text).slice(0, 32),
+    placement,
+    translated: t.notes,
+  };
 }
 
 /** What an approval card pins for `up`: this exact Compose file and shape (digests, Dockerfiles, args). */

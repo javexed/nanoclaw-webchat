@@ -27,6 +27,7 @@ import { HELPER_IMAGE } from './images.js';
 import { buildOverride, overlappingIndexes, subnetFor } from './override.js';
 import { workloadSetting } from './settings.js';
 import type { Workload } from './store.js';
+import { ALIASES_KEY } from './translate.js';
 
 const run = promisify(execFile);
 const MAX_OUTPUT = 20_000;
@@ -369,19 +370,25 @@ export function writeFiles(
   const dir = workDir(w.id);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const services: Record<string, Record<string, unknown>> = {};
+  const aliases: Record<string, string[]> = {};
   for (const [name, svc] of Object.entries(w.stack.compose.services)) {
-    const { build: _b, image: _i, ...rest } = svc;
+    // Extra names (translate.ts) go on the stack network in the override, not in the stack file.
+    const { build: _b, image: _i, [ALIASES_KEY]: names, ...rest } = svc;
     if (!images[name]) throw new Error(`${name}: no image to run`);
     services[name] = { ...escapeInterpolation(rest), image: images[name] };
+    if (Array.isArray(names) && names.length) aliases[name] = names.map(String);
   }
   const stackFile = path.join(dir, 'stack.yml');
   const overrideFile = path.join(dir, 'override.yml');
   const volumes = w.stack.compose.volumes;
+  // Inline-content configs (translate.ts): escaped like the services, so a `$host` in an nginx config survives.
+  const configs = w.stack.compose.configs;
   fs.writeFileSync(
     stackFile,
     stringify({
       services,
       ...(volumes && Object.keys(volumes).length ? { volumes: escapeInterpolation(volumes) } : {}),
+      ...(configs && Object.keys(configs).length ? { configs: escapeInterpolation(configs) } : {}),
     }),
     { mode: 0o600 },
   );
@@ -398,6 +405,7 @@ export function writeFiles(
           'nanoclaw.workload': w.id,
         },
         addresses: w.addresses,
+        aliases,
       }),
     ),
     { mode: 0o600 },

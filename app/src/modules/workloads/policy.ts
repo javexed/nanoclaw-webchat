@@ -2,7 +2,9 @@
  * What an agent's Compose stack may contain. Pure: given the file text and
  * the agent's folder and quota, either a normalized stack or the reasons it is
  * refused. Everything that could reach past the agent is refused rather than
- * rewritten, so the agent learns the rule instead of getting a surprise.
+ * rewritten, so the agent learns the rule instead of getting a surprise. What
+ * is safe to rewrite (env_file, ports, include …) is translated first, by
+ * translate.ts, and reported.
  *
  * The file is parsed as YAML 1.2 with no merge keys and no tags. Compose
  * parses the file NanoClaw writes with its own rules, where `<<` merges and a
@@ -26,7 +28,11 @@ export interface ServiceLimits {
 
 export interface CheckedStack {
   /** The stack as it will run, minus NanoClaw's override. */
-  compose: { services: Record<string, Record<string, unknown>>; volumes?: Record<string, unknown> };
+  compose: {
+    services: Record<string, Record<string, unknown>>;
+    volumes?: Record<string, unknown>;
+    configs?: Record<string, unknown>;
+  };
   limits: Record<string, ServiceLimits>;
   total: ServiceLimits;
 }
@@ -44,7 +50,7 @@ export const DEFAULT_MEMORY_MB = 512;
 export const DEFAULT_CPUS = 0.5;
 
 /** Top-level keys a stack may use (besides `x-*` extensions). */
-const TOP_ALLOWED = new Set(['services', 'volumes', 'name', 'version']);
+const TOP_ALLOWED = new Set(['services', 'volumes', 'name', 'version', 'configs']);
 
 /** Service keys a stack may use (besides `x-*`). Anything else is refused by name. */
 const SERVICE_ALLOWED = new Set([
@@ -73,6 +79,7 @@ const SERVICE_ALLOWED = new Set([
   'platform',
   'restart',
   'cap_add',
+  'configs',
 ]);
 
 /**
@@ -116,8 +123,7 @@ const SERVICE_REFUSED: Record<string, string> = {
   links: 'services reach each other by name on the stack network',
   external_links: 'services reach each other by name on the stack network',
   env_file: 'put variables in `environment` (env_file reads files outside the stack)',
-  secrets: 'secrets from files are not supported yet',
-  configs: 'configs from files are not supported yet',
+  secrets: 'secrets from files are not supported: keep secret values out of files in your workspace',
   extends: 'extends reads other files',
   profiles: 'profiles are not supported',
   gpus: 'GPUs are not available',
@@ -221,6 +227,21 @@ function checkBuild(
   return path.relative(root, real) || '.';
 }
 
+/** Inline-content configs (translate.ts makes them from workspace files): nothing else. */
+function checkConfigs(top: Record<string, unknown>, errors: string[]): Set<string> {
+  const names = new Set<string>();
+  const defs = top.configs;
+  if (defs === undefined) return names;
+  if (!defs || typeof defs !== 'object' || Array.isArray(defs)) return (errors.push('configs must be a map'), names);
+  for (const [n, d] of Object.entries(defs as Record<string, unknown>)) {
+    const keys = d && typeof d === 'object' ? Object.keys(d as object) : [];
+    if (keys.length !== 1 || keys[0] !== 'content' || typeof (d as { content?: unknown }).content !== 'string')
+      errors.push(`config ${n}: only a file from your workspace (content); not external, an environment variable or a host file`);
+    else names.add(n);
+  }
+  return names;
+}
+
 /** This service's limits as written, or the defaults. */
 function limitsOf(svc: Record<string, unknown>): ServiceLimits {
   const res = ((svc.deploy as Record<string, unknown> | undefined)?.resources as Record<string, unknown> | undefined)
@@ -291,6 +312,7 @@ export function checkStack(text: string, groupDir: string, quota: Quota, opts: C
     unknown
   >;
   const declaredVolumes = new Set(Object.keys(volumes));
+  const declaredConfigs = checkConfigs(top, errors);
   for (const [name, v] of Object.entries(volumes)) {
     if (!/^[a-z0-9][a-z0-9_.-]{0,62}$/.test(name))
       errors.push(`volume name ${name} must be lowercase letters, digits, ., - or _`);
@@ -352,6 +374,24 @@ export function checkStack(text: string, groupDir: string, quota: Quota, opts: C
       else if (name && !declaredVolumes.has(name))
         errors.push(`${svcName}: volume ${name} is not declared under top-level volumes`);
     }
+    const cfgs = svc.configs ?? [];
+    if (!Array.isArray(cfgs)) errors.push(`${svcName}: configs must be a list`);
+    for (const c of Array.isArray(cfgs) ? cfgs : []) {
+      const o = c && typeof c === 'object' ? (c as Record<string, unknown>) : null;
+      if (!o || typeof o.source !== 'string' || !declaredConfigs.has(o.source))
+        errors.push(`${svcName}: configs entries name a config defined at the top level`);
+      else if (o.target !== undefined && (typeof o.target !== 'string' || !o.target.startsWith('/')))
+        errors.push(`${svcName}: config ${o.source} target must be an absolute path in the container`);
+      else if (Object.keys(o).some((k) => !['source', 'target', 'mode'].includes(k)))
+        errors.push(`${svcName}: config ${o.source} takes only source, target and mode`);
+    }
+    const aliases = svc['x-nanoclaw-aliases'];
+    if (
+      aliases !== undefined &&
+      (!Array.isArray(aliases) ||
+        !aliases.every((a) => typeof a === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$/.test(a)))
+    )
+      errors.push(`${svcName}: x-nanoclaw-aliases must be a list of host names`);
     const labels = svc.labels;
     const labelNames = Array.isArray(labels)
       ? labels.map((l) => String(l).split('=')[0])
@@ -399,7 +439,11 @@ export function checkStack(text: string, groupDir: string, quota: Quota, opts: C
   return {
     ok: true,
     stack: {
-      compose: { services: out, ...(declaredVolumes.size ? { volumes } : {}) },
+      compose: {
+        services: out,
+        ...(declaredVolumes.size ? { volumes } : {}),
+        ...(declaredConfigs.size ? { configs: top.configs as Record<string, unknown> } : {}),
+      },
       limits,
       total,
     },

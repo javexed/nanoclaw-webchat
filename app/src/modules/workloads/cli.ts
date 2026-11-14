@@ -248,6 +248,7 @@ registerResource({
           total: r.stack.total,
           replaces: Boolean(r.existing),
           where: r.placement.node === 'local' ? `central (${r.placement.reason})` : r.placement.reason,
+          ...(r.translated.length ? { translated: r.translated } : {}),
           // Whether `redeploy` would run without a card.
           redeploy_needs_card:
             !r.existing ||
@@ -336,6 +337,7 @@ registerResource({
           ...(c.existing
             ? []
             : [`Where: ${c.placement.node === 'local' ? `central — ${c.placement.reason}` : c.placement.reason}`]),
+          ...(c.translated.length ? ['Translated:', ...c.translated.map((n) => `• ${n}`)] : []),
         ];
         const verb = c.existing ? 'update' : 'deploy';
         if (!pub || !route)
