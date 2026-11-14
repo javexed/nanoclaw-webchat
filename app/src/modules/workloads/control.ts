@@ -106,6 +106,23 @@ function readCompose(dir: string, file: string): string {
 const hasBuild = (stack: CheckedStack): boolean =>
   Object.values(stack.compose.services).some((svc) => svc.build !== undefined);
 
+/**
+ * Whether a stack already on a worker may be checked or redeployed there.
+ * It keeps the memory it already has, so only growth needs room: a worker
+ * that other software has since crowded (its share shrinks as that software
+ * grows) must not refuse a same-size redeploy of what it already runs.
+ */
+export function roomShortfall(
+  name: string,
+  worker: string,
+  freeMemMb: number,
+  wantMb: number,
+  approvedMb: number,
+): string | null {
+  if (wantMb <= approvedMb || freeMemMb >= wantMb) return null;
+  return `${name}'s worker ${worker} has ${Math.max(0, freeMemMb)} MB free for it, and this asks for ${wantMb} MB`;
+}
+
 export interface Checked {
   text: string;
   stack: CheckedStack;
@@ -174,10 +191,14 @@ export async function checkWorkload(
     );
     if (!room)
       throw new Error(`${name} runs on a worker that is not connected now (${existing.node}); try again later`);
-    if (room.freeMemMb < r.stack.total.memoryMb)
-      throw new Error(
-        `${name}'s worker ${room.machine.name} has ${room.freeMemMb} MB free for it, and this asks for ${r.stack.total.memoryMb} MB`,
-      );
+    const full = roomShortfall(
+      name,
+      room.machine.name,
+      room.freeMemMb,
+      r.stack.total.memoryMb,
+      existing.approvedMemoryMb,
+    );
+    if (full) throw new Error(full);
   }
   const shape = await stackShape(dir, r.stack, resolver, approved);
   // The pin covers what runs: the translated file, so an included file or .env changed later needs a new card.
