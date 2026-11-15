@@ -371,8 +371,7 @@ export async function applyImport(bundleDir: string, opts: { name?: string } = {
     for (const { name: mcpName, found } of preview.mcpServers) {
       if (!found) continue;
       const s = (await db.get(`SELECT id FROM webchat_mcp_servers WHERE name = ?`, mcpName)) as
-        | { id: string }
-        | undefined;
+        { id: string } | undefined;
       if (!s) continue;
       await db.run(
         `INSERT INTO webchat_agent_mcp_servers (agent_group_id, mcp_server_id, assigned_at)

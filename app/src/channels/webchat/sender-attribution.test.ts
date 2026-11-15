@@ -107,8 +107,7 @@ describe('sender attribution — with threading (exact)', () => {
     // id over the heuristic. lookupAgentForMessage is module-internal, so
     // we recreate its query inline to validate the contract.
     const ag = (await getDb().get('SELECT id, name, folder FROM agent_groups WHERE id = ?', 'ag-alpha')) as
-      | { id: string; name: string; folder: string }
-      | undefined;
+      { id: string; name: string; folder: string } | undefined;
     expect(ag?.id).toBe('ag-alpha');
     expect(ag?.name).toBe('Alpha Agent');
     // Critically, this is NOT the agent the heuristic would have picked.

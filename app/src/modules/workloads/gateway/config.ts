@@ -30,9 +30,7 @@ export interface GatewayConfig {
 }
 
 export type GatewaySettings =
-  | { on: false }
-  | { on: true; ok: true; cfg: GatewayConfig }
-  | { on: true; ok: false; reason: string };
+  { on: false } | { on: true; ok: true; cfg: GatewayConfig } | { on: true; ok: false; reason: string };
 
 const port = (v: string | undefined): number | null => {
   const n = Number(v);

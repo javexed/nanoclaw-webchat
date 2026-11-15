@@ -66,8 +66,7 @@ export interface LimitRetry {
 }
 
 export type ScheduleResult =
-  | { ok: true; retry: LimitRetry }
-  | { ok: false; status: 404 | 409; error: string; retry?: LimitRetry };
+  { ok: true; retry: LimitRetry } | { ok: false; status: 404 | 409; error: string; retry?: LimitRetry };
 
 async function pendingFor(roomId: string, threadId: string): Promise<LimitRetry | undefined> {
   return (await getDb().get(
@@ -250,8 +249,7 @@ async function restore(r: LimitRetry): Promise<void> {
 
 async function sendOne(r: LimitRetry, hand: Inbound): Promise<boolean> {
   const claimed = (await getDb().run(`DELETE FROM webchat_limit_retries WHERE id = ?`, r.id)) as
-    | { changes?: number }
-    | undefined;
+    { changes?: number } | undefined;
   if (!claimed?.changes) return false;
   let stored: Awaited<ReturnType<typeof storeWebchatMessage>>;
   try {

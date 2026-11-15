@@ -204,17 +204,15 @@ const GUARDED_FILES: readonly GuardedFile[] = [
     kind: 'file',
     containerPath: '/home/node/.codex/AGENTS.override.md',
   },
-  ...(['CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', 'AGENTS.override.md'] as const).map(
-    (name): GuardedFile => ({
-      id: `session-${name.replace(/\./g, '-').toLowerCase()}`,
-      label: `\`/workspace/${name}\` (session folder)`,
-      base: 'session',
-      segments: [],
-      name,
-      kind: 'file',
-      containerPath: `/workspace/${name}`,
-    }),
-  ),
+  ...(['CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', 'AGENTS.override.md'] as const).map((name): GuardedFile => ({
+    id: `session-${name.replace(/\./g, '-').toLowerCase()}`,
+    label: `\`/workspace/${name}\` (session folder)`,
+    base: 'session',
+    segments: [],
+    name,
+    kind: 'file',
+    containerPath: `/workspace/${name}`,
+  })),
   {
     id: 'session-claude-dir',
     label: '`/workspace/.claude/` (session folder)',

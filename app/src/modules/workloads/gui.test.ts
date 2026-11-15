@@ -8,12 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const cards = vi.hoisted(() => ({
   requests: [] as Array<{ action: string; payload: Record<string, unknown>; title: string; question: string }>,
   handler: null as
-    | null
-    | ((ctx: { payload: Record<string, unknown>; outcome: string; userId: string }) => Promise<void>),
+    null | ((ctx: { payload: Record<string, unknown>; outcome: string; userId: string }) => Promise<void>),
   /** Docker Hub for builds' handler (BUILD_REGISTRIES_ACTION). */
   registries: null as
-    | null
-    | ((ctx: { payload: Record<string, unknown>; outcome: string; userId: string }) => Promise<void>),
+    null | ((ctx: { payload: Record<string, unknown>; outcome: string; userId: string }) => Promise<void>),
   answer: 'appr-1' as string | null,
 }));
 vi.mock('../approvals/sessionless.js', () => ({

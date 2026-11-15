@@ -9,8 +9,7 @@ import { getDb } from '../../db/connection.js';
 export async function getLearningMasterEnabled(): Promise<boolean> {
   try {
     const row = (await getDb().get(`SELECT enabled FROM learning_master WHERE id = 1`)) as
-      | { enabled: number }
-      | undefined;
+      { enabled: number } | undefined;
     return row ? row.enabled === 1 : true; // default on when unset
   } catch {
     return true;

@@ -57,8 +57,7 @@ function readSnapshot(group: AgentGroup, session: Session): RunnerSnapshot | und
   const db = openOutboundDb(group.id, session.id);
   try {
     const row = db.prepare('SELECT value FROM session_state WHERE key = ?').get(CONTEXT_SNAPSHOT_KEY) as
-      | { value: string }
-      | undefined;
+      { value: string } | undefined;
     return row ? (JSON.parse(row.value) as RunnerSnapshot) : undefined;
   } catch {
     // No session_state table yet, or a runner that predates the snapshot.

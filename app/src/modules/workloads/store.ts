@@ -207,8 +207,7 @@ export async function updateWorkload(
 export async function networkRow(agentGroupId: string): Promise<{ idx: number; network: string } | null> {
   if (!(await workloadsReady())) return null;
   const r = (await getDb().get(`SELECT idx, network FROM workload_networks WHERE agent_group_id = ?`, agentGroupId)) as
-    | { idx: number; network: string }
-    | undefined;
+    { idx: number; network: string } | undefined;
   return r ?? null;
 }
 
@@ -342,8 +341,7 @@ const pinsReady = async (): Promise<boolean> => hasTable(getDb(), 'workload_pins
 export async function pinFor(agentGroupId: string): Promise<string | null> {
   if (!(await pinsReady())) return null;
   const r = (await getDb().get(`SELECT node FROM workload_pins WHERE agent_group_id = ?`, agentGroupId)) as
-    | { node: string }
-    | undefined;
+    { node: string } | undefined;
   return r?.node ?? null;
 }
 

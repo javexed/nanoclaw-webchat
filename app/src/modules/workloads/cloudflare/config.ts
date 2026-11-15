@@ -36,9 +36,7 @@ export interface CloudflareConfig extends EdgeConfig {
 }
 
 export type CloudflareSettings =
-  | { on: false }
-  | { on: true; ok: true; cfg: CloudflareConfig }
-  | { on: true; ok: false; reason: string };
+  { on: false } | { on: true; ok: true; cfg: CloudflareConfig } | { on: true; ok: false; reason: string };
 
 /** NanoClaw's own names, as the settings give them: its public URL and allowed hosts. */
 export function ownHostNames(env: NodeJS.ProcessEnv = process.env): string[] {

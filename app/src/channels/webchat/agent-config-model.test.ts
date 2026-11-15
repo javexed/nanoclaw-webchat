@@ -57,8 +57,7 @@ describe('PUT /api/agents/:id/config-model', () => {
   const stored = async (id: string) =>
     (
       (await conn.getDb().get(`SELECT model FROM container_configs WHERE agent_group_id = ?`, id)) as
-        | { model: string | null }
-        | undefined
+        { model: string | null } | undefined
     )?.model ?? null;
 
   it('a scoped admin may pin a model on an agent they administer', async () => {

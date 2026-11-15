@@ -181,8 +181,7 @@ describe('ensureOwnerRoleOnFirstLogin', () => {
     await runMigrations(getDb());
     await ensureOwnerRoleOnFirstLogin('webchat:alice');
     const row = (await getDb().get(`SELECT kind FROM users WHERE id = ?`, 'webchat:alice')) as
-      | { kind: string }
-      | undefined;
+      { kind: string } | undefined;
     expect(row?.kind).toBe('webchat');
   });
 });

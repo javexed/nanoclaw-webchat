@@ -143,8 +143,7 @@ export function beginLogin(opts: { redirectUri: string; linkFrom?: string; now?:
 }
 
 export type LoginResult =
-  | { ok: true; identity: OidcIdentity; linkFrom?: string }
-  | { ok: false; reason: string; detail?: string };
+  { ok: true; identity: OidcIdentity; linkFrom?: string } | { ok: false; reason: string; detail?: string };
 
 /**
  * Finish a sign-in: exchange the code, verify the id token and its nonce.

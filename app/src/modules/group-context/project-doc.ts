@@ -28,14 +28,7 @@ import { providerProvidesAgentSurfaces } from '../../providers/provider-containe
 import type { AgentGroup } from '../../types.js';
 
 export type SourceStatus =
-  | 'included'
-  | 'truncated'
-  | 'dropped'
-  | 'excluded'
-  | 'empty'
-  | 'shadowed'
-  | 'on-demand'
-  | 'not-measured';
+  'included' | 'truncated' | 'dropped' | 'excluded' | 'empty' | 'shadowed' | 'on-demand' | 'not-measured';
 
 /** Where a source lands. Only `project-doc`, `system-prompt` and `memory` are always in context. */
 export type SourceLayer = 'project-doc' | 'system-prompt' | 'memory' | 'provider' | 'on-demand';
