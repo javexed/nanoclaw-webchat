@@ -1,16 +1,16 @@
 diff --git a/src/modules/approvals/response-handler.ts b/src/modules/approvals/response-handler.ts
-index 066eb02e..d35a8e7c 100644
+index 5666231f..d258a470 100644
 --- a/src/modules/approvals/response-handler.ts
 +++ b/src/modules/approvals/response-handler.ts
-@@ -21,6 +21,7 @@ import {
+@@ -22,6 +22,7 @@ import {
    transitionPendingApprovalStatus,
  } from '../../db/sessions.js';
- import type { ResponsePayload } from '../../response-registry.js';
+ import type { ResponseOutcome, ResponsePayload } from '../../response-registry.js';
 +import { audit } from '../../audit.js';
  import { log } from '../../log.js';
  import { writeSessionMessage } from '../../session-manager.js';
  import type { PendingApproval } from '../../types.js';
-@@ -28,6 +29,39 @@ import { hasAdminPrivilege, isGlobalAdmin, isOwner } from '../permissions/db/use
+@@ -29,6 +30,39 @@ import { hasAdminPrivilege, isGlobalAdmin, isOwner } from '../permissions/db/use
  import { finalizeReject } from './finalize.js';
  import { getApprovalHandler, notifyApprovalResolved, REJECT_WITH_REASON_VALUE } from './primitive.js';
  import { armReasonCapture } from './reason-capture.js';
@@ -48,33 +48,36 @@ index 066eb02e..d35a8e7c 100644
 +  }
 +}
  
- export async function handleApprovalsResponse(payload: ResponsePayload): Promise<boolean> {
+ export async function handleApprovalsResponse(payload: ResponsePayload): Promise<ResponseOutcome | false> {
    const approval = await getPendingApproval(payload.questionId);
-@@ -53,6 +87,10 @@ async function handleRegisteredApproval(
-   userId: string,
- ): Promise<void> {
+@@ -55,6 +89,13 @@ async function handleRegisteredApproval(
+ ): Promise<ResponseOutcome> {
+   // The session that asked is gone: so is the request.
    if (!approval.session_id) {
 +    // Session-less rows (runner pairing) belong to the sibling primitive in
 +    // sessionless.ts — same card, same approvers, no agent session behind it.
 +    // Rows no module claims are dropped exactly as before.
-+    if (await resolveSessionlessApproval(approval, selectedOption, userId)) return;
++    if (await resolveSessionlessApproval(approval, selectedOption, userId)) {
++      accepted?.();
++      return 'accepted';
++    }
      await deletePendingApproval(approval.approval_id);
-     return;
+     return 'closed';
    }
-@@ -79,6 +117,12 @@ async function handleRegisteredApproval(
-   if (!(await transitionPendingApprovalStatus(approval.approval_id, 'pending', 'approved'))) return;
+@@ -82,6 +123,12 @@ async function handleRegisteredApproval(
+   accepted?.();
  
    // Approved — dispatch to the module that registered for this action.
 +  //
 +  // Claim in-process first (double-click / concurrent-delivery guard). The row
 +  // itself is deleted AFTER the handler (releaseApproval) so the approved
 +  // replay's guard liveness check still sees it — see the claimApproval note.
-+  if (!claimApproval(approval.approval_id)) return;
++  if (!claimApproval(approval.approval_id)) return 'ignored';
 +
    const notify = (text: string): Promise<void> =>
      writeSessionMessage(session.agent_group_id, session.id, {
        id: `appr-note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-@@ -97,7 +141,7 @@ async function handleRegisteredApproval(
+@@ -100,7 +147,7 @@ async function handleRegisteredApproval(
        action: approval.action,
      });
      await notify(`Your ${approval.action} was approved, but no handler is installed to apply it.`);
@@ -82,8 +85,8 @@ index 066eb02e..d35a8e7c 100644
 +    await releaseApproval(approval.approval_id);
      await notifyApprovalResolved({ approval, session, outcome: 'approve', userId });
      await requestWake(session, 'approval-response');
-     return;
-@@ -112,25 +156,88 @@ async function handleRegisteredApproval(
+     return 'accepted';
+@@ -115,26 +162,89 @@ async function handleRegisteredApproval(
      await notify(
        `Your ${approval.action} was approved, but applying it failed: ${err instanceof Error ? err.message : String(err)}.`,
      );
@@ -96,6 +99,7 @@ index 066eb02e..d35a8e7c 100644
 -  await deletePendingApproval(approval.approval_id);
    await notifyApprovalResolved({ approval, session, outcome: 'approve', userId });
    await requestWake(session, 'approval-response');
+   return 'accepted';
  }
  
 +/**

@@ -16,7 +16,7 @@
 #   scripts/regen-patches.sh <composed-tree> <file> ...
 
 
-## UPSTREAMABLE — candidate upstream PRs (75)
+## UPSTREAMABLE — candidate upstream PRs (76)
 
 .claude/skills/add-onecli/scripts/setup.ts
     keep OneCLI's management API and Postgres off the docker bridge on Linux.
@@ -102,6 +102,9 @@ container/agent-runner/src/upload-trace.test.ts
     abort signal so the test loop is stoppable
 pnpm-workspace.yaml
     dependency policy tweaks
+scripts/add-resend-steps.test.ts
+    give the throwaway root a .git, so the gitless-deploy fallback in
+    skill-apply.ts does not replace the stubbed git (rides with that patch)
 scripts/skill-apply.test.ts
     tests for masking + gitless fallback; scratch dirs removed in afterAll
 scripts/skill-apply.ts
