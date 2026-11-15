@@ -2645,7 +2645,7 @@ async function rejectWithReason(
     hooks.onAction(pending.approval_id, 'reject', userId);
     return json(res, 200, { ok: true });
   }
-  if (!(await finalizeReject(pending, session, userId, reason))) {
+  if (!(await finalizeReject(pending, session, userId, { reason }))) {
     return json(res, 404, { error: 'Approval not found or already resolved' });
   }
   return json(res, 200, { ok: true });

@@ -137,7 +137,6 @@ src/agent-image-freshness.ts
 src/agent-image-freshness.test.ts
 src/container-runner.stop-once.test.ts
 src/reconcile-session.ceiling.test.ts
-src/drivers/docker-driver.removal.test.ts
 deploy/onecli-private-ports.sh
 scripts/onecli-private-ports.test.ts
 src/channels/webchat/ws-room-access.test.ts
