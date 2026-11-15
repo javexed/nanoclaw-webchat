@@ -153,7 +153,10 @@ function createAdapter(): ChannelAdapter {
       server = await startWebchatServer({
         onInbound,
         onAction: (questionId, selectedOption, userId) => {
-          config.onAction(questionId, selectedOption, userId);
+          // The host now resolves with what it did; the webchat route answers the clicker itself.
+          Promise.resolve(config.onAction(questionId, selectedOption, userId)).catch((err: unknown) =>
+            log.error('Webchat card action failed', { questionId, err }),
+          );
         },
       });
       log.info('Webchat channel listening', { host: server.host, port: server.port, tls: server.tls });
