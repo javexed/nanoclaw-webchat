@@ -123,7 +123,9 @@ export async function sweepExpiredApprovals(now = Date.now()): Promise<number> {
         // gateway coordinator owns their lifecycle and does its own expiry.
         done =
           approval.action === GATEWAY_ACTION
-            ? await finalizeReject(approval, session, EXPIRY_USER, `no response within ${ttlWords()} — expired`)
+            ? await finalizeReject(approval, session, EXPIRY_USER, {
+                reason: `no response within ${ttlWords()} — expired`,
+              })
             : await expireApproval(approval, session);
       }
       if (!done) continue;

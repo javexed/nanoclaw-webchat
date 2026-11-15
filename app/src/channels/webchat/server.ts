@@ -2645,7 +2645,7 @@ async function rejectWithReason(
     hooks.onAction(pending.approval_id, 'reject', userId);
     return json(res, 200, { ok: true });
   }
-  if (!(await finalizeReject(pending, session, userId, reason))) {
+  if (!(await finalizeReject(pending, session, userId, { reason }))) {
     return json(res, 404, { error: 'Approval not found or already resolved' });
   }
   return json(res, 200, { ok: true });
@@ -3770,8 +3770,7 @@ async function pushSubscribe(req: IncomingMessage, res: ServerResponse, userId: 
 
   // Prevent identity-hijack on known endpoints.
   const existing = (await db.get(`SELECT identity FROM webchat_push_subscriptions WHERE endpoint = ?`, endpoint)) as
-    | { identity: string }
-    | undefined;
+    { identity: string } | undefined;
   if (existing && existing.identity !== userId) {
     log.warn('Webchat push subscribe rejected — endpoint owned by different identity', {
       identity: userId,

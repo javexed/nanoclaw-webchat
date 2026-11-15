@@ -32,9 +32,8 @@ registerSessionPrepareHook(async (agentGroupId) => {
 });
 
 // Only for an agent with a key: the view and socket are mounted only then.
-registerContainerEnvResolver(
-  (agentGroupId): Record<string, string> =>
-    listStored(agentGroupId).length ? { SSH_AUTH_SOCK: `${CONTAINER_SSH_DIR}/agent.sock` } : {},
+registerContainerEnvResolver((agentGroupId): Record<string, string> =>
+  listStored(agentGroupId).length ? { SSH_AUTH_SOCK: `${CONTAINER_SSH_DIR}/agent.sock` } : {},
 );
 
 /**

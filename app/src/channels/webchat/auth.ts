@@ -338,8 +338,7 @@ export type OidcFailure =
   | 'no-identity';
 
 export type OidcResult =
-  | { ok: true; identity: OidcIdentity }
-  | { ok: false; reason: OidcFailure; expiredForS?: number };
+  { ok: true; identity: OidcIdentity } | { ok: false; reason: OidcFailure; expiredForS?: number };
 
 /**
  * Verify signature + iss/aud/exp/nbf, and say WHY when it fails. `nonce`, when

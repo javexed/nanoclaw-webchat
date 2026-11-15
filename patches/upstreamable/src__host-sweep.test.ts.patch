@@ -1,5 +1,5 @@
 diff --git a/src/host-sweep.test.ts b/src/host-sweep.test.ts
-index bacbbb9a..695c6529 100644
+index bacbbb9a..8275ce8f 100644
 --- a/src/host-sweep.test.ts
 +++ b/src/host-sweep.test.ts
 @@ -19,6 +19,8 @@ import {
@@ -11,7 +11,7 @@ index bacbbb9a..695c6529 100644
    shouldCloseTaskSession,
  } from './host-sweep.js';
  import type { Session } from './types.js';
-@@ -295,6 +297,80 @@ describe('deleteOrphanProcessingClaims', () => {
+@@ -295,6 +297,79 @@ describe('deleteOrphanProcessingClaims', () => {
    });
  });
  
@@ -28,8 +28,7 @@ index bacbbb9a..695c6529 100644
 +  }
 +  const healRow = (db: Database.Database) => {
 +    const r = db.prepare("SELECT value FROM session_state WHERE key = '_ceiling_heal'").get() as
-+      | { value: string }
-+      | undefined;
++      { value: string } | undefined;
 +    return r ? (JSON.parse(r.value) as { lastMaxOut: number; streak: number; incarnation?: string }) : undefined;
 +  };
 +  const hasContinuation = (db: Database.Database) =>
@@ -92,7 +91,7 @@ index bacbbb9a..695c6529 100644
  describe('resetStuckProcessingRows — orphan claim cleanup', () => {
    it('deletes orphan processing_ack rows so next sweep tick does not see them', () => {
      const { inDb, outDb } = makeSessionDbs();
-@@ -353,6 +429,47 @@ describe('resetStuckProcessingRows — orphan claim cleanup', () => {
+@@ -353,6 +428,47 @@ describe('resetStuckProcessingRows — orphan claim cleanup', () => {
    });
  });
  

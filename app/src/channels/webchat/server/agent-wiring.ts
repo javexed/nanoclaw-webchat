@@ -129,8 +129,7 @@ export async function wireAgentToWebchatRoom(
       agentGroupId,
     )) as { id: string; folder: string }[];
     const newAgent = (await getDb().get(`SELECT folder FROM agent_groups WHERE id = ?`, agentGroupId)) as
-      | { folder: string }
-      | undefined;
+      { folder: string } | undefined;
     const touched = new Set<string>([agentGroupId]);
     for (const peer of peers) {
       await ensureA2aDestination(agentGroupId, peer.id, peer.folder);

@@ -331,8 +331,7 @@ export async function getTraceForMessage(roomId: string, messageId: string): Pro
 /** The room a stored message belongs to, or null when there is no such message. */
 export async function getMessageRoomId(messageId: string): Promise<string | null> {
   const row = (await getDb().get(`SELECT room_id FROM webchat_messages WHERE id = ?`, messageId)) as
-    | { room_id: string }
-    | undefined;
+    { room_id: string } | undefined;
   return row?.room_id ?? null;
 }
 
@@ -363,8 +362,7 @@ export async function pruneTurnTraces(now = Date.now()): Promise<number> {
   if (days === 0) return 0;
   if (!(await hasTable(getDb(), 'webchat_turn_traces'))) return 0;
   const res = (await getDb().run(`DELETE FROM webchat_turn_traces WHERE started_at < ?`, now - days * DAY_MS)) as
-    | { changes?: number }
-    | undefined;
+    { changes?: number } | undefined;
   return res?.changes ?? 0;
 }
 

@@ -1,5 +1,5 @@
 diff --git a/src/templates/local-dir.ts b/src/templates/local-dir.ts
-index 2991fc06..023ef731 100644
+index 2991fc06..c692caa4 100644
 --- a/src/templates/local-dir.ts
 +++ b/src/templates/local-dir.ts
 @@ -45,3 +45,90 @@ export function resolveLocalTemplate(ref: string, base: string = TEMPLATES_DIR):
@@ -24,7 +24,7 @@ index 2991fc06..023ef731 100644
 +/** True when `ref` equals or sits anywhere below a discovered template ref. */
 +function isWithinTemplate(ref: string, templateRefs: Set<string>): boolean {
 +  if (templateRefs.has('.')) return true;
-+  for (let current = ref; ; ) {
++  for (let current = ref; ;) {
 +    if (templateRefs.has(current)) return true;
 +    const cut = current.lastIndexOf('/');
 +    if (cut === -1) return false;

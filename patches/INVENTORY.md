@@ -16,7 +16,7 @@
 #   scripts/regen-patches.sh <composed-tree> <file> ...
 
 
-## UPSTREAMABLE — candidate upstream PRs (75)
+## UPSTREAMABLE — candidate upstream PRs (77)
 
 .claude/skills/add-onecli/scripts/setup.ts
     keep OneCLI's management API and Postgres off the docker bridge on Linux.
@@ -54,6 +54,10 @@ container/agent-runner/package.json
     no minimumReleaseAge policy, so a caret held only by bun.lock lets one
     non-frozen install float the SDK; upstream's CLAUDE.md already says to bump
     it deliberately. No lockfile change.
+src/channels/chat-sdk-bridge.ts
+    the Discord Gateway's loopback webhook server ends idle keep-alive sockets
+    itself (1 s), so an idle client socket never outlives its test and
+    trips Node's bundled-undici parser-timer crash on slower suites
 src/delivery.ts
     a busy SQLite lock on a session mailbox read skips that session for one poll (warned once a minute) instead of logging an error; see app/src/mailbox-busy.ts
 src/providers/provider-container-registry.ts
@@ -102,6 +106,9 @@ container/agent-runner/src/upload-trace.test.ts
     abort signal so the test loop is stoppable
 pnpm-workspace.yaml
     dependency policy tweaks
+scripts/add-resend-steps.test.ts
+    give the throwaway root a .git, so the gitless-deploy fallback in
+    skill-apply.ts does not replace the stubbed git (rides with that patch)
 scripts/skill-apply.test.ts
     tests for masking + gitless fallback; scratch dirs removed in afterAll
 scripts/skill-apply.ts

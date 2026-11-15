@@ -159,8 +159,7 @@ export type LinkRefusal = 'same' | 'has-roles' | 'has-links' | 'already-linked-e
 async function userCreatedAt(userId: string): Promise<string | null> {
   if (!(await hasTable(getDb(), 'users'))) return null;
   const row = (await getDb().get(`SELECT created_at FROM users WHERE id = ?`, userId)) as
-    | { created_at: string }
-    | undefined;
+    { created_at: string } | undefined;
   return row?.created_at ?? null;
 }
 

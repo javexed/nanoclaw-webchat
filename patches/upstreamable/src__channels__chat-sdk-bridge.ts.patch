@@ -1,0 +1,14 @@
+diff --git a/src/channels/chat-sdk-bridge.ts b/src/channels/chat-sdk-bridge.ts
+index 45f18604..9e6e4e55 100644
+--- a/src/channels/chat-sdk-bridge.ts
++++ b/src/channels/chat-sdk-bridge.ts
+@@ -1442,6 +1442,9 @@ function startLocalWebhookServer(
+       });
+     });
+ 
++    // The loopback caller reuses its connection; end an idle one from this side
++    // well before the client's own keep-alive timer would.
++    server.keepAliveTimeout = 1_000;
+     server.listen(0, '127.0.0.1', () => {
+       const addr = server.address() as { port: number };
+       const url = `http://127.0.0.1:${addr.port}/webhook`;

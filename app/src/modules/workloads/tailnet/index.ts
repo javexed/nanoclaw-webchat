@@ -128,13 +128,11 @@ async function computeStatus(force = false): Promise<TailnetStatus> {
     );
   const now = x.now();
   if (force || !vault || now - vault.at >= VAULT_EVERY_MS || !vault.r.ok) {
-    const r = await checkVault(x.admin).catch(
-      (err: unknown): VaultCheck => ({
-        ok: false,
-        missing: `OneCLI could not be asked: ${String((err as Error).message ?? err).slice(0, 200)}`,
-        warnings: [],
-      }),
-    );
+    const r = await checkVault(x.admin).catch((err: unknown): VaultCheck => ({
+      ok: false,
+      missing: `OneCLI could not be asked: ${String((err as Error).message ?? err).slice(0, 200)}`,
+      warnings: [],
+    }));
     vault = { at: now, r };
   }
   const warnings = [...vault.r.warnings];

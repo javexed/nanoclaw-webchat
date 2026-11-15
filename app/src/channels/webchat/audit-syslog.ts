@@ -77,7 +77,7 @@ const FACILITY_LOG_AUDIT = 13;
 
 /** RFC 5424 severity from the event's outcome. */
 export function severityFor(event: AuditEvent): number {
-  return event.effect === 'deny' || event.effect === 'failed' ? 4 /* warning */ : 6 /* informational */;
+  return event.effect === 'deny' || event.effect === 'failed' ? 4 /* warning */ : 6; /* informational */
 }
 
 /** One RFC 5424 message. MSGID is the event type, SD is nil, MSG the JSON line. */

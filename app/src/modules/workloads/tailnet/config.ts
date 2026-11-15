@@ -71,9 +71,7 @@ export function edgeSettings(
 }
 
 export type TailnetSettings =
-  | { on: false }
-  | { on: true; ok: true; cfg: TailnetConfig }
-  | { on: true; ok: false; reason: string };
+  { on: false } | { on: true; ok: true; cfg: TailnetConfig } | { on: true; ok: false; reason: string };
 
 export function tailnetSettings(get: (k: WorkloadEnvKey) => string | undefined = workloadSetting): TailnetSettings {
   if (get('NANOCLAW_WORKLOAD_TAILNET') !== '1') return { on: false };

@@ -51,8 +51,7 @@ describe('PUT /api/agents/:id/egress', () => {
   const stored = async (id: string) =>
     (
       (await conn.getDb().get(`SELECT egress FROM container_configs WHERE agent_group_id = ?`, id)) as
-        | { egress: string | null }
-        | undefined
+        { egress: string | null } | undefined
     )?.egress ?? null;
 
   it('a scoped admin may lock down an agent they administer', async () => {

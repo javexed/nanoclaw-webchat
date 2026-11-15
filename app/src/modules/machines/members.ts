@@ -168,8 +168,7 @@ export async function spendJoinToken(token: string, now = Date.now()): Promise<R
   if (typeof token !== 'string' || token.length < 20 || token.length > 200) return null;
   const h = hashToken(token);
   const row = (await getDb().get(`SELECT role FROM machine_join_tokens WHERE token_hash = ?`, h)) as
-    | { role: Role }
-    | undefined;
+    { role: Role } | undefined;
   if (!row) return null;
   const r = await getDb().run(
     `UPDATE machine_join_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?`,

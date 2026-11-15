@@ -808,8 +808,7 @@ export async function importRoomApplyHandler(req: IncomingMessage, res: ServerRe
  * agent (by id) or a new agent created inline.
  */
 export type AgentRef =
-  | { kind: 'existing'; id: string }
-  | { kind: 'new'; name: string; instructions?: string; provider?: string };
+  { kind: 'existing'; id: string } | { kind: 'new'; name: string; instructions?: string; provider?: string };
 
 export function parseAgentRef(raw: unknown): AgentRef | { error: string } {
   if (!raw || typeof raw !== 'object') return { error: 'Invalid agent reference' };
