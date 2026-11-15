@@ -131,6 +131,7 @@ describe('moduleWebchat migration', () => {
       'webchat-machine-members',
       'webchat-machines',
       'webchat-marketplace-toggle',
+      'webchat-mcp-approval-tools',
       'webchat-mcp-hardening',
       'webchat-mcp-servers',
       'webchat-message-fts',

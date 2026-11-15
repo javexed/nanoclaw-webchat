@@ -7,7 +7,16 @@ import { manageActive, manageTab } from './views-state.js';
 import AgentMcpList from './AgentMcpList.vue';
 import { agentMcpRows } from './agent-mcp-state.js';
 import McpList from './McpList.vue';
-import { agentMcpServers, allMcpServers, lastMcpProbe, lastMcpProbeToken, mcpAddInProgress, mcpAgentForAdd, mcpServers, selectedMcpId } from './mcp-list-state.js';
+import {
+  agentMcpServers,
+  allMcpServers,
+  lastMcpProbe,
+  lastMcpProbeToken,
+  mcpAddInProgress,
+  mcpAgentForAdd,
+  mcpServers,
+  selectedMcpId,
+} from './mcp-list-state.js';
 import { $ } from '../core/dom.js';
 import { mountIsland } from '../core/island.js';
 import { showConfirmModal } from './modals.js';
@@ -19,7 +28,15 @@ import McpSources from './McpSources.vue';
 import McpProbeTools from './McpProbeTools.vue';
 import McpHardening from './McpHardening.vue';
 import McpCatalog from './McpCatalog.vue';
-import { hardeningServer, mcpCatalog, mcpCatalogPhase, mcpCatalogQuery, mcpSources, oauthBusy, probeTools } from './mcp-panel-state.js';
+import {
+  hardeningServer,
+  mcpCatalog,
+  mcpCatalogPhase,
+  mcpCatalogQuery,
+  mcpSources,
+  oauthBusy,
+  probeTools,
+} from './mcp-panel-state.js';
 
 /** Supplied by provideMcpDeps in composition-root.ts. `any` marks a signature not
  *  yet typed, not an opt-out of checking. */
@@ -272,13 +289,13 @@ async function useMcpCatalogEntry(s?: any) {
     .replace(/^-+|-+$/g, '')
     .slice(0, 64);
   $<HTMLInputElement>('#mcp-create-name')!.value = shortName;
-  const transport = ($('#mcp-create-transport')!) as HTMLInputElement;
+  const transport = $('#mcp-create-transport')! as HTMLInputElement;
   if (s.kind === 'remote') {
     transport.value = 'http';
     transport.dispatchEvent(new Event('change'));
     $<HTMLInputElement>('#mcp-create-url')!.value = s.url || '';
     // The probe field is the one that proves it works before anything is saved.
-    const probeUrl = ($('#mcp-probe-url')) as HTMLInputElement;
+    const probeUrl = $('#mcp-probe-url') as HTMLInputElement;
     if (probeUrl) probeUrl.value = s.url || '';
   } else {
     transport.value = 'stdio';
@@ -286,10 +303,12 @@ async function useMcpCatalogEntry(s?: any) {
     $<HTMLInputElement>('#mcp-create-command')!.value = s.command || '';
     $<HTMLInputElement>('#mcp-create-args')!.value = (s.args || []).join(' ');
   }
-  const block = ($('#mcp-catalog-block')) as HTMLDetailsElement;
+  const block = $('#mcp-catalog-block') as HTMLDetailsElement;
   if (block) block.open = false;
   showToast(
-    s.kind === 'remote' ? `Filled in ${shortName} — probe it, then add` : `Filled in ${shortName} — review the command, then add`,
+    s.kind === 'remote'
+      ? `Filled in ${shortName} — probe it, then add`
+      : `Filled in ${shortName} — review the command, then add`,
   );
   $('#mcp-create-name')!.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
@@ -391,9 +410,11 @@ function mountMcpHardening(): void {
         const server = hardeningServer.value;
         const listEl = $('#mcp-hardening .mcp-tools-list');
         if (!server || !listEl) return;
-        const boxes = [...listEl.querySelectorAll('input[type=checkbox]')] as HTMLInputElement[];
+        const boxes = [...listEl.querySelectorAll('input[data-tool]')] as HTMLInputElement[];
         const chosen = boxes.filter((b) => b.checked).map((b) => b.dataset.tool);
-        const body = { enabled: chosen.length === boxes.length ? null : chosen };
+        const cards = [...listEl.querySelectorAll('[data-approval][aria-checked="true"]')] as HTMLElement[];
+        const approval = cards.map((b) => b.dataset.approval);
+        const body = { enabled: chosen.length === boxes.length ? null : chosen, approval };
         try {
           await apiJson(`/api/mcp-servers/${encodeURIComponent(server.id)}/tools`, { method: 'PUT', body });
           showToast(body.enabled ? `${chosen.length} of ${boxes.length} tools enabled` : 'All tools enabled', {
@@ -539,7 +560,10 @@ function renderMcpProbeResults(probe?: any) {
   mountMcpProbeTools();
   // Suggest a name from the server's self-reported identity.
   if (!$<HTMLInputElement>('#mcp-probe-name')!.value && probe.serverName) {
-    $<HTMLInputElement>('#mcp-probe-name')!.value = probe.serverName.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+    $<HTMLInputElement>('#mcp-probe-name')!.value = probe.serverName
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '');
   }
   $('#mcp-probe-results')!.hidden = false;
 }
@@ -553,7 +577,10 @@ export async function createMcpServer(body?: any, btn?: any) {
     await fetchMcpServers();
     // If this create was launched from an agent's "+ Add new server", attach
     // it to that agent and return to its settings (mirrors the models picker).
-    await maybeAttachAfterMcpAdd(created.id || allMcpServers.value.find((s: any) => s.name === body.name)?.id, body.name);
+    await maybeAttachAfterMcpAdd(
+      created.id || allMcpServers.value.find((s: any) => s.name === body.name)?.id,
+      body.name,
+    );
   } catch (err: any) {
     showToast('Add failed: ' + (err.message || err), { kind: 'error' });
   } finally {
@@ -599,7 +626,7 @@ export function wireMcpPanel(): void {
   // Manual entry (Advanced).
   $<HTMLFormElement>('#mcp-create-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const transport = ($<HTMLSelectElement>('#mcp-create-transport')?.value ?? '');
+    const transport = $<HTMLSelectElement>('#mcp-create-transport')?.value ?? '';
     const body: Record<string, unknown> = {
       name: ($<HTMLInputElement>('#mcp-create-name')?.value ?? '').trim(),
       transport,

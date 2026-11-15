@@ -22,6 +22,7 @@ import {
   pinMcpToolSurface,
   setMcpServerAuth,
   setMcpServerDrift,
+  setMcpServerApprovalTools,
   setMcpServerEnabledTools,
   syncAgentMcpConfig,
   updateWebchatMcpServer,
@@ -182,6 +183,8 @@ export async function rMcpRepinPost(ctx: RouteCtx, m: RegExpMatchArray): Promise
 
 // Tool allowlist for a server (null/empty = all tools). Flows into each
 // assigned agent's container config → the SDK's allowedTools filter.
+// `approval` (optional): tools whose every call waits for an owner's card;
+// any at all sends the server through the relay (mcp-guard.ts).
 export async function rMcpToolsPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res } = ctx;
   const server = await getWebchatMcpServer(decodeURIComponent(m[1]));
@@ -189,13 +192,17 @@ export async function rMcpToolsPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
   let enabled: string[] | null = null;
+  let approval: string[] | null | undefined;
   try {
-    const b = JSON.parse(raw) as { enabled?: unknown };
+    const b = JSON.parse(raw) as { enabled?: unknown; approval?: unknown };
     if (Array.isArray(b.enabled)) enabled = b.enabled.map(String).slice(0, 500);
+    if (Array.isArray(b.approval)) approval = b.approval.map(String).slice(0, 500);
+    else if (b.approval === null) approval = null;
   } catch {
     return json(res, 400, { error: 'Invalid JSON' });
   }
   await setMcpServerEnabledTools(server.id, enabled && enabled.length ? enabled : null);
+  if (approval !== undefined) await setMcpServerApprovalTools(server.id, approval);
   const updated = (await getWebchatMcpServer(server.id))!;
   for (const gid of await getAgentsAssignedToMcpServer(server.id)) {
     await syncAgentMcpConfig(gid, updated, true);

@@ -28,6 +28,7 @@ import { pipeline, Readable } from 'stream';
 import { log } from '../../log.js';
 import { getDb } from '../../db/connection.js';
 import { effectiveAuthHeader, parseMcpAuth, refreshOAuthToken } from './mcp-auth.js';
+import { auditCall, decideAll, ensureMcpGuardHandlers, heldResult, toolCalls, type ToolCall } from './mcp-guard.js';
 import { getWebchatMcpServer, MCP_RELAY_PORT } from './mcp-registry.js';
 import { safeFetch } from './models.js';
 
@@ -97,6 +98,26 @@ export function relayTargetUrl(serverUrl: string, subPath: string, query: string
   return target.toString();
 }
 
+/** A JSON-RPC request larger than this is refused: MCP requests are far smaller. */
+const MAX_BODY = 4 * 1024 * 1024;
+
+function readBody(req: http.IncomingMessage, max: number): Promise<Buffer | null> {
+  return new Promise((resolve) => {
+    const parts: Buffer[] = [];
+    let n = 0;
+    req.on('data', (c: Buffer) => {
+      n += c.length;
+      if (n > max) {
+        req.destroy();
+        return resolve(null);
+      }
+      parts.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(parts)));
+    req.on('error', () => resolve(null));
+  });
+}
+
 async function handleRelay(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const url = req.url || '';
   for (const [prefix, route] of relayRoutes) {
@@ -144,6 +165,67 @@ async function handleRelay(req: http.IncomingMessage, res: http.ServerResponse):
 
   const hasBody = req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'DELETE';
 
+  // Every request body is a JSON-RPC POST, read whole (MCP requests are small)
+  // so its tool calls can be audited and, for tools that need approval, held
+  // (mcp-guard.ts). Fail closed: a body this relay cannot read as JSON is never
+  // forwarded, whatever its content type, because a laxer parser upstream
+  // could still find a tools/call in it that no one audited or held.
+  if (hasBody && req.method !== 'POST') {
+    res.writeHead(405).end('only GET, POST and DELETE go through the relay');
+    return;
+  }
+  let body: Buffer | null = null;
+  let calls: ToolCall[] = [];
+  let batch = false;
+  if (req.method === 'POST') {
+    body = await readBody(req, MAX_BODY);
+    if (!body) {
+      res.writeHead(413).end('request too large');
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body.toString('utf8'));
+    } catch {
+      res.writeHead(400).end('relay accepts JSON-RPC bodies only');
+      return;
+    }
+    batch = Array.isArray(parsed);
+    calls = toolCalls(parsed);
+  }
+  if (calls.length) {
+    const decided = await decideAll(assignment.agent_group_id, server, calls);
+    const blocked = decided.some((d) => d.decision === 'held' || d.decision === 'refused');
+    if (blocked) {
+      const results = calls.map((c, i) => {
+        const d = decided[i]!;
+        const ran = d.decision === 'allow' || d.decision === 'approved';
+        auditCall(assignment.agent_group_id, server, c, ran ? 'not run (batch held)' : d.decision);
+        return heldResult(
+          c.id,
+          d.note ?? `${c.name} was not run: it was sent together with a call that needs an owner's approval.`,
+        );
+      });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(batch ? results : results[0]));
+      return;
+    }
+    // Audited once, when the response ends — or is cut off (a client leaving
+    // mid-stream fires only 'close'): the call reached upstream either way.
+    let audited = false;
+    const auditOnce = (): void => {
+      if (audited) return;
+      audited = true;
+      const cut = res.writableFinished ? '' : ', cut off';
+      for (const [i, c] of calls.entries()) {
+        const how = decided[i]!.decision === 'approved' ? 'approved, ' : '';
+        auditCall(assignment.agent_group_id, server, c, `${how}http ${res.statusCode}${cut}`);
+      }
+    };
+    res.on('finish', auditOnce);
+    res.on('close', auditOnce);
+  }
+
   // safeFetch: the SSRF gate runs on the target, and a redirect is refused
   // rather than followed, so the credential never reaches a host the server
   // points it at. Never the router's master key either.
@@ -156,7 +238,7 @@ async function handleRelay(req: http.IncomingMessage, res: http.ServerResponse):
       {
         method: req.method,
         headers,
-        ...(hasBody ? { body: Readable.toWeb(req) as unknown as RequestInit['body'], duplex: 'half' } : {}),
+        ...(body ? { body } : {}), // every body was read whole above
         signal: AbortSignal.any([gone.signal, AbortSignal.timeout(10 * 60 * 1000)]), // long-poll friendly
       } as RequestInit,
       { redirects: 'refuse', routerAuth: false },
@@ -165,7 +247,8 @@ async function handleRelay(req: http.IncomingMessage, res: http.ServerResponse):
   try {
     let upstream = await forward();
     // One retry on 401 with a fresh OAuth token — the classic mid-stream expiry.
-    if (upstream.status === 401 && !hasBody) {
+    // Every body is read whole, so it can be sent again.
+    if (upstream.status === 401) {
       const auth = parseMcpAuth(server);
       if (auth?.kind === 'oauth' && auth.refresh_token) {
         const refreshed = await refreshOAuthToken(server.id, auth);
@@ -241,6 +324,7 @@ export function resolveRelayBindHost(explicit: string | undefined, bridgeIp: str
 }
 
 export function startMcpRelay(): void {
+  ensureMcpGuardHandlers();
   // Exec-relayed agents have no network: central's process dials the relay
   // for them, on loopback — whether or not a docker bridge is discoverable
   // (Node does not list a bridge with nothing attached to it).

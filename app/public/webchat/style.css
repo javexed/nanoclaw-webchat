@@ -9241,6 +9241,9 @@ button[data-draft-id] {
   cursor: pointer;
 }
 #mcp-hardening { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+/* Per-tool "Card": each call waits for an owner's approval (mcp-guard.ts). */
+.mcp-tool-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mcp-tool-approval { display: flex; align-items: center; gap: 4px; font-size: var(--fs-xs); color: var(--text-dim); }
 /* Agent settings — learning defaults rows (agent-level layer). */
 .agent-learning-section {
   display: flex;

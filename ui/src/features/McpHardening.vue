@@ -5,7 +5,7 @@
  * their state in the DOM: Save compares the checked COUNT to the total because "all
  * checked" is stored as null (no restriction, so future tools flow through).
  */
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { isWorkspaceAdminView } from '../core/state.js';
 import { hardeningServer, oauthBusy } from './mcp-panel-state.js';
 
@@ -14,9 +14,25 @@ const props = defineProps<{ onApprove: () => void; onSaveTools: () => void; onOa
 const DRIFT_HEAD = 'Tools changed since you approved this server';
 const APPROVE = 'Review + re-approve';
 const SAVE_TOOLS = 'Save tool selection';
+const CARD = 'Card';
+const CARD_HINT = 'Each call needs approval';
+const CARD_OPEN = 'No credential here, so Open agents can call this server directly, without a card.';
 const BOLD = { fontWeight: '600' };
 
 const s = computed(() => hardeningServer.value);
+/** Tools marked "Card" — a switch per tool; Save reads them back from the DOM (aria-checked). */
+const cards = ref(new Set<string>());
+watch(
+  () => s.value?.approval_tools,
+  (a) => (cards.value = new Set(Array.isArray(a) ? a : [])),
+  { immediate: true },
+);
+function toggleCard(name: string): void {
+  const next = new Set(cards.value);
+  if (next.has(name)) next.delete(name);
+  else next.add(name);
+  cards.value = next;
+}
 const show = computed(() => !!s.value && s.value.transport !== 'stdio');
 
 const healthText = computed(() => {
@@ -44,7 +60,11 @@ const tools = computed(() => {
   const p = s.value?.pinned_tools;
   if (!Array.isArray(p) || !p.length) return null;
   const enabled = Array.isArray(s.value.enabled_tools) ? new Set(s.value.enabled_tools) : null;
-  return p.map((t: any) => ({ name: t.name, desc: t.description || '', checked: enabled ? enabled.has(t.name) : true }));
+  return p.map((t: any) => ({
+    name: t.name,
+    desc: t.description || '',
+    checked: enabled ? enabled.has(t.name) : true,
+  }));
 });
 
 const oauthLabel = computed(() => (s.value?.auth?.kind === 'oauth' ? 'Reconnect (OAuth)' : 'Connect with OAuth…'));
@@ -68,10 +88,31 @@ const authNote = computed(() =>
     <div v-if="tools">
       <span class="form-label">Tools ({{ tools.length }})</span>
       <div class="mcp-tools-list">
-        <label v-for="t in tools" :key="t.name" class="mcp-tool-row">
-          <input type="checkbox" :checked="t.checked" :data-tool="t.name" :disabled="!isWorkspaceAdminView || undefined" /><span :title="t.desc">{{ t.name }}</span>
-        </label>
+        <div v-for="t in tools" :key="t.name" class="mcp-tool-line">
+          <label class="mcp-tool-row">
+            <input
+              type="checkbox"
+              :checked="t.checked"
+              :data-tool="t.name"
+              :disabled="!isWorkspaceAdminView || undefined"
+            /><span :title="t.desc">{{ t.name }}</span>
+          </label>
+          <span class="mcp-tool-approval" :title="CARD_HINT">
+            <button
+              type="button"
+              :class="['perms-switch', { on: cards.has(t.name) }]"
+              role="switch"
+              :aria-checked="cards.has(t.name) ? 'true' : 'false'"
+              :aria-label="`${CARD}: ${t.name}`"
+              :data-approval="t.name"
+              :disabled="!isWorkspaceAdminView || undefined"
+              @click="toggleCard(t.name)"
+            ></button>
+            {{ CARD }}
+          </span>
+        </div>
       </div>
+      <p v-if="cards.size && !s.auth" class="setting-hint">{{ CARD_OPEN }}</p>
       <button v-if="isWorkspaceAdminView" type="button" class="btn btn-secondary" @click="props.onSaveTools()">
         {{ SAVE_TOOLS }}
       </button>
