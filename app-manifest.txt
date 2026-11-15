@@ -125,7 +125,6 @@ container/agent-runner/src/providers/claude.learning-review.test.ts
 src/no-follow-fs.ts
 src/no-follow-fs.test.ts
 src/modules/approvals/expiry.test.ts
-.claude/skills/add-vscode-runner
 src/channels/webchat/gateway-connect.test.ts
 src/db/add-column-if-missing.ts
 src/module-sweep.test.ts

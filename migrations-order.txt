@@ -67,3 +67,4 @@ moduleWebchatWorkloadPlacement
 moduleWebchatMachineIsolation
 moduleWebchatMcpApprovalTools
 moduleWebchatWorkloadSleep
+moduleWebchatDropRunners

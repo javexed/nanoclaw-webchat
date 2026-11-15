@@ -46,17 +46,6 @@ async function lookupAssignment(token: string): Promise<{ agent_group_id: string
   )) as { agent_group_id: string; mcp_server_id: string } | undefined;
 }
 
-/**
- * Endpoints central serves itself on the relay port, by path prefix, for
- * installed modules (the VS Code runner's laptop tools). Each authenticates
- * its own callers: the relay only routes.
- */
-type RelayRoute = (req: http.IncomingMessage, res: http.ServerResponse) => Promise<void>;
-const relayRoutes = new Map<string, RelayRoute>();
-export function registerRelayRoute(prefix: string, route: RelayRoute): void {
-  relayRoutes.set(prefix, route);
-}
-
 /** Repeated percent-decoding stops here; anything still encoded past it is refused. */
 const MAX_DECODE_ROUNDS = 4;
 
@@ -120,9 +109,6 @@ function readBody(req: http.IncomingMessage, max: number): Promise<Buffer | null
 
 async function handleRelay(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const url = req.url || '';
-  for (const [prefix, route] of relayRoutes) {
-    if (url === prefix || url.startsWith(`${prefix}/`) || url.startsWith(`${prefix}?`)) return route(req, res);
-  }
   const m = url.match(/^\/relay\/([^/?]+)(\/[^?]*)?(\?.*)?$/);
   if (!m) {
     res.writeHead(404).end('not found');

@@ -703,9 +703,6 @@ export async function setAgentEgressHostsRaw(agentGroupId: string, json: string 
   );
 }
 
-export const getRunnerClientConfigRaw = settingsGetter('runner_client_config', decodeNullableString);
-export const setRunnerClientConfigRaw = settingsSetter('runner_client_config', encodeNullableString);
-
 /** Voice-dictation cleanup model. NULL (also a missing row/column) = raw transcript. */
 export const getSttCleanupModelId = settingsGetter('stt_cleanup_model_id', decodeNullableString);
 export const setSttCleanupModelId = settingsSetter('stt_cleanup_model_id', encodeNullableString);

@@ -187,23 +187,6 @@ below — run it, register `http://127.0.0.1:8765/mcp` in the MCP tab, and probe
 
 ---
 
-## Runners
-
-Agents that work on the project open in a developer's VS Code (the NanoClaw
-extension). The agent runs here; the extension gives it the project's files,
-in a copy the developer reviews. Manage → **Runners** (owner / global admin):
-
-- **Machines** — a machine appears when its extension first connects and waits
-  for approval (a card in the owners' Approvals inbox, or **Approve** here).
-  Approving creates a dedicated agent for it; **Revoke** disconnects it.
-- **Placement** — which agents work on which machine's project; place or remove per agent.
-- **Runner extension** — **Publish…** a `nanoclaw-<version>.vsix`; connected
-  machines are offered it on their next keepalive.
-
-Reference: [runners.md](./runners.md).
-
----
-
 ## Network
 
 What agents may reach. Manage → **Network** (owner / global admin):

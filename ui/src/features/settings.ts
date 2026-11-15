@@ -22,7 +22,6 @@ import { renderSignins } from './signins.js';
 import { authFetch, apiJson } from '../core/api.js';
 import { state } from '../core/state.js';
 import { pollRoutingInstall, pollSttInstall, pollTtsInstall, renderRoutingInstallProgress, runInstall, runRoutingInstall, runSttInstall, runTtsInstall } from './installers.js';
-import { renderVsCodeSettings } from './vscode.js';
 import { sttPopulateModelSelect } from './models.js';
 import { cancelDictation, getSttConfig, getTtsReadAloudEnabled, isDictationActive, loadTtsConfig, setSttConfig, setTtsReadAloudEnabled, stopTts } from './voice.js';
 import { createApp, nextTick } from 'vue';
@@ -578,7 +577,6 @@ export function openSettings() {
   renderSettingsModal();
   void Promise.allSettled([renderTtsSetupSettings(), renderSttSetupSettings()]).then(syncFeaturesColumn);
   void renderMyCredentials();
-  void renderVsCodeSettings();
   void renderSignins();
   $('#settings-overlay')!.hidden = false;
   // Focus trap

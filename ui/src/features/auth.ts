@@ -11,7 +11,6 @@ import { checkSessionExpired } from '../core/session-expiry.js';
 import { loadLearningMaster } from './learn.js';
 import { rememberServerAuthHint } from './members.js';
 import { enableWebPush } from './settings.js';
-import { initVsCodeStart } from './vscode-start.js';
 import { initSttFeature, loadTtsConfig } from './voice.js';
 import { maybeAutoOpenWizard } from './wizard.js';
 
@@ -100,8 +99,6 @@ export function enterAuthedApp() {
   if (state.settings?.notifications && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
     enableWebPush();
   }
-  // No rooms yet: the VS Code steps where the chat would be.
-  initVsCodeStart();
   // First-run: owner/global-admin sees the setup wizard once until finished.
   void maybeAutoOpenWizard();
   // Nudge to retire the shared bearer token once a stronger identity is live.

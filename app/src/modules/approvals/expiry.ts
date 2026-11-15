@@ -113,7 +113,7 @@ export async function sweepExpiredApprovals(now = Date.now()): Promise<number> {
     try {
       let done: boolean;
       if (!approval.session_id) {
-        // Session-less (e.g. runner pairing): its owning handler takes the
+        // Session-less (e.g. a workload card): its owning handler takes the
         // reject, exactly as for an admin's click, and the row is removed.
         done = await resolveSessionlessApproval(approval, 'reject', EXPIRY_USER);
       } else {

@@ -55,8 +55,6 @@ describe('moduleWebchat migration', () => {
       'webchat_room_primes',
       'webchat_room_reads',
       'webchat_room_settings',
-      'webchat_runner_machines',
-      'webchat_runner_placements',
       'webchat_settings',
       'webchat_signin_sessions',
       'webchat_skill_sources',
@@ -88,8 +86,6 @@ describe('moduleWebchat migration', () => {
         'idx_webchat_push_identity',
         'idx_webchat_room_pins_user',
         'idx_webchat_room_reads_user',
-        'idx_webchat_runner_machines_user',
-        'idx_webchat_runner_placements_fp',
         'idx_webchat_signin_sessions_user',
         'idx_webchat_turn_traces_message',
         'idx_webchat_turn_traces_room',
@@ -122,6 +118,7 @@ describe('moduleWebchat migration', () => {
       'webchat-default-model',
       'webchat-disabled-builtins',
       'webchat-drop-rooms',
+      'webchat-drop-runners',
       'webchat-drop-thread-engaged',
       'webchat-egress-existing-open',
       'webchat-fit-context',
@@ -180,36 +177,29 @@ describe('moduleWebchat migration', () => {
     ]);
   });
 
-  it('webchat-runner-keyless-allowed lets only machines paired before keys connect without one', async () => {
+  it('webchat-drop-runners removes the runner tables on an upgraded install', async () => {
     const db = getDb();
     await runMigrations(db);
-    // The state before it: no column, and a machine of each kind.
-    await db.exec(`ALTER TABLE webchat_runner_machines DROP COLUMN keyless_allowed`);
-    const add = (fp: string, status: string, key: string | null) =>
-      db.run(
-        `INSERT INTO webchat_runner_machines (fingerprint, user_id, status, first_seen, last_seen, public_key)
-         VALUES (?, 'u', ?, 1, 1, ?)`,
-        fp,
-        status,
-        key,
+    // Recreate the pre-drop state: the runner's tables (with a row) and no record of the drop.
+    await db.exec(`
+      CREATE TABLE webchat_runner_machines (fingerprint TEXT PRIMARY KEY, user_id TEXT NOT NULL);
+      CREATE INDEX idx_webchat_runner_machines_user ON webchat_runner_machines(user_id);
+      CREATE TABLE webchat_runner_placements (
+        agent_group_id TEXT PRIMARY KEY,
+        fingerprint TEXT NOT NULL REFERENCES webchat_runner_machines(fingerprint) ON DELETE CASCADE
       );
-    await add('legacy', 'approved', null);
-    await add('legacy-pending', 'pending', null);
-    await add('keyed', 'approved', 'k');
-    await add('revoked', 'revoked', null); // its key, if it had one, was cleared by the revoke
-    await db.run(`DELETE FROM schema_version WHERE name = 'webchat-runner-keyless-allowed'`);
+      CREATE INDEX idx_webchat_runner_placements_fp ON webchat_runner_placements(fingerprint);
+    `);
+    await db.run(`INSERT INTO webchat_runner_machines VALUES ('fp', 'u')`);
+    await db.run(`INSERT INTO webchat_runner_placements VALUES ('ag-a', 'fp')`);
+    await db.run(`DELETE FROM schema_version WHERE name = 'webchat-drop-runners'`);
 
     await runMigrations(db);
 
-    const rows = (await db.all(
-      `SELECT fingerprint, keyless_allowed FROM webchat_runner_machines ORDER BY fingerprint`,
-    )) as Array<{ fingerprint: string; keyless_allowed: number }>;
-    expect(Object.fromEntries(rows.map((r) => [r.fingerprint, r.keyless_allowed]))).toEqual({
-      keyed: 0,
-      legacy: 1,
-      'legacy-pending': 1,
-      revoked: 0,
-    });
+    const left = (await db.all(`SELECT name FROM sqlite_master WHERE name LIKE '%webchat_runner_%'`)) as Array<{
+      name: string;
+    }>;
+    expect(left).toEqual([]);
   });
 
   it('webchat-drop-thread-engaged removes the retired table on an upgraded install', async () => {

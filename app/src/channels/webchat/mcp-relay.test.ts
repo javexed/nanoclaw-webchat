@@ -60,7 +60,6 @@ describe('the MCP relay under the exec relay', () => {
     process.env.WEBCHAT_MCP_RELAY_PORT = String(await freePort());
     vi.resetModules();
     const relay = await import('./mcp-relay.js');
-    relay.registerRelayRoute('/probe', async (_req, res) => void res.writeHead(200).end('relay here'));
     relay.startMcpRelay();
     const target = relay.mcpRelayTarget();
     expect(target.host).toBe('127.0.0.1');
@@ -71,7 +70,8 @@ describe('the MCP relay under the exec relay', () => {
         .catch(() => '');
       if (!text) await new Promise((r) => setTimeout(r, 20));
     }
-    expect(text).toBe('relay here');
+    // Any path answers (unknown ones with 404): the listener is up on loopback.
+    expect(text).toBe('not found');
   });
 
   it('without it, central reaches the relay where containers do', async () => {

@@ -25,7 +25,6 @@ import {
   showDetail,
 } from './agents.js';
 import { closeMcpDetail, fetchMcpServers, openMcpDetail, renderMcpSources } from './mcp.js';
-import { closeRunnerDetail, fetchRunners } from './runners.js';
 import { fetchNetwork } from './network.js';
 import { showConfirmModal } from './modals.js';
 import { closeModelDetail, fetchModels, openModelDetail, renderModels } from './models.js';
@@ -125,9 +124,6 @@ export function switchManageTab(tab?: any) {
   $('#mtab-agents')!.hidden = tab !== 'agents';
   $('#mtab-models')!.hidden = tab !== 'models';
   $('#mtab-mcp')!.hidden = tab !== 'mcp';
-  const runnersPane = $('#mtab-runners');
-  if (runnersPane) runnersPane.hidden = tab !== 'runners';
-  if (tab !== 'runners') closeRunnerDetail();
   const networkPane = $('#mtab-network');
   if (networkPane) networkPane.hidden = tab !== 'network';
   $('#mtab-skills')!.hidden = tab !== 'skills';
@@ -151,7 +147,6 @@ export function switchManageTab(tab?: any) {
   }
   if (tab === 'agents') fetchAgents();
   else if (tab === 'models') fetchModels();
-  else if (tab === 'runners') void fetchRunners();
   else if (tab === 'network') void fetchNetwork();
   else if (tab === 'mcp') {
     fetchMcpServers();

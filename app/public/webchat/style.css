@@ -845,7 +845,6 @@ body {
   box-shadow: inset 0 0 8px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 #agent-list li:focus-visible,
-#runner-list li:focus-visible,
 #model-list li:focus-visible,
 #route-list li:focus-visible,
 #mcp-list li:focus-visible {
@@ -5220,7 +5219,6 @@ a.lightbox-btn {
 }
 
 /* Models + MCP tabs — list rows mirror agent list (shared row anatomy) */
-#runner-list,
 #model-list,
 #mcp-list {
   list-style: none;
@@ -5492,7 +5490,6 @@ a.skill-badge-origin:hover {
   justify-content: flex-end;
   gap: 8px;
 }
-#runner-list li,
 #model-list li,
 #route-list li,
 #mcp-list li {
@@ -5506,13 +5503,11 @@ a.skill-badge-origin:hover {
   gap: 6px;
   transition: background 0.15s;
 }
-#runner-list li:hover,
 #model-list li:hover,
 #route-list li:hover,
 #mcp-list li:hover {
   background: var(--surface2);
 }
-#runner-list li.active,
 #model-list li.active,
 #route-list li.active,
 #mcp-list li.active {
@@ -5547,7 +5542,6 @@ a.skill-badge-origin:hover {
   background: var(--agent);
   color: var(--bg);
 }
-#runner-list .model-row-name,
 #model-list .model-row-name,
 #route-list .model-row-name,
 #mcp-list .model-row-name {
@@ -5557,7 +5551,6 @@ a.skill-badge-origin:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-#runner-list .model-row-uses,
 #model-list .model-row-uses,
 #route-list .model-row-uses,
 #mcp-list .model-row-uses {
@@ -9696,15 +9689,8 @@ button[data-draft-id] {
   gap: 8px;
 }
 
-/* ── Runners pane — machines list + detail; rows share #model-list styling ─── */
-#runner-list .model-kind-badge.kind-pending { background: color-mix(in srgb, var(--warning) 15%, transparent); color: var(--warning); }
-#runner-list .model-kind-badge.kind-approved { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); }
-#runner-list .model-kind-badge.kind-revoked { background: color-mix(in srgb, var(--border) 60%, transparent); color: inherit; opacity: .7; }
-#runner-detail .agent-detail-header .model-kind-badge { margin-right: 8px; }
-.runner-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--border); margin-right: 6px; vertical-align: middle; }
-.runner-dot.on { background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 18%, transparent); }
+/* ── Manage → Network: the install's allowlist and recently blocked hosts ─── */
 .runners-note { font-size: var(--fs-sm); opacity: .75; margin: 8px 6px; }
-.settings-vscode-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .runner-egress { margin: 4px 6px 0; display: flex; flex-direction: column; gap: 8px; }
 /* Host lists (hostlist.ts): the install's in Manage → Network, and an agent's own in its Network section. */
 .runner-egress .secret-list, .agent-egress-hosts .secret-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
@@ -9742,21 +9728,6 @@ button[data-draft-id] {
 .signin-copy { display: flex; gap: 8px; align-items: center; }
 .signin-copy code { flex: 1 1 auto; min-width: 0; font-size: var(--fs-xs); overflow-wrap: anywhere; }
 .signin-actions { display: flex; justify-content: flex-end; }
-
-/* VS Code, first run: fills the empty chat for someone with no rooms yet. */
-.vscode-start {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  padding: 16px;
-  background: var(--bg);
-  text-align: center;
-}
-.vscode-start .settings-vscode-actions { justify-content: center; }
 
 /* Model host health (GET /api/models/hosts): a dot before the host name. */
 .host-dot {

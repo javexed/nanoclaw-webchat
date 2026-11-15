@@ -597,14 +597,10 @@ export async function probeIsOwner() {
       // Sign-in: owner or global admin, the same audience its endpoint allows.
       isWorkspaceAdminView.value = state.isOwnerView || !!(me && userIsGlobalAdmin(me));
       $('#overflow-signin')!.hidden = !isWorkspaceAdminView.value;
-      // Server extensions installed as skills (the VS Code runner, …): their
-      // screens stay hidden unless listed.
-      let extensions: string[] = [];
       try {
         const fr = await authFetch('/api/webchat/features');
         const feats = fr.ok ? await fr.json() : {};
         state.marketplaceEnabled = feats.marketplaceEnabled === true;
-        extensions = Array.isArray(feats.extensions) ? feats.extensions : [];
         renderCredentialIsolation(feats);
       } catch {
         state.marketplaceEnabled = false;
@@ -617,13 +613,6 @@ export async function probeIsOwner() {
         $('#overflow-mcp')?.removeAttribute('hidden');
         $('#mtab-mcp-btn')?.removeAttribute('hidden');
         $('#mtab-skills-btn')?.removeAttribute('hidden');
-        // Runners: paired developer machines, when the VS Code runner is
-        // installed. Owner/global-admin surface; the API 403s anyone else, so
-        // revealing on the owner view is enough here.
-        if (extensions.includes('vscode')) {
-          $('#mtab-runners-btn')?.removeAttribute('hidden');
-          $('#overflow-runners')?.removeAttribute('hidden');
-        }
         // Network: the install's egress allowlist (every agent). Same audience.
         $('#mtab-network-btn')?.removeAttribute('hidden');
         $('#overflow-network')?.removeAttribute('hidden');

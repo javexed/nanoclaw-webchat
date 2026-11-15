@@ -1636,3 +1636,24 @@ export const moduleWebchatWorkloadSleep: Migration = {
     `);
   },
 };
+
+/**
+ * The VS Code runner is gone: its paired machines and placements are dropped.
+ * Its earlier migrations (webchat-runners and the runner-* ALTERs) stay in the
+ * ordered list so upgraded installs keep a consistent history. The
+ * runner_image_* and runner_client_config columns on webchat_settings are left
+ * in place (nothing reads them); runner_egress_allowlist is the install-wide
+ * network allowlist and is still used.
+ */
+export const moduleWebchatDropRunners: Migration = {
+  version: 242,
+  name: 'webchat-drop-runners',
+  async up(db) {
+    await db.exec(`
+      DROP INDEX IF EXISTS idx_webchat_runner_placements_fp;
+      DROP TABLE IF EXISTS webchat_runner_placements;
+      DROP INDEX IF EXISTS idx_webchat_runner_machines_user;
+      DROP TABLE IF EXISTS webchat_runner_machines;
+    `);
+  },
+};

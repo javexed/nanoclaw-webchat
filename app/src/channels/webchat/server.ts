@@ -381,7 +381,6 @@ import {
 } from './oauth-mint.js';
 import { realOnecliAdmin } from '../../modules/user-credentials/onecli-admin.js';
 import { ensureFleetIsolation, fleetIsolationEnabled } from '../../modules/fleet-isolation/index.js';
-import { extensionRoutes, runServerStart } from './extensions.js';
 import {
   listDeployKeys,
   createDeployKey,
@@ -582,10 +581,6 @@ export async function startWebchatServer(hooks: WebchatServerHooks): Promise<Web
     return { userId: auth.userId, displayName: auth.displayName };
   });
 
-  // Installed extensions (./extensions-installed.ts) attach their own
-  // WebSocket paths and services here, before the server listens.
-  runServerStart({ chatInbound: hooks.onInbound });
-
   await new Promise<void>((resolve, reject) => {
     httpServer.once('error', (err: NodeJS.ErrnoException) => {
       // EADDRINUSE on this port is almost always "another nanoclaw host is
@@ -628,7 +623,7 @@ export async function startWebchatServer(hooks: WebchatServerHooks): Promise<Web
 /**
  * The listener Tailscale Serve proxies to: loopback only, on its own port
  * (servePortFor). Its connections are handed to the main HTTP server, so every
- * route, WebSocket path and extension behaves the same, but each socket is
+ * route and WebSocket path behaves the same, but each socket is
  * marked first: auth.ts believes Serve's `Tailscale-User-Login` header on
  * those sockets and on no others. Plain HTTP only — Serve terminates TLS, and
  * an install with its own certificate does not use Serve.
@@ -947,7 +942,7 @@ async function handleHttp(
     return json(res, 403, { error: 'MCP and the skills marketplace are disabled by the workspace owner.' });
   }
 
-  for (const r of [...API_ROUTES, ...extensionRoutes()]) {
+  for (const r of API_ROUTES) {
     const methods = Array.isArray(r.method) ? r.method : [r.method];
     if (!methods.includes(method)) continue;
     const m =

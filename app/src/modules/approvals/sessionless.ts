@@ -1,6 +1,6 @@
 /**
  * Session-less approvals — the minimal sibling of `requestApproval()` for
- * actions that have no agent session behind them (e.g. runner pairing).
+ * actions that have no agent session behind them (e.g. a workload approval card).
  *
  * It reuses everything that makes approvals ONE system: `pickApprover` (owners
  * + global admins, the same fan-out set), `pickAllApprovalDeliveries`, the
