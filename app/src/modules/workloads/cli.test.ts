@@ -15,6 +15,7 @@ vi.mock('./control.js', async (orig) => ({
     seen.group = group;
     return {
       text: 'services: {}',
+      translated: [],
       existing: null,
       composeHash: 'c'.repeat(32),
       stack: {

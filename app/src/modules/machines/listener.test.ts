@@ -263,7 +263,8 @@ describe('a machine joining and reporting', () => {
     expect(rep).toEqual({ status: 200, text: 'ok' });
     const m = (await memberByCert(certFingerprint(cert)))!;
     expect(Object.values(m.peaks)[0]).toEqual({ memMb: 6000, cpus: 1 });
-    expect(availableOn(m)).toMatchObject({ memMb: 16000 - 6000 - 2400, cpus: 2.4 });
+    // Other software now: 6000 MB and 1 CPU, plus 20%; then 1 GB and 0.25 CPU for the OS.
+    expect(availableOn(m)).toMatchObject({ memMb: 16000 - 7200 - 1024, cpus: 2.55 });
     await setCap(m.id, { memMb: 4096, cpus: null });
     expect(availableOn((await getMember(m.id))!)).toMatchObject({ memMb: 4096, memBy: 'cap' });
   });

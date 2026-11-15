@@ -227,6 +227,17 @@ describe('the override', () => {
     });
     expect(o.services.db.ports).toBeUndefined();
     expect(o.networks).toEqual({ nanoclaw: { external: true, name: 'nc-wl-x-ag1' } });
+    const withAliases = buildOverride(['db'], {
+      project: 'p',
+      network: 'n',
+      slice: 's',
+      labels: {},
+      addresses: { db: '198.18.3.11' },
+      aliases: { db: ['shop-db'] },
+    }) as { services: Record<string, Record<string, unknown>> };
+    expect(withAliases.services.db.networks).toEqual({
+      nanoclaw: { ipv4_address: '198.18.3.11', aliases: ['shop-db'] },
+    });
   });
 
   it('keeps addresses across redeploys and never reuses another stack’s', () => {

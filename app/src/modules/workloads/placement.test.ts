@@ -89,27 +89,39 @@ describe('placement', () => {
     expect(r.node).toBe('local');
   });
 
-  it('leaves a worker with too little free disk alone', async () => {
+  it('leaves a worker with too little free disk alone: central takes the stack', async () => {
     const full = machine('m-1', 16000, { health: { ...machine('x', 16000).health!, diskFreeGb: 2 } });
-    await expect(placeWorkload('ag', need(512), deps([full]))).rejects.toThrow(/less than 3 GB of disk free/);
+    expect(await placeWorkload('ag', need(512), deps([full]))).toEqual({
+      node: 'local',
+      reason: 'no worker has 3 GB of disk free',
+    });
   });
 
-  it('picks the worker with most free memory, counting what is placed and 15% headroom', async () => {
-    const a = machine('m-a', 8000); // share 6800
-    const b = machine('m-b', 16000); // share 13600, 12000 placed → 1600 free
+  it('picks the worker with most free memory, counting what is placed and the OS reserve', async () => {
+    const a = machine('m-a', 8000); // share 6976
+    const b = machine('m-b', 16000); // share 14976, 12000 placed → 2976 free
     const r = await placeWorkload('ag', need(1000), deps([a, b], [wl('w1', 'other', 'm-b', 12000)]));
     expect(r.node).toBe('m-a');
-    expect(r.reason).toMatch(
-      /^M-A \(runs workloads, turned on by an owner\): most free memory; fits 1.0 GB with 15% spare$/,
-    );
+    expect(r.reason).toBe('M-A (runs workloads, turned on by an owner): most free memory; fits 1.0 GB');
   });
 
-  it("counts only NanoClaw's share of a shared machine (other software's peak)", async () => {
-    const shared = machine('m-s', 16000, { peaks: { '2026-01-01': { memMb: 10400, cpus: 3 } } }); // 16000 − 10400 − 2400 = 3200
-    await expect(placeWorkload('ag', need(4000), deps([shared]))).rejects.toThrow(
-      /no worker has room for 3.9 GB \(most free: 3.1 GB on M-S\)/,
-    );
-    expect((await placeWorkload('ag', need(3000), deps([shared]))).node).toBe('m-s');
+  it("counts only NanoClaw's share of a shared machine (other software's use now)", async () => {
+    const base = machine('m-s', 16000);
+    const shared = { ...base, health: { ...base.health!, memUsedMb: 9000, cpuUsed: 1 } }; // 16000 − 9000×1.2 − 1024 = 4176
+    // No worker with room: central takes it (within central's own ceiling, checked in control.ts).
+    expect(await placeWorkload('ag', need(4300), deps([shared]))).toEqual({
+      node: 'local',
+      reason: 'no worker has room for 4.2 GB (most free: 4.1 GB on M-S)',
+    });
+    expect((await placeWorkload('ag', need(4000), deps([shared]))).node).toBe('m-s');
+  });
+
+  it("sizes a shared machine by its software's recent peak, not a quiet moment", async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const base = machine('m-p', 16000, { peaks: { [today]: { memMb: 12000, cpus: 1 } } });
+    const quiet = { ...base, health: { ...base.health!, memUsedMb: 2000, cpuUsed: 1 } }; // now 2000; today's peak 12000
+    // 16000 − 12000×1.2 − 1024 = 576 free: a 1 GB stack does not fit, though the machine is quiet now.
+    expect((await placeWorkload('ag', need(1024), deps([quiet]))).node).toBe('local');
   });
 
   it("keeps an agent's stacks together when its worker still fits them", async () => {

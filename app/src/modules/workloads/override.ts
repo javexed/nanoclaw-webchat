@@ -100,6 +100,8 @@ export interface OverrideInput {
   slice: string;
   labels: Record<string, string>;
   addresses: Record<string, string>;
+  /** Extra names per service on the stack network (translate.ts: container_name, links, network aliases). */
+  aliases?: Record<string, string[]>;
 }
 
 export const PIDS_LIMIT = 1024;
@@ -108,7 +110,12 @@ export function buildOverride(services: string[], o: OverrideInput): Record<stri
   const svc: Record<string, unknown> = {};
   for (const name of services) {
     svc[name] = {
-      networks: { nanoclaw: { ipv4_address: o.addresses[name] } },
+      networks: {
+        nanoclaw: {
+          ipv4_address: o.addresses[name],
+          ...(o.aliases?.[name]?.length ? { aliases: o.aliases[name] } : {}),
+        },
+      },
       cgroup_parent: o.slice,
       cap_drop: ['ALL'],
       security_opt: ['no-new-privileges:true'],

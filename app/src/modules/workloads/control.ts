@@ -46,6 +46,8 @@ import { placeWorkload, workerRooms, type Placement } from './placement.js';
 import { checkStack, type CheckedStack } from './policy.js';
 import { requireWorkloads } from './preflight.js';
 import { confinedBuildsOn } from './settings.js';
+import { registerDeployBusy, wakeWorkload } from './sleep.js';
+import { translateCompose } from './translate.js';
 import {
   decodeApproved,
   dockerfileOf,
@@ -104,6 +106,23 @@ function readCompose(dir: string, file: string): string {
 const hasBuild = (stack: CheckedStack): boolean =>
   Object.values(stack.compose.services).some((svc) => svc.build !== undefined);
 
+/**
+ * Whether a stack already on a worker may be checked or redeployed there.
+ * It keeps the memory it already has, so only growth needs room: a worker
+ * that other software has since crowded (its share shrinks as that software
+ * grows) must not refuse a same-size redeploy of what it already runs.
+ */
+export function roomShortfall(
+  name: string,
+  worker: string,
+  freeMemMb: number,
+  wantMb: number,
+  approvedMb: number,
+): string | null {
+  if (wantMb <= approvedMb || freeMemMb >= wantMb) return null;
+  return `${name}'s worker ${worker} has ${Math.max(0, freeMemMb)} MB free for it, and this asks for ${wantMb} MB`;
+}
+
 export interface Checked {
   text: string;
   stack: CheckedStack;
@@ -112,6 +131,8 @@ export interface Checked {
   composeHash: string;
   /** Where it runs: a new stack is placed now (placement.ts); an existing one stays put. */
   placement: Placement;
+  /** What was translated to fit (translate.ts), for the agent and the card. */
+  translated: string[];
 }
 
 /**
@@ -137,11 +158,14 @@ export async function checkWorkload(
   const others = (await listWorkloads({ agentGroupId })).filter((w) => w.id !== existing?.id);
   const usedMem = others.reduce((a, w) => a + w.approvedMemoryMb, 0);
   const usedCpu = others.reduce((a, w) => a + w.approvedCpus, 0);
+  // A project's own Compose file: the safe parts translated first (translate.ts); paths are workspace-relative after.
+  const t = translateCompose(text, dir, path.dirname(path.join(dir, relOf(file))));
+  if (t.errors.length) throw new Error(`the stack was refused:\n- ${t.errors.join('\n- ')}`);
   const r = checkStack(
-    text,
+    t.text,
     dir,
     { memoryMb: quota.memoryMb - usedMem, cpus: quota.cpus - usedCpu },
-    { composeDir: path.dirname(path.join(dir, relOf(file))), allowBuild: confinedBuildsOn() },
+    { composeDir: dir, allowBuild: confinedBuildsOn() },
   );
   if (!r.ok) throw new Error(`the stack was refused:\n- ${r.errors.join('\n- ')}`);
   // A workload stays where it was placed; a new one is placed now (placement.ts).
@@ -167,13 +191,26 @@ export async function checkWorkload(
     );
     if (!room)
       throw new Error(`${name} runs on a worker that is not connected now (${existing.node}); try again later`);
-    if (room.freeMemMb < r.stack.total.memoryMb)
-      throw new Error(
-        `${name}'s worker ${room.machine.name} has ${room.freeMemMb} MB free for it, and this asks for ${r.stack.total.memoryMb} MB`,
-      );
+    const full = roomShortfall(
+      name,
+      room.machine.name,
+      room.freeMemMb,
+      r.stack.total.memoryMb,
+      existing.approvedMemoryMb,
+    );
+    if (full) throw new Error(full);
   }
   const shape = await stackShape(dir, r.stack, resolver, approved);
-  return { text, stack: r.stack, existing, shape, composeHash: sha256(text).slice(0, 32), placement };
+  // The pin covers what runs: the translated file, so an included file or .env changed later needs a new card.
+  return {
+    text,
+    stack: r.stack,
+    existing,
+    shape,
+    composeHash: sha256(t.text).slice(0, 32),
+    placement,
+    translated: t.notes,
+  };
 }
 
 /** What an approval card pins for `up`: this exact Compose file and shape (digests, Dockerfiles, args). */
@@ -283,7 +320,22 @@ async function shipImages(
   return sent;
 }
 
+/** Deploys this process is running. A stack left 'deploying' outside it was cut off by a restart (reconcile.ts). */
+const inFlight = new Set<string>();
+export const deployInFlight = (workloadId: string): boolean => inFlight.has(workloadId);
+// A stack being deployed is never put to sleep (sleep.ts).
+registerDeployBusy(deployInFlight);
+
 async function deploy(w: Workload, agentGroupId: string): Promise<Workload> {
+  inFlight.add(w.id);
+  try {
+    return await deployOnce(w, agentGroupId);
+  } finally {
+    inFlight.delete(w.id);
+  }
+}
+
+async function deployOnce(w: Workload, agentGroupId: string): Promise<Workload> {
   requireWorkloads();
   const approved = decodeApproved(w.approvedShape);
   if (!approved) throw new Error(`${w.name} has no approval on record: run \`ncl workloads up\``);
@@ -307,7 +359,7 @@ async function deploy(w: Workload, agentGroupId: string): Promise<Workload> {
     w.addresses,
     taken,
   );
-  w = await updateWorkload(w.id, { addresses, state: 'deploying', lastError: null });
+  w = await updateWorkload(w.id, { addresses, state: 'deploying', lastError: null, asleepAt: null });
   try {
     const builds = Object.keys(w.stack.compose.services).filter((n) => w.stack.compose.services[n].build !== undefined);
     if (builds.length) {
@@ -501,6 +553,7 @@ export async function execWorkload(
   const w = await own(agentGroupId, name);
   if (!w.stack.compose.services[service]) throw new Error(`no service "${service}" in ${name}`);
   if (!command.length) throw new Error('nothing to run');
+  if (w.state === 'stopped' && w.asleepAt !== null) await wakeWorkload(w.id);
   return compose(w, ['exec', '-T', service, ...command], 120_000);
 }
 
@@ -516,6 +569,7 @@ export async function stopWorkload(agentGroupId: string, name: string, reason = 
   });
   return updateWorkload(w.id, {
     state: 'stopped',
+    asleepAt: null,
     ...(reason === 'requested' ? {} : { lastError: `stopped: ${reason}` }),
   });
 }
@@ -523,6 +577,11 @@ export async function stopWorkload(agentGroupId: string, name: string, reason = 
 export async function startWorkload(agentGroupId: string, name: string): Promise<Workload> {
   const w = await own(agentGroupId, name);
   if (w.state !== 'stopped' && w.state !== 'failed') return w;
+  // Asleep: its containers are there, so a start is enough (no rebuild).
+  if (w.state === 'stopped' && w.asleepAt !== null) {
+    await wakeWorkload(w.id);
+    return own(agentGroupId, name);
+  }
   requireWorkloads();
   assertDiskRoom(agentGroupId, (await quotaFor(agentGroupId)).diskGb);
   if (hasBuild(w.stack)) await noteUnapprovedBuild(agentGroupId);
@@ -535,7 +594,7 @@ export async function downWorkload(agentGroupId: string, name: string): Promise<
   const w = await own(agentGroupId, name);
   await compose(w, ['down', '--remove-orphans'], 300_000);
   audit({ type: 'workload.down', actor: actor(agentGroupId), effect: 'allow', detail: { workload: w.id } });
-  return updateWorkload(w.id, { state: 'stopped' });
+  return updateWorkload(w.id, { state: 'stopped', asleepAt: null });
 }
 
 /** Remove containers AND volumes. Held for an owner's card by the CLI. */

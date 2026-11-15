@@ -97,10 +97,12 @@ describe('canAccessRoom', () => {
     expect(await canAccessRoom('webchat:tailscale:nobody@example.com', 'room-1')).toBe(false);
   });
 
-  it('returns false for a room with no wired agents', async () => {
+  it('shows a room with no wired agents to owners only', async () => {
     await grantRole('webchat:owner', 'owner', null);
+    await insertUser('webchat:member');
     await insertRoom('orphan-room');
-    expect(await canAccessRoom('webchat:owner', 'orphan-room')).toBe(false);
+    expect(await canAccessRoom('webchat:owner', 'orphan-room')).toBe(true);
+    expect(await canAccessRoom('webchat:member', 'orphan-room')).toBe(false);
   });
 
   it('grants the global owner access to every room', async () => {

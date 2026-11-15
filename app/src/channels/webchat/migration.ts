@@ -1620,3 +1620,19 @@ export const moduleWebchatMcpApprovalTools: Migration = {
     await db.exec(`ALTER TABLE webchat_mcp_servers ADD COLUMN approval_tools TEXT;`);
   },
 };
+
+/**
+ * Idle workloads sleep (modules/workloads/sleep.ts): after how many hours
+ * without traffic (null = the default, 0 = never), and since when a stack is
+ * asleep (its containers stopped; the next request wakes it).
+ */
+export const moduleWebchatWorkloadSleep: Migration = {
+  version: 241,
+  name: 'webchat-workload-sleep',
+  async up(db) {
+    await db.exec(`
+      ALTER TABLE workloads ADD COLUMN sleep_after_h INTEGER;
+      ALTER TABLE workloads ADD COLUMN asleep_at INTEGER;
+    `);
+  },
+};

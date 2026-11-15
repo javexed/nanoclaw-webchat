@@ -333,7 +333,7 @@ describe("the worker's fixed jobs", () => {
     expect(h.memTotalMb).toBe(16000);
     expect(h.memUsedMb).toBe(10000);
     expect(h.memNanoclawMb).toBe(0);
-    expect(h.agentVersion).toBe('6');
+    expect(h.agentVersion).toBe('7');
     __setIsolationForTest('ok', Date.now() - 90_000);
     const h2 = health((p) => {
       if (p in files) return files[p];

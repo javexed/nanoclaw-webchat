@@ -7,7 +7,7 @@
 import crypto, { randomUUID } from 'crypto';
 
 import { getDb, hasTable } from '../../db/connection.js';
-import { computeAvailable, updatePeaks, type Available, type Peaks } from './capacity.js';
+import { computeAvailable, recentOther, updatePeaks, type Available, type Peaks } from './capacity.js';
 
 export const ROLES = ['worker'] as const;
 export type Role = (typeof ROLES)[number];
@@ -384,13 +384,25 @@ export async function setCap(
   return r.changes === 1;
 }
 
-/** What NanoClaw may use on a machine, from its totals, peaks and the owner's cap. */
-export function availableOn(m: Member): Available {
+/**
+ * What NanoClaw may use on a machine, from its totals, other software's use at
+ * its recent peak (now, today's and yesterday's, capacity.ts recentOther) and
+ * the owner's cap. The peak, not the moment: a shared machine whose software
+ * swings by gigabytes must not take a stack during a quiet moment.
+ */
+export function availableOn(m: Member, now = Date.now()): Available {
   const totals = {
     memMb: m.health?.memTotalMb || m.facts.memTotalMb,
     cpus: m.health?.cpus || m.facts.cpus,
   };
-  return computeAvailable(totals, m.peaks, { memMb: m.capMemoryMb, cpus: m.capCpus });
+  const other = m.health
+    ? recentOther(
+        { memMb: m.health.memUsedMb - m.health.memNanoclawMb, cpus: m.health.cpuUsed - m.health.cpuNanoclaw },
+        m.peaks,
+        now,
+      )
+    : null;
+  return computeAvailable(totals, other, { memMb: m.capMemoryMb, cpus: m.capCpus });
 }
 
 export const isHealthy = (m: Member, now = Date.now()): boolean =>

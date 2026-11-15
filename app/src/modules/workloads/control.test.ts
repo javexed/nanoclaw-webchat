@@ -51,7 +51,7 @@ vi.mock('./docker.js', async (orig) => {
 });
 vi.mock('./builder.js', async (orig) => ({
   ...(await orig<typeof import('./builder.js')>()),
-  ensureBuilder: async () => ({ name: 'b', proxy: 'http://build:build@192.0.2.1:1' }),
+  ensureBuilder: async () => ({ name: 'b', proxy: 'http://build:build@192.0.2.1:1', agentGroupId: 'ag' }),
   buildImage: async (_b: unknown, _spec: unknown, name: string) => {
     calls.built.push(name);
   },

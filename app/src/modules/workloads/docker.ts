@@ -22,11 +22,13 @@ import { parse, stringify } from 'yaml';
 import { DATA_DIR, INSTALL_SLUG } from '../../config.js';
 import { CONTAINER_RUNTIME_BIN } from '../../container-runtime.js';
 import { log } from '../../log.js';
+import { buildRefusalsSince } from '../../channels/webchat/build-refusals.js';
 import { callWorker, openWorkerStream } from '../machines/links.js';
 import { HELPER_IMAGE } from './images.js';
 import { buildOverride, overlappingIndexes, subnetFor } from './override.js';
 import { workloadSetting } from './settings.js';
 import type { Workload } from './store.js';
+import { ALIASES_KEY } from './translate.js';
 
 const run = promisify(execFile);
 const MAX_OUTPUT = 20_000;
@@ -369,19 +371,25 @@ export function writeFiles(
   const dir = workDir(w.id);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const services: Record<string, Record<string, unknown>> = {};
+  const aliases: Record<string, string[]> = {};
   for (const [name, svc] of Object.entries(w.stack.compose.services)) {
-    const { build: _b, image: _i, ...rest } = svc;
+    // Extra names (translate.ts) go on the stack network in the override, not in the stack file.
+    const { build: _b, image: _i, [ALIASES_KEY]: names, ...rest } = svc;
     if (!images[name]) throw new Error(`${name}: no image to run`);
     services[name] = { ...escapeInterpolation(rest), image: images[name] };
+    if (Array.isArray(names) && names.length) aliases[name] = names.map(String);
   }
   const stackFile = path.join(dir, 'stack.yml');
   const overrideFile = path.join(dir, 'override.yml');
   const volumes = w.stack.compose.volumes;
+  // Inline-content configs (translate.ts): escaped like the services, so a `$host` in an nginx config survives.
+  const configs = w.stack.compose.configs;
   fs.writeFileSync(
     stackFile,
     stringify({
       services,
       ...(volumes && Object.keys(volumes).length ? { volumes: escapeInterpolation(volumes) } : {}),
+      ...(configs && Object.keys(configs).length ? { configs: escapeInterpolation(configs) } : {}),
     }),
     { mode: 0o600 },
   );
@@ -398,6 +406,7 @@ export function writeFiles(
           'nanoclaw.workload': w.id,
         },
         addresses: w.addresses,
+        aliases,
       }),
     ),
     { mode: 0o600 },
@@ -413,7 +422,61 @@ const clip = (s: string): string => (s.length > MAX_OUTPUT ? `…${s.slice(-MAX_
  */
 export const asJson = (file: string): string => JSON.stringify(parse(fs.readFileSync(file, 'utf8')), null, 2);
 
-/** `docker compose` for one workload. Output is clipped; errors carry the tail of stderr. */
+/**
+ * A failed build or pull, with what the egress filter refused it meanwhile
+ * first: BuildKit reports those only as "Forbidden" or "Bad Gateway".
+ */
+export function withRefusals(agentGroupId: string, since: number, text: string): string {
+  const refused = buildRefusalsSince(agentGroupId, since - 1_000);
+  return refused.length ? `Blocked during the build:\n${refused.map((r) => `- ${r}`).join('\n')}\n\n${text}` : text;
+}
+
+/**
+ * Where a build stood when it was stopped, from BuildKit's plain progress
+ * (`#<n> <name>`, then `#<n> DONE 12.3s` or `CACHED`): the steps still
+ * running, and the slowest finished ones, so a timeout says what took the time.
+ */
+export function buildProgress(text: string): string | null {
+  const name = new Map<string, string>();
+  const took = new Map<string, number>();
+  for (const raw of text.split(/\r?\n/)) {
+    const m = /^#(\d+) (.+)$/.exec(raw.trim());
+    if (!m) continue;
+    const [, id, rest] = m as unknown as [string, string, string];
+    const done = /^DONE (\d+(?:\.\d+)?)s$/.exec(rest);
+    if (done) took.set(id, Number(done[1]));
+    else if (/^(CACHED|ERROR)\b/.test(rest)) took.set(id, took.get(id) ?? 0);
+    else if (!name.has(id) && !/^(\d+(\.\d+)? |CANCELED|sha256:)/.test(rest)) name.set(id, rest.slice(0, 120));
+  }
+  const running = [...name].filter(([id]) => !took.has(id)).map(([, n]) => n);
+  const slow = [...took]
+    .filter(([, s]) => s >= 60)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([id, s]) => `${name.get(id) ?? `#${id}`} (${Math.round(s / 60)} min)`);
+  const out: string[] = [];
+  if (running.length) out.push(`Still running: ${running.join('; ')}`);
+  if (slow.length) out.push(`Slowest steps: ${slow.join('; ')}`);
+  return out.length ? out.join('\n') : null;
+}
+
+/**
+ * A failed build's own words. BuildKit's plain progress prints each step's
+ * output as `#<step> <time> <line>` and the failure as `#<step> ERROR: …`; the
+ * end of stderr is mostly the Dockerfile echoed back, which says where but not
+ * why. Returns the failing step's last output lines and its error, or null.
+ */
+export function buildFailure(text: string, maxLines = 40): string | null {
+  const lines = text.split(/\r?\n/);
+  const err = [...lines].reverse().find((l) => /^#\d+ ERROR:/.test(l));
+  if (!err) return null;
+  const step = err.slice(0, err.indexOf(' '));
+  const out = lines.filter((l) => l.startsWith(`${step} `) && l !== err && !/^#\d+ \[/.test(l));
+  const done = lines.find((l) => /^(ERROR: )?failed to solve:/.test(l.trim()));
+  return [...out.slice(-maxLines), err, ...(done ? [done.trim()] : [])].join('\n');
+}
+
+/** `docker compose` for one workload. Output is clipped; errors carry the tail of stderr (for a build, its failing step). */
 export async function compose(w: Workload, args: string[], timeoutMs = 600_000): Promise<string> {
   const dir = workDir(w.id);
   const argv = ['compose', '-p', projectName(w), '-f', 'stack.yml', '-f', 'override.yml', ...args];
@@ -432,7 +495,8 @@ export async function compose(w: Workload, args: string[], timeoutMs = 600_000):
     return clip(`${stdout}${stderr}`.trim());
   } catch (err) {
     const e = err as { stderr?: string; stdout?: string; message?: string };
-    throw new Error(clip(`${e.stderr || e.stdout || e.message || String(err)}`.trim()), { cause: err });
+    const text = `${e.stderr || e.stdout || e.message || String(err)}`.trim();
+    throw new Error(clip(buildFailure(text) ?? text), { cause: err });
   }
 }
 

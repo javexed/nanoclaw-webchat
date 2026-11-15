@@ -46,6 +46,7 @@ import {
 import { keyTargetFor } from './egress-key-targets.js';
 import { connectThroughGateway, connectToGateway } from './gateway-connect.js';
 import { serveOllamaFiltered } from './ollama-filter.js';
+import { noteBuildRefusal } from './build-refusals.js';
 import { workloadTunnel } from './workload-tunnel.js';
 
 const MAX_HEAD = 64 * 1024;
@@ -429,22 +430,19 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
   const allowlist = await deps.allowlist(caller.agentGroupId);
   if (!egressAllowed(mode, req.host, req.port, allowlist, always)) {
     recordBlocked(req.host, req.port, caller.agentGroupId, caller.sessionId, mode);
-    return answer(
-      client,
-      '403 Forbidden',
-      building ? buildBlockedMessage(req.host, req.port) : blockedMessage(req.host, req.port, mode),
-    );
+    const why = building ? buildBlockedMessage(req.host, req.port) : blockedMessage(req.host, req.port, mode);
+    // A build's failure says what was blocked (build-refusals.ts): BuildKit shows only "Forbidden".
+    if (building) noteBuildRefusal(caller.agentGroupId, req.host, req.port, why);
+    return answer(client, '403 Forbidden', why);
   }
   if (building) {
     let upstream: net.Socket;
     try {
       upstream = await (deps.direct ?? connectDirect)(req.host, req.port, pinned);
     } catch (err) {
-      return answer(
-        client,
-        '502 Bad Gateway',
-        `could not reach ${req.host}:${req.port}: ${String((err as Error).message).slice(0, 200)}`,
-      );
+      const why = String((err as Error).message).slice(0, 200);
+      noteBuildRefusal(caller.agentGroupId, req.host, req.port, `could not connect: ${why}`);
+      return answer(client, '502 Bad Gateway', `could not reach ${req.host}:${req.port}: ${why}`);
     }
     return spliceDirect(client, req, head.rest, upstream);
   }
@@ -758,13 +756,21 @@ export function ensureEgressFilter(
 
 /** Containers placed on the lockdown network at spawn, by name — the resolver registers them. */
 const byName = new Map<string, Caller>();
-let ipMap: { at: number; map: Map<string, string> } | null = null;
+/** Per network: source address → container name, re-read at most every IP_MAP_TTL_MS and on a miss. */
+const ipMaps = new Map<string, { at: number; map: Map<string, string> }>();
+
+/**
+ * Docker's default bridge: an agent in Open mode with a stack on a worker
+ * stays there (its own connections unfiltered) but uses this filter as its
+ * proxy, so it can reach that stack (container-egress openViaFilter).
+ */
+export const DEFAULT_BRIDGE = 'bridge';
 
 export function registerFilteredContainer(name: string, caller: Caller): void {
   byName.set(name, caller);
   // A new container may have been handed the address a dead one gave up; the
   // next lookup re-reads the network rather than trusting the cached map.
-  ipMap = null;
+  ipMaps.clear();
 }
 
 function runtime(args: string[]): Promise<string> {
@@ -780,11 +786,12 @@ function runtime(args: string[]): Promise<string> {
  * agent. Refreshed at most every two seconds and on a miss, so an address a
  * dead container gave up is re-read rather than trusted.
  */
-export function containerIdentifier(network: string): (ip: string) => Promise<Caller | null> {
-  return async (ip) => {
+export function containerIdentifier(network: string): (ip: string, allowRefresh?: boolean) => Promise<Caller | null> {
+  return async (ip, allowRefresh = true) => {
     const addr = ip.replace(/^::ffff:/, '');
     const lookup = async (fresh: boolean): Promise<string | undefined> => {
-      if (fresh || !ipMap || Date.now() - ipMap.at > IP_MAP_TTL_MS) {
+      const cached = ipMaps.get(network);
+      if (fresh || !cached || Date.now() - cached.at > IP_MAP_TTL_MS) {
         const out = await runtime([
           'network',
           'inspect',
@@ -797,11 +804,11 @@ export function containerIdentifier(network: string): (ip: string) => Promise<Ca
           const [name, cidr] = pair.split('=');
           if (name && cidr) map.set(cidr.split('/')[0], name);
         }
-        ipMap = { at: Date.now(), map };
+        ipMaps.set(network, { at: Date.now(), map });
       }
-      return ipMap.map.get(addr);
+      return ipMaps.get(network)!.map.get(addr);
     };
-    const name = (await lookup(false)) ?? (await lookup(true));
+    const name = (await lookup(false)) ?? (allowRefresh ? await lookup(true) : undefined);
     if (!name) return null;
     const known = byName.get(name);
     if (known) return known;
@@ -822,8 +829,18 @@ export function containerIdentifier(network: string): (ip: string) => Promise<Ca
 
 /** The default dependencies: the policy's own readers. */
 export function defaultFilterDeps(network: string, gateway: () => { host: string; port: number }): EgressFilterDeps {
+  const onNetwork = containerIdentifier(network);
+  // An Open agent on the default bridge that uses this filter as its proxy;
+  // only containers with NanoClaw's agent labels are known (anything else: null).
+  const onBridge = network === DEFAULT_BRIDGE ? null : containerIdentifier(DEFAULT_BRIDGE);
   return {
-    identify: containerIdentifier(network),
+    // Both cached maps first: a miss on one network re-reads it (a docker call),
+    // which a caller on the other must not pay on every connection.
+    identify: async (ip) =>
+      (await onNetwork(ip, false)) ??
+      (onBridge ? await onBridge(ip, false) : null) ??
+      (await onNetwork(ip)) ??
+      (onBridge ? await onBridge(ip) : null),
     gateway,
     mode: groupEgressMode,
     allowlist: allowlistFor,

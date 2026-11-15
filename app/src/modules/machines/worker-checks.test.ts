@@ -53,6 +53,30 @@ describe('the Compose files a worker runs', () => {
     expect(refuseComposeFiles(files(good), project)).toBeNull();
   });
 
+  it('accepts inline-content configs and host-name aliases (translated Compose projects), nothing else', () => {
+    const withConfigs = {
+      ...svc({ configs: [{ source: 'config-app', target: '/etc/app.conf' }] }),
+      configs: { 'config-app': { content: 'listen 80;' } },
+    };
+    const aliased = (aliases: unknown) =>
+      buildOverride(['web', 'db'], {
+        project,
+        network: 'nc-wl-2e60-3',
+        slice: 'nanoclaw-wl-2e60.slice',
+        labels: { 'nanoclaw.install': '2e60', 'nanoclaw.agent': 'abc', 'nanoclaw.workload': 'w1' },
+        addresses: { web: '198.18.3.10', db: '198.18.3.11' },
+        aliases: { db: aliases as string[] },
+      });
+    expect(refuseComposeFiles(files(withConfigs, aliased(['shop-db'])), project)).toBeNull();
+    const fromFile = { ...withConfigs, configs: { 'config-app': { file: '/etc/shadow' } } };
+    expect(refuseComposeFiles(files(fromFile), project)).toMatch(/inline content only/);
+    const fromEnv = { ...withConfigs, configs: { 'config-app': { environment: 'X' } } };
+    expect(refuseComposeFiles(files(fromEnv), project)).toMatch(/inline content only/);
+    const undeclared = svc({ configs: [{ source: 'nope', target: '/x' }] });
+    expect(refuseComposeFiles(files(undeclared), project)).toMatch(/configs name a config/);
+    expect(refuseComposeFiles(files(good, aliased(['bad name'])), project)).toMatch(/aliases are host names/);
+  });
+
   it('refuses anything that reaches past the container', () => {
     const cases: Array<[string, unknown]> = [
       ['privileged', svc({ privileged: true })],

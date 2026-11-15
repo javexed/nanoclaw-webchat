@@ -48,7 +48,7 @@ export async function rScalingMachinesGet(ctx: RouteCtx, _m: RegExpMatchArray): 
         .filter((w) => w.node === m.id)
         .map((w) => ({
           name: w.name,
-          state: w.state,
+          state: shownState(w),
           memoryMb: w.approvedMemoryMb,
           reason: w.placementReason,
           error: w.lastError,
@@ -67,6 +67,10 @@ export async function rScalingJoinPost(ctx: RouteCtx, _m: RegExpMatchArray): Pro
   const { token, expiresAt } = await createJoinToken(role, ctx.userId);
   return json(ctx.res, 200, { command: installCommand(info.address, info.port, info.pin, token), expiresAt });
 }
+
+/** A sleeping stack (workloads/sleep.ts) reads as asleep, not stopped. */
+const shownState = (w: { state: string; asleepAt: number | null }): string =>
+  w.state === 'stopped' && w.asleepAt !== null ? 'asleep' : w.state;
 
 const RE_ID = /^m-[0-9a-f]{8}$/;
 
