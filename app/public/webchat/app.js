@@ -1,19 +1,17 @@
 import { marked } from "/marked.min.js";
 import { Fragment, Teleport, computed, createApp, createBlock, createCommentVNode, createElementBlock, createElementVNode, createTextVNode, createVNode, defineComponent, guardReactiveProps, inject, isRef, mergeProps, nextTick, normalizeClass, normalizeProps, normalizeStyle, onBeforeUnmount, onMounted, onUnmounted, openBlock, reactive, ref, renderList, resolveComponent, resolveDynamicComponent, shallowReactive, shallowRef, toDisplayString, toHandlers, unref, useTemplateRef, vModelSelect, vModelText, vShow, watch, watchEffect, withCtx, withDirectives, withKeys, withModifiers } from "/vue.runtime.min.js";
 import DOMPurify from "/dompurify.min.js";
-//#region src/features/modals-state.ts
+// src/features/modals-state.ts
 /** Is the image lightbox open? Gates the global key handlers it installs. */
 var lightboxOpen = ref(false);
-//#endregion
-//#region src/features/attach-picker-state.ts
+// src/features/attach-picker-state.ts
 var attachRows = ref([]);
 var attachEmptyText = ref("");
 /** The open picker's config, or null when closed. */
 var attachPickerCfg = ref(null);
 /** Files staged in the composer, awaiting send. */
 var pendingFiles = ref([]);
-//#endregion
-//#region src/features/views-state.ts
+// src/features/views-state.ts
 /** Is the Admin view open? */
 var adminActive = ref(false);
 /** Admin → Sign-in (signin-page.ts). */
@@ -32,8 +30,7 @@ var matrixWired = ref(/* @__PURE__ */ new Set());
 /** The open full views, innermost last: [{ name, teardown }]. Pushed and popped,
 *  never replaced, so closing one runs exactly its own teardown. */
 var viewStack = [];
-//#endregion
-//#region src/features/model-list-state.ts
+// src/features/model-list-state.ts
 var modelRows = ref([]);
 /** The model roster, verbatim from /api/models. */
 var allModels = ref([]);
@@ -43,8 +40,7 @@ var lastProbeResult = ref(null);
 var selectedModelId = ref(null);
 /** A–Z toggle, restored from the session; without the read the preference is per-reload. */
 var modelSortAz = ref(sessionStorage.getItem("webchat:modelSortAz") === "1");
-//#endregion
-//#region src/features/routing-state.ts
+// src/features/routing-state.ts
 /**
 * The classifier model id, or null before the routing probe has answered.
 * Infrastructure: the models list and host cards section it under "System",
@@ -61,8 +57,7 @@ var routingDraft = ref(null);
 var routingRouterInfo = ref(null);
 /** Open route's index, or -1 for "new route being drafted" — see openRouteDetail. */
 var selectedRouteIdx = ref(null);
-//#endregion
-//#region src/features/room-list-state.ts
+// src/features/room-list-state.ts
 /** A–Z toggle: alphabetical by the displayed `#id` when on, activity when off.
 *  Restored from the session so the preference survives a reload. */
 var roomSortAz = ref(sessionStorage.getItem("webchat:roomSortAz") === "1");
@@ -107,22 +102,19 @@ var learnTurnToolCount = ref(0);
 /** room id → auto-learn setting. Mutated in place as rooms answer, never
 *  replaced, so it stays a plain Map. */
 var roomAutoLearn = /* @__PURE__ */ new Map();
-//#endregion
-//#region src/features/agent-list-state.ts
+// src/features/agent-list-state.ts
 /** Live filter from the Manage toolbar's filter box: agents on Agents, models on Models. */
 var agentFilter = ref("");
 /** Restored from the session, so the A–Z preference survives a reload. */
 var agentSortAz = ref(sessionStorage.getItem("webchat:agentSortAz") === "1");
 var selectedAgentId = ref(null);
-//#endregion
-//#region src/features/members-list-state.ts
+// src/features/members-list-state.ts
 var members = ref([]);
 var membersFilter = ref("");
 /** A–Z toggle for the members roster, restored from the session. The storage
 *  read is part of boot order (check-boot-order.sh), not decoration. */
 var usersSortAz = ref(sessionStorage.getItem("webchat:usersSortAz") === "1");
-//#endregion
-//#region src/core/dom.ts
+// src/core/dom.ts
 /** querySelector, the shorthand the whole UI is written in. */
 var $ = (sel) => document.querySelector(sel);
 /** Inline Lucide icon referencing the SVG sprite in index.html. Returns an HTML
@@ -152,8 +144,7 @@ function lineCount(text) {
 function isPlainPasteKey(e) {
 	return e.shiftKey && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v";
 }
-//#endregion
-//#region src/core/state.ts
+// src/core/state.ts
 /**
 * shallowReactive, NOT reactive: the room list and transcript iterate the big
 * arrays constantly, and deep reactivity would allocate a proxy per element read.
@@ -223,8 +214,7 @@ var isAdminView = ref(false);
 * agent shares (an MCP server's tools, OAuth and drift approval).
 */
 var isWorkspaceAdminView = ref(false);
-//#endregion
-//#region src/core/platform-token.ts
+// src/core/platform-token.ts
 var MIN_INTERVAL_MS = 3e5;
 var UNSUPPORTED_BACKOFF_MS = 36e5;
 var HINT_MEMORY_MS = 36e5;
@@ -262,8 +252,7 @@ function refreshPlatformToken(force = false) {
 	});
 	return inFlight;
 }
-//#endregion
-//#region src/core/session-expiry.ts
+// src/core/session-expiry.ts
 /** Remembered across the sign-in round trip, so a sign-in that does not take cannot loop. */
 var AUTO_KEY = "nanoclaw-reauth-at";
 var AUTO_EVERY_MS = 12e4;
@@ -351,8 +340,7 @@ function signInAgain() {
 	} catch {}
 	location.reload();
 }
-//#endregion
-//#region src/core/island.ts
+// src/core/island.ts
 /** Mount a Vue island into the element at `sel`, or return null when the host
 * is absent. Pair with `??=` so a mounted island is never created twice. */
 function mountIsland(sel, create) {
@@ -362,8 +350,7 @@ function mountIsland(sel, create) {
 	app.mount(host);
 	return app;
 }
-//#endregion
-//#region src/core/toast.ts
+// src/core/toast.ts
 /**
 * Transient corner notification. `kind` is 'info' (default), 'success', or
 * 'error'. Errors linger longer and must be dismissed-or-time-out; all toasts
@@ -391,8 +378,7 @@ function toastError(err, fallback) {
 	const message = err?.message;
 	showToast(message || fallback || "Something went wrong", { kind: "error" });
 }
-//#endregion
-//#region src/core/api.ts
+// src/core/api.ts
 var authToken = sessionStorage.getItem("nanoclaw-token") || "";
 function getAuthToken() {
 	return authToken;
@@ -455,8 +441,7 @@ async function apiJson(url, { method = "GET", body, headers } = {}) {
 	}
 	return data;
 }
-//#endregion
-//#region src/features/approval-card-text.ts
+// src/features/approval-card-text.ts
 /** The text the approver reads, or '' when the card has none. */
 function approvalCardText(a) {
 	if (typeof a.question === "string" && a.question) return a.question;
@@ -469,8 +454,7 @@ function approvalRawPayload(a) {
 	if (typeof p === "string") return approvalCardText(a) === p ? null : p;
 	return p;
 }
-//#endregion
-//#region src/features/approvals-state.ts
+// src/features/approvals-state.ts
 /** Pending approvals, as the panel list renders them. */
 var approvalRows = ref([]);
 /**
@@ -479,8 +463,7 @@ var approvalRows = ref([]);
 */
 var approvalBusy = ref(/* @__PURE__ */ new Set());
 var approvalErrors = ref({});
-//#endregion
-//#region src/features/ApprovalCard.vue?vue&type=script&setup=true&lang.ts
+// src/features/ApprovalCard.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$84 = ["data-question-id"];
 var _hoisted_2$73 = { class: "approval-title" };
 var _hoisted_3$69 = {
@@ -519,8 +502,7 @@ var _hoisted_12$13 = {
 * note makes ABSENCE legible: "no chips" must never read as "screened, nothing found".
 */
 var REJECT_WITH_REASON = "reject_with_reason";
-//#endregion
-//#region src/features/ApprovalCard.vue
+// src/features/ApprovalCard.vue
 var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 	__name: "ApprovalCard",
 	props: {
@@ -640,8 +622,7 @@ var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/ApprovalsList.vue
+// src/features/ApprovalsList.vue
 var ApprovalsList_default = /* @__PURE__ */ defineComponent({
 	__name: "ApprovalsList",
 	props: { onRespond: { type: Function } },
@@ -661,13 +642,11 @@ var ApprovalsList_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/ApprovalToast.vue?vue&type=script&setup=true&lang.ts
+// src/features/ApprovalToast.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$83 = { class: "approval-title" };
 var _hoisted_2$72 = { class: "approval-actions" };
 var _hoisted_3$68 = ["disabled", "onClick"];
-//#endregion
-//#region src/features/ApprovalToast.vue
+// src/features/ApprovalToast.vue
 var ApprovalToast_default = /* @__PURE__ */ defineComponent({
 	__name: "ApprovalToast",
 	props: {
@@ -703,8 +682,7 @@ var ApprovalToast_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/approvals.ts
+// src/features/approvals.ts
 var pendingApprovals = [];
 function setApprovalsBanner(count) {
 	const banner = $("#approvals-banner");
@@ -877,8 +855,7 @@ function wireApprovalsPanel() {
 		approvalsBannerToggle.setAttribute("aria-expanded", String(expanded));
 	});
 }
-//#endregion
-//#region src/features/approval-row.ts
+// src/features/approval-row.ts
 function parse(content) {
 	if (content && typeof content === "object") return content;
 	try {
@@ -981,8 +958,7 @@ function approvalNoticeView(msg) {
 		resentByName: data.resentBy ? String(data.resentByName || shortName(data.resentBy)) : null
 	};
 }
-//#endregion
-//#region src/features/transcript-state.ts
+// src/features/transcript-state.ts
 /** Monotonic row key. Server ids are absent on the optimistic echo and on
 *  system lines, so identity cannot come from the payload. */
 var seq = 0;
@@ -1013,8 +989,7 @@ var transcriptEmpty = ref(null);
 *  so new messages land above them with no anchor. */
 var thinkingTurns = ref([]);
 var turnFor = (name) => thinkingTurns.value.find((t) => t.name === name);
-//#endregion
-//#region src/features/turn-trace-view.ts
+// src/features/turn-trace-view.ts
 var traceHasContent = (v) => !!v && (v.tools.length > 0 || v.notes.length > 0 || v.reasoning.length > 0);
 /** 850ms · 4.2s · 2m 05s */
 function formatMs(ms) {
@@ -1096,8 +1071,7 @@ async function loadTrace(messageId) {
 function forgetTrace(messageId) {
 	traceLoads.delete(messageId);
 }
-//#endregion
-//#region src/features/TraceView.vue?vue&type=script&setup=true&lang.ts
+// src/features/TraceView.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$82 = { class: "trace-view" };
 var _hoisted_2$71 = {
 	key: 0,
@@ -1119,8 +1093,7 @@ var REASONING = "Reasoning";
 var OK = "Succeeded";
 var FAILED$3 = "Failed";
 var TRUNCATED$1 = "Trimmed to fit";
-//#endregion
-//#region src/features/TraceView.vue
+// src/features/TraceView.vue
 var TraceView_default = /* @__PURE__ */ defineComponent({
 	__name: "TraceView",
 	props: { view: {} },
@@ -1181,8 +1154,7 @@ var TraceView_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/ThinkingBubble.vue?vue&type=script&setup=true&lang.ts
+// src/features/ThinkingBubble.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$81 = ["data-agent"];
 var _hoisted_2$70 = { class: "sender" };
 var _hoisted_3$66 = { class: "thinking-verb" };
@@ -1201,8 +1173,7 @@ var STOP = "Stop";
 var STOP_TITLE = "Stop the agent";
 var NO_TRACE = "No reasoning captured for this turn yet.";
 var TOGGLE_TITLE = "Show activity";
-//#endregion
-//#region src/features/ThinkingBubble.vue
+// src/features/ThinkingBubble.vue
 var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 	__name: "ThinkingBubble",
 	props: {
@@ -1320,8 +1291,7 @@ function frameRms(int16) {
 function segmentWorthSending(voicedMs, segmentMs) {
 	return voicedMs >= 200 && segmentMs >= 300;
 }
-//#endregion
-//#region src/features/tts-queue.ts
+// src/features/tts-queue.ts
 /** Abbreviations whose trailing dot doesn't end a sentence (lowercase, no dot). */
 var ABBREVIATIONS = /* @__PURE__ */ new Set([
 	"mr",
@@ -1505,8 +1475,7 @@ var ReadAloudQueue = class {
 		}
 	}
 };
-//#endregion
-//#region src/features/voice.ts
+// src/features/voice.ts
 var ttsServerEnabled = false;
 var ttsReadAloudEnabled = false;
 /** Which message is playing, and how far along. */
@@ -2002,8 +1971,7 @@ function setSttConfig(cfg) {
 function isDictationActive() {
 	return sttActive;
 }
-//#endregion
-//#region src/features/TtsButton.vue?vue&type=script&setup=true&lang.ts
+// src/features/TtsButton.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$80 = [
 	"aria-label",
 	"title",
@@ -2011,8 +1979,7 @@ var _hoisted_1$80 = [
 ];
 var VOLUME = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-volume-2\"></use></svg>";
 var SQUARE = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-square\"></use></svg>";
-//#endregion
-//#region src/features/TtsButton.vue
+// src/features/TtsButton.vue
 var TtsButton_default = /* @__PURE__ */ defineComponent({
 	__name: "TtsButton",
 	props: {
@@ -2045,8 +2012,7 @@ var TtsButton_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/core/resizer.ts
+// src/core/resizer.ts
 function clampSize(px, min, max) {
 	return Math.round(Math.min(max, Math.max(min, px)));
 }
@@ -2184,8 +2150,7 @@ function wireResizer(opts) {
 		handle.removeEventListener("pointercancel", onUp);
 	};
 }
-//#endregion
-//#region src/features/attachment-preview.ts
+// src/features/attachment-preview.ts
 /** Text previews past this size are not fetched: the file is offered as a download instead. */
 var TEXT_PREVIEW_MAX = 2097152;
 /** CSV previews stop rendering rows here; a larger table is unreadable in a drawer anyway. */
@@ -2715,8 +2680,7 @@ function formatSize(n) {
 function htmlFrameUrl(url, nonce = "") {
 	return `${url}${url.includes("?") ? "&" : "?"}view=frame${nonce ? `#${nonce}` : ""}`;
 }
-//#endregion
-//#region src/features/attachment-drawer-state.ts
+// src/features/attachment-drawer-state.ts
 var drawerFile = ref(null);
 var trigger = null;
 function openAttachmentDrawer(file, from) {
@@ -2754,8 +2718,7 @@ function attachmentDrawerPopstate(state) {
 	closeAttachmentDrawer(true);
 	return true;
 }
-//#endregion
-//#region src/features/MessageBubble.vue?vue&type=script&setup=true&lang.ts
+// src/features/MessageBubble.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$79 = { class: "file-bubble" };
 var _hoisted_2$69 = ["src", "alt"];
 var _hoisted_3$65 = { class: "file-info" };
@@ -2781,8 +2744,7 @@ var IMAGE = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-image\"></u
 var FILE_TEXT = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-file-text\"></use></svg>";
 var PAPERCLIP = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-paperclip\"></use></svg>";
 var DOWNLOAD_TITLE = "Download";
-//#endregion
-//#region src/features/MessageBubble.vue
+// src/features/MessageBubble.vue
 var MessageBubble_default = /* @__PURE__ */ defineComponent({
 	__name: "MessageBubble",
 	props: {
@@ -2874,13 +2836,11 @@ var MessageBubble_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/MsgDeleteButton.vue?vue&type=script&setup=true&lang.ts
+// src/features/MsgDeleteButton.vue?vue&type=script&setup=true&lang.ts
 var TRASH = "🗑";
 var CONFIRM = "delete?";
 var TITLE = "Delete message";
-//#endregion
-//#region src/features/MsgDeleteButton.vue
+// src/features/MsgDeleteButton.vue
 var MsgDeleteButton_default = /* @__PURE__ */ defineComponent({
 	__name: "MsgDeleteButton",
 	props: { messageId: {} },
@@ -2919,8 +2879,7 @@ var MsgDeleteButton_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/BusyLabel.vue
+// src/features/BusyLabel.vue
 var BusyLabel_default = /* @__PURE__ */ defineComponent({
 	__name: "BusyLabel",
 	props: {
@@ -2941,8 +2900,7 @@ var BusyLabel_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/origin-badge.ts
+// src/features/origin-badge.ts
 /**
 * Stable hue per label, so a publisher keeps its colour across renders.
 *
@@ -2974,8 +2932,7 @@ function originBadgeProps(origin) {
 		title: safeUrl ? `${origin.label} — open source ↗` : null
 	};
 }
-//#endregion
-//#region src/features/OriginBadge.vue
+// src/features/OriginBadge.vue
 var OriginBadge_default = /* @__PURE__ */ defineComponent({
 	__name: "OriginBadge",
 	props: { origin: {} },
@@ -3010,8 +2967,7 @@ var OriginBadge_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/skills-panel-state.ts
+// src/features/skills-panel-state.ts
 /** /api/skills/duplicates rows — a name plus the agents that each learned it. */
 var skillDuplicates = ref([]);
 /** One agent's own scoped skills, as the agent detail pane receives them. */
@@ -3062,8 +3018,7 @@ var roomSkillUndo = ref({});
 /** Draft ids whose Keep is mid-flight. */
 var roomSkillsReviewing = ref(/* @__PURE__ */ new Set());
 var draftAction = ref({});
-//#endregion
-//#region src/features/SkillDraftCard.vue?vue&type=script&setup=true&lang.ts
+// src/features/SkillDraftCard.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$78 = {
 	key: 0,
 	class: "skill-draft-card resolved"
@@ -3116,8 +3071,7 @@ var CHECKING$1 = "Checking for overlaps…";
 var DISCARDING = "Discarding…";
 var UNDO$1 = "Undo";
 var UNDOING = "Undoing…";
-//#endregion
-//#region src/features/SkillDraftCard.vue
+// src/features/SkillDraftCard.vue
 var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 	__name: "SkillDraftCard",
 	props: {
@@ -3253,8 +3207,7 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/TurnThoughts.vue?vue&type=script&setup=true&lang.ts
+// src/features/TurnThoughts.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$77 = {
 	key: 0,
 	class: "thoughts-preview"
@@ -3277,8 +3230,7 @@ var THOUGHTS = "Thoughts";
 var LOADING$5 = "Loading…";
 var UNAVAILABLE = "Activity unavailable";
 var NO_ACTIVITY = "No reasoning captured for this turn";
-//#endregion
-//#region src/features/TurnThoughts.vue
+// src/features/TurnThoughts.vue
 var TurnThoughts_default = /* @__PURE__ */ defineComponent({
 	__name: "TurnThoughts",
 	props: { row: {} },
@@ -3363,8 +3315,7 @@ var TurnThoughts_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/limit-retry.ts
+// src/features/limit-retry.ts
 function limitRetryView(row, rows, now) {
 	if (row.limitResetsAt == null) return null;
 	if (row.limitRetryAt != null) return "scheduled";
@@ -3402,8 +3353,7 @@ function conflictRetry(body) {
 		by: typeof b.by === "string" ? b.by : null
 	};
 }
-//#endregion
-//#region src/features/LimitRetry.vue?vue&type=script&setup=true&lang.ts
+// src/features/LimitRetry.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$76 = {
 	key: 0,
 	class: "limit-retry",
@@ -3412,8 +3362,7 @@ var _hoisted_1$76 = {
 var _hoisted_2$66 = ["disabled"];
 var _hoisted_3$62 = { class: "limit-retry-at" };
 var _hoisted_4$53 = ["disabled"];
-//#endregion
-//#region src/features/LimitRetry.vue
+// src/features/LimitRetry.vue
 var LimitRetry_default = /* @__PURE__ */ defineComponent({
 	__name: "LimitRetry",
 	props: { row: {} },
@@ -3489,14 +3438,12 @@ var LimitRetry_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/served-model.ts
+// src/features/served-model.ts
 function servedModelShown(row, settings) {
 	if (settings?.showModel !== true || !row.isAgent) return null;
 	return row.servedModel || null;
 }
-//#endregion
-//#region src/features/Transcript.vue?vue&type=script&setup=true&lang.ts
+// src/features/Transcript.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$75 = {
 	key: 0,
 	class: "empty-state"
@@ -3535,8 +3482,7 @@ var _hoisted_14$11 = {
 	key: 0,
 	class: "served-model"
 };
-//#endregion
-//#region src/features/Transcript.vue
+// src/features/Transcript.vue
 var Transcript_default = /* @__PURE__ */ defineComponent({
 	__name: "Transcript",
 	props: {
@@ -3669,8 +3615,7 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/CodeToolbar.vue?vue&type=script&setup=true&lang.ts
+// src/features/CodeToolbar.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$74 = {
 	key: 0,
 	class: "code-lang"
@@ -3682,8 +3627,7 @@ var WRAP = "Wrap";
 var UNWRAP = "Unwrap";
 var COPY_LABEL$1 = "Copy code to clipboard";
 var WRAP_LABEL = "Toggle line wrapping";
-//#endregion
-//#region src/features/CodeToolbar.vue
+// src/features/CodeToolbar.vue
 var CodeToolbar_default = /* @__PURE__ */ defineComponent({
 	__name: "CodeToolbar",
 	props: {
@@ -3739,8 +3683,7 @@ var CodeToolbar_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/transcript.ts
+// src/features/transcript.ts
 var deps$16 = {};
 /** Wire the composition-root helpers the transcript calls. Call once at startup. */
 function provideTranscriptDeps(provided) {
@@ -4248,8 +4191,7 @@ function applyA2aClamp(bubble, container) {
 	});
 	container.appendChild(toggle);
 }
-//#endregion
-//#region src/features/thinking.ts
+// src/features/thinking.ts
 var THINKING_DETAIL_MAX = 64;
 var REASONING_LOG_MAX = 500;
 /**
@@ -4406,12 +4348,10 @@ function applyMarketplaceNav() {
 		if (el) el.hidden = !show;
 	}
 }
-//#endregion
-//#region src/features/tool-secrets-state.ts
+// src/features/tool-secrets-state.ts
 /** Workspace secrets, or empty for the "No system secrets" note. */
 var toolSecretRows = ref([]);
-//#endregion
-//#region src/features/ToolSecretList.vue?vue&type=script&setup=true&lang.ts
+// src/features/ToolSecretList.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$73 = {
 	key: 0,
 	class: "skill-desc"
@@ -4424,8 +4364,7 @@ var EMPTY$18 = "No all-agents secrets yet";
 var SHARED = "all agents";
 var REMOVE$6 = "Remove";
 var UPDATE$2 = "Update";
-//#endregion
-//#region src/features/ToolSecretList.vue
+// src/features/ToolSecretList.vue
 var ToolSecretList_default = /* @__PURE__ */ defineComponent({
 	__name: "ToolSecretList",
 	props: {
@@ -4461,8 +4400,7 @@ var ToolSecretList_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/perms-user-info.ts
+// src/features/perms-user-info.ts
 /**
 * Prefer the channel-supplied display name, else extract a readable token from
 * the namespaced id (handle/email after the last colon).
@@ -4497,8 +4435,7 @@ function userRoleSummary(u) {
 	if (m) parts.push(`member · ${m} group${m > 1 ? "s" : ""}`);
 	return parts.join(" · ") || "no roles";
 }
-//#endregion
-//#region src/features/cloud-models-state.ts
+// src/features/cloud-models-state.ts
 var cloudModelNames = reactive(/* @__PURE__ */ new Set());
 /** Which provider serves each of them ("Cohere"): the Models list shows that, not the router's address. */
 var cloudModelProviders = reactive(/* @__PURE__ */ new Map());
@@ -4510,8 +4447,7 @@ function cloudProviderOf(model) {
 	if (model.kind !== "openai-compatible" || !model.model_id || !cloudModelNames.has(model.model_id)) return null;
 	return cloudModelProviders.get(model.model_id) ?? "Cloud";
 }
-//#endregion
-//#region src/features/harness-fit.ts
+// src/features/harness-fit.ts
 /** Harnesses that bring their own model and sign-in. */
 var OWN_MODEL_HARNESSES = /* @__PURE__ */ new Set([
 	"codex",
@@ -4575,8 +4511,7 @@ function harnessFields(provider) {
 		pinSuggestions: []
 	};
 }
-//#endregion
-//#region src/features/mcp-list-state.ts
+// src/features/mcp-list-state.ts
 var mcpServers = ref([]);
 var selectedMcpId = ref(null);
 /** MCP servers attached to the currently open agent. */
@@ -4590,8 +4525,7 @@ var lastMcpProbeToken = ref("");
 var mcpAddInProgress = ref(false);
 /** Agent the add flow should attach to on success, or null for unattached. */
 var mcpAgentForAdd = ref(null);
-//#endregion
-//#region src/features/perms-list-state.ts
+// src/features/perms-list-state.ts
 /** /api/users, verbatim. */
 var permsUsers = ref([]);
 /** /api/agents, verbatim — the columns of the per-group matrix. */
@@ -4615,11 +4549,9 @@ var permsActive = ref(false);
 /** Has the user hand-edited the channel field in the create form? Stops the
 *  derived value from overwriting a deliberate edit. */
 var permsCreateChannelTouched = ref(false);
-//#endregion
-//#region src/features/room-wired-state.ts
+// src/features/room-wired-state.ts
 var roomWiredRows = ref([]);
-//#endregion
-//#region src/features/RoomWiredAgents.vue?vue&type=script&setup=true&lang.ts
+// src/features/RoomWiredAgents.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$72 = [
 	"title",
 	"innerHTML",
@@ -4640,8 +4572,7 @@ var _hoisted_4$50 = [
 	"innerHTML",
 	"onClick"
 ];
-//#endregion
-//#region src/features/RoomWiredAgents.vue
+// src/features/RoomWiredAgents.vue
 var RoomWiredAgents_default = /* @__PURE__ */ defineComponent({
 	__name: "RoomWiredAgents",
 	emits: [
@@ -4691,8 +4622,7 @@ var RoomWiredAgents_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/AgentList.vue?vue&type=script&setup=true&lang.ts
+// src/features/AgentList.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$71 = [
 	"data-agent-id",
 	"onClick",
@@ -4716,8 +4646,7 @@ var _hoisted_7$27 = {
 	class: "agent-harness-badge",
 	title: "Runs on GitHub Copilot"
 };
-//#endregion
-//#region src/features/AgentList.vue
+// src/features/AgentList.vue
 var AgentList_default = /* @__PURE__ */ defineComponent({
 	__name: "AgentList",
 	emits: ["pick"],
@@ -4762,8 +4691,7 @@ var AgentList_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/installer-state.ts
+// src/features/installer-state.ts
 /**
 * One flag for the four harness installs (codex, opencode, pi, grok): each
 * rebuilds the agent image and restarts the host, so two at once is never
@@ -4807,8 +4735,7 @@ function installLogText(st, tailLines = 14) {
 	const tail = Array.isArray(st.lines) ? st.lines.slice(-tailLines) : [];
 	return st.running ? [installProgressLine(st), ...tail].join("\n") : tail.join("\n");
 }
-//#endregion
-//#region src/features/agent-lists-state.ts
+// src/features/agent-lists-state.ts
 /** Unwired, non-archived agents offered when adding to an existing room. */
 var addAgentCandidates = ref([]);
 /** Non-archived agents offered by the room-create form. */
@@ -4833,8 +4760,7 @@ var agentKeyRows = ref([]);
 var agentEnvNames = ref([]);
 /** Names whose delete is in flight. */
 var agentEnvDeleting = ref(/* @__PURE__ */ new Set());
-//#endregion
-//#region src/features/agent-detail-state.ts
+// src/features/agent-detail-state.ts
 /** Rooms this agent is assigned to, as /api/agents/:id/rooms returns them. */
 var wiredRooms = ref([]);
 /** Whether the caller may unassign rooms — hides the per-row remove button. */
@@ -4862,8 +4788,7 @@ var archivedAgentsCount = ref(0);
 /** setInterval handle ticking the thinking bubbles' elapsed labels, else null.
 *  An interval here, unlike the installers' re-arming timeouts. */
 var turnElapsedTimer = ref(null);
-//#endregion
-//#region src/features/AgentWiredRooms.vue?vue&type=script&setup=true&lang.ts
+// src/features/AgentWiredRooms.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$70 = {
 	key: 0,
 	class: "empty-note"
@@ -4884,8 +4809,7 @@ var _hoisted_4$48 = [
 	"onClick"
 ];
 var EMPTY$17 = "Not assigned to any room yet.";
-//#endregion
-//#region src/features/AgentWiredRooms.vue
+// src/features/AgentWiredRooms.vue
 var AgentWiredRooms_default = /* @__PURE__ */ defineComponent({
 	__name: "AgentWiredRooms",
 	props: {
@@ -4939,8 +4863,7 @@ var AgentWiredRooms_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/AgentSessions.vue?vue&type=script&setup=true&lang.ts
+// src/features/AgentSessions.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$69 = {
 	key: 0,
 	class: "agent-session-row muted"
@@ -4962,8 +4885,7 @@ var EMPTY$16 = "No active sessions.";
 var RESET_TITLE = "Reset this session (inject /clear — drops context, next turn starts fresh)";
 /** Bound, not template text: template text carries the surrounding newlines. */
 var RESET_LABEL = "Reset";
-//#endregion
-//#region src/features/AgentSessions.vue
+// src/features/AgentSessions.vue
 var AgentSessions_default = /* @__PURE__ */ defineComponent({
 	__name: "AgentSessions",
 	props: { onReset: { type: Function } },
@@ -5000,8 +4922,7 @@ var AgentSessions_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/core/list-filter.ts
+// src/core/list-filter.ts
 /** What a list shows when its search matches nothing. */
 var NO_MATCH$3 = "No match";
 /** A typed query as compared: trimmed, lower-cased. */
@@ -5031,8 +4952,7 @@ function clearListSearch(sel, query) {
 	if (el) el.value = "";
 	query.value = "";
 }
-//#endregion
-//#region src/features/AddAgentPicker.vue?vue&type=script&setup=true&lang.ts
+// src/features/AddAgentPicker.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$68 = {
 	key: 0,
 	class: "empty-note"
@@ -5046,8 +4966,7 @@ var _hoisted_4$46 = ["for"];
 var _hoisted_5$38 = { class: "room-add-agent-name" };
 var _hoisted_6$34 = { class: "room-add-agent-sub" };
 var EMPTY$15 = "No unwired agents — switch to \"New\" to create one.";
-//#endregion
-//#region src/features/AddAgentPicker.vue
+// src/features/AddAgentPicker.vue
 var AddAgentPicker_default = /* @__PURE__ */ defineComponent({
 	__name: "AddAgentPicker",
 	props: { onToggle: { type: Function } },
@@ -5085,8 +5004,7 @@ var AddAgentPicker_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/RoomCreateAgentChecklist.vue?vue&type=script&setup=true&lang.ts
+// src/features/RoomCreateAgentChecklist.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$67 = {
 	key: 0,
 	class: "empty-note"
@@ -5098,8 +5016,7 @@ var _hoisted_2$58 = {
 var _hoisted_3$54 = ["value", "id"];
 var _hoisted_4$45 = ["for"];
 var EMPTY$14 = "No agents yet — create one inline below.";
-//#endregion
-//#region src/features/RoomCreateAgentChecklist.vue
+// src/features/RoomCreateAgentChecklist.vue
 var RoomCreateAgentChecklist_default = /* @__PURE__ */ defineComponent({
 	__name: "RoomCreateAgentChecklist",
 	setup(__props) {
@@ -5129,8 +5046,7 @@ var RoomCreateAgentChecklist_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/AgentSecretList.vue?vue&type=script&setup=true&lang.ts
+// src/features/AgentSecretList.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$66 = {
 	key: 0,
 	class: "secret-effective"
@@ -5160,8 +5076,7 @@ var REMOVE$5 = "Remove";
 var UPDATE$1 = "Update";
 var EMPTY$13 = "No secrets yet";
 var MINE = "only you";
-//#endregion
-//#region src/features/AgentSecretList.vue
+// src/features/AgentSecretList.vue
 var AgentSecretList_default = /* @__PURE__ */ defineComponent({
 	__name: "AgentSecretList",
 	props: {
@@ -5222,12 +5137,10 @@ var AgentSecretList_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/AgentEnvList.vue?vue&type=script&setup=true&lang.ts
+// src/features/AgentEnvList.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$65 = ["disabled", "onClick"];
 var REMOVE$4 = "Remove";
-//#endregion
-//#region src/features/AgentEnvList.vue
+// src/features/AgentEnvList.vue
 var AgentEnvList_default = /* @__PURE__ */ defineComponent({
 	__name: "AgentEnvList",
 	props: { onRemove: { type: Function } },
@@ -5253,16 +5166,14 @@ var AgentEnvList_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/CopyIconButton.vue?vue&type=script&setup=true&lang.ts
+// src/features/CopyIconButton.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$64 = ["aria-label", "title"];
 var _hoisted_2$56 = {
 	class: "icon",
 	"aria-hidden": "true"
 };
 var _hoisted_3$52 = ["href"];
-//#endregion
-//#region src/features/CopyIconButton.vue
+// src/features/CopyIconButton.vue
 var CopyIconButton_default = /* @__PURE__ */ defineComponent({
 	__name: "CopyIconButton",
 	props: {
@@ -5302,8 +5213,7 @@ var CopyIconButton_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/AgentKeyList.vue?vue&type=script&setup=true&lang.ts
+// src/features/AgentKeyList.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$63 = { class: "skill-info" };
 var _hoisted_2$55 = { class: "skill-head" };
 var _hoisted_3$51 = ["title"];
@@ -5318,8 +5228,7 @@ var _hoisted_8$18 = ["disabled", "onClick"];
 var _hoisted_9$15 = ["onClick"];
 var _hoisted_10$15 = ["onClick"];
 var _hoisted_11$12 = ["onClick"];
-//#endregion
-//#region src/features/AgentKeyList.vue
+// src/features/AgentKeyList.vue
 var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 	__name: "AgentKeyList",
 	props: {
@@ -5423,8 +5332,7 @@ var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/core/busy.ts
+// src/core/busy.ts
 /** Put `btn` in its busy state; returns the restore function for the `finally`. */
 function buttonBusy(btn, busyLabel) {
 	const original = Array.from(btn.childNodes);
@@ -5442,8 +5350,7 @@ function buttonBusy(btn, busyLabel) {
 		btn.replaceChildren(...original);
 	};
 }
-//#endregion
-//#region src/features/apps-state.ts
+// src/features/apps-state.ts
 /** Narrowest first. */
 var WHO_ORDER = [
 	"only-me",
@@ -5599,11 +5506,9 @@ var appsBusy = ref(/* @__PURE__ */ new Set());
 /** "Allow Docker Hub for builds": a request in flight, and a refusal shown under it. */
 var appsBuildsBusy = ref(false);
 var appsBuildsError = ref("");
-//#endregion
-//#region src/features/file-preview-state.ts
+// src/features/file-preview-state.ts
 var previewRows = ref([]);
-//#endregion
-//#region src/features/FilePreview.vue?vue&type=script&setup=true&lang.ts
+// src/features/FilePreview.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$62 = ["data-id"];
 var _hoisted_2$54 = ["src"];
 var _hoisted_3$50 = ["innerHTML"];
@@ -5614,8 +5519,7 @@ var _hoisted_6$31 = [
 	"innerHTML",
 	"onClick"
 ];
-//#endregion
-//#region src/features/FilePreview.vue
+// src/features/FilePreview.vue
 var FilePreview_default = /* @__PURE__ */ defineComponent({
 	__name: "FilePreview",
 	emits: ["remove"],
@@ -5658,8 +5562,7 @@ var FilePreview_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/AttachPicker.vue?vue&type=script&setup=true&lang.ts
+// src/features/AttachPicker.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$61 = {
 	key: 0,
 	class: "model-picker-empty"
@@ -5672,8 +5575,7 @@ var _hoisted_6$30 = {
 	key: 0,
 	class: "model-picker-row-sub"
 };
-//#endregion
-//#region src/features/AttachPicker.vue
+// src/features/AttachPicker.vue
 var AttachPicker_default = /* @__PURE__ */ defineComponent({
 	__name: "AttachPicker",
 	emits: ["toggle"],
@@ -5703,11 +5605,9 @@ var AttachPicker_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/search-results-state.ts
+// src/features/search-results-state.ts
 var searchRows = ref([]);
-//#endregion
-//#region src/features/SearchResults.vue?vue&type=script&setup=true&lang.ts
+// src/features/SearchResults.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$60 = {
 	key: 0,
 	class: "search-empty"
@@ -5722,8 +5622,7 @@ var _hoisted_4$40 = { class: "search-result-room" };
 var _hoisted_5$33 = { class: "search-result-time" };
 var _hoisted_6$29 = ["innerHTML"];
 var EMPTY$12 = "No matches";
-//#endregion
-//#region src/features/SearchResults.vue
+// src/features/SearchResults.vue
 var SearchResults_default = /* @__PURE__ */ defineComponent({
 	__name: "SearchResults",
 	setup(__props) {
@@ -5749,8 +5648,7 @@ var SearchResults_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/user-creds-state.ts
+// src/features/user-creds-state.ts
 /** Provider the panel is showing. Defaults to 'claude' — the workspace's
 *  primary — not to empty; an empty default renders a provider-less panel. */
 var userCredsProvider = ref("claude");
@@ -5787,8 +5685,7 @@ function userCredsWords(provider) {
 		keyPlaceholder: "sk-ant-…"
 	};
 }
-//#endregion
-//#region src/features/MembersList.vue?vue&type=script&setup=true&lang.ts
+// src/features/MembersList.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$59 = {
 	key: 0,
 	class: "member-empty"
@@ -5803,8 +5700,7 @@ var _hoisted_4$39 = {
 	class: "member-handle"
 };
 var EMPTY$11 = "No members match.";
-//#endregion
-//#region src/features/MembersList.vue
+// src/features/MembersList.vue
 var MembersList_default = /* @__PURE__ */ defineComponent({
 	__name: "MembersList",
 	setup(__props) {
@@ -5832,8 +5728,7 @@ var MembersList_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/PermsUserList.vue?vue&type=script&setup=true&lang.ts
+// src/features/PermsUserList.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$58 = {
 	key: 0,
 	class: "perms-empty"
@@ -5854,8 +5749,7 @@ var _hoisted_7$23 = { class: "perms-user-id-sub" };
 var _hoisted_8$17 = { class: "perms-user-summary" };
 var NO_USERS = "No users yet — anyone who authenticates will appear here.";
 var NO_MATCH$2 = "No users match.";
-//#endregion
-//#region src/features/PermsUserList.vue
+// src/features/PermsUserList.vue
 var PermsUserList_default = /* @__PURE__ */ defineComponent({
 	__name: "PermsUserList",
 	props: { onSelect: { type: Function } },
@@ -5910,8 +5804,7 @@ var PermsUserList_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/members.ts
+// src/features/members.ts
 var deps$15 = {};
 /** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideMembersDeps(provided) {
@@ -6259,11 +6152,9 @@ async function saveHandle() {
 		else showStatus("Couldn’t save — try again.", false);
 	}
 }
-//#endregion
-//#region src/features/agent-mcp-state.ts
+// src/features/agent-mcp-state.ts
 var agentMcpRows = ref([]);
-//#endregion
-//#region src/features/AgentMcpList.vue?vue&type=script&setup=true&lang.ts
+// src/features/AgentMcpList.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$57 = { class: "agent-mcp-info" };
 var _hoisted_2$49 = { class: "agent-mcp-name" };
 var _hoisted_3$45 = { class: "agent-mcp-meta" };
@@ -6272,8 +6163,7 @@ var _hoisted_4$37 = [
 	"innerHTML",
 	"onClick"
 ];
-//#endregion
-//#region src/features/AgentMcpList.vue
+// src/features/AgentMcpList.vue
 var AgentMcpList_default = /* @__PURE__ */ defineComponent({
 	__name: "AgentMcpList",
 	emits: ["detach"],
@@ -6300,8 +6190,7 @@ var AgentMcpList_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/McpList.vue?vue&type=script&setup=true&lang.ts
+// src/features/McpList.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$56 = {
 	key: 0,
 	style: {
@@ -6321,8 +6210,7 @@ var _hoisted_5$31 = {
 	class: "model-row-uses"
 };
 var emptyMessage = "No MCP servers registered. Click \"+ New server\" to add one.";
-//#endregion
-//#region src/features/McpList.vue
+// src/features/McpList.vue
 var McpList_default = /* @__PURE__ */ defineComponent({
 	__name: "McpList",
 	emits: ["pick"],
@@ -6365,8 +6253,7 @@ var McpList_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/mcp-panel-state.ts
+// src/features/mcp-panel-state.ts
 /** /api/mcp-sources rows — the built-in registry entries and their on/off state. */
 var mcpSources = ref([]);
 /** The tools a probed server advertises. Empty is a rendered state, not absence. */
@@ -6381,16 +6268,14 @@ var mcpCatalog = ref([]);
 var mcpCatalogPhase = ref("loading");
 /** Drives the wait row's wording: searching vs first load. */
 var mcpCatalogQuery = ref("");
-//#endregion
-//#region src/features/McpSources.vue?vue&type=script&setup=true&lang.ts
+// src/features/McpSources.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$55 = { class: "skill-info" };
 var _hoisted_2$47 = { class: "skill-head" };
 var _hoisted_3$43 = { class: "skill-desc" };
 var _hoisted_4$35 = ["onClick"];
 var BUILT_IN$1 = "built-in";
 var REMOVED_NOTE = "Removed from Add MCP server";
-//#endregion
-//#region src/features/McpSources.vue
+// src/features/McpSources.vue
 var McpSources_default = /* @__PURE__ */ defineComponent({
 	__name: "McpSources",
 	props: { onToggle: { type: Function } },
@@ -6435,15 +6320,13 @@ var McpSources_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/McpProbeTools.vue?vue&type=script&setup=true&lang.ts
+// src/features/McpProbeTools.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$54 = {
 	key: 0,
 	class: "empty-note"
 };
 var EMPTY$10 = "Connected, but the server advertises no tools.";
-//#endregion
-//#region src/features/McpProbeTools.vue
+// src/features/McpProbeTools.vue
 var McpProbeTools_default = /* @__PURE__ */ defineComponent({
 	__name: "McpProbeTools",
 	setup(__props) {
@@ -6467,8 +6350,7 @@ var McpProbeTools_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/McpHardening.vue?vue&type=script&setup=true&lang.ts
+// src/features/McpHardening.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$53 = {
 	key: 1,
 	class: "mcp-drift-banner"
@@ -6505,8 +6387,7 @@ var SAVE_TOOLS = "Save tool selection";
 var CARD = "Card";
 var CARD_HINT = "Each call needs approval";
 var CARD_OPEN = "No credential here, so Open agents can call this server directly, without a card.";
-//#endregion
-//#region src/features/McpHardening.vue
+// src/features/McpHardening.vue
 var McpHardening_default = /* @__PURE__ */ defineComponent({
 	__name: "McpHardening",
 	props: {
@@ -6626,8 +6507,7 @@ var McpHardening_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/McpCatalog.vue?vue&type=script&setup=true&lang.ts
+// src/features/McpCatalog.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$52 = {
 	key: 0,
 	class: "skills-empty"
@@ -6639,8 +6519,7 @@ var _hoisted_5$29 = { class: "mcp-catalog-target" };
 var _hoisted_6$26 = { class: "mcp-catalog-actions" };
 var _hoisted_7$21 = ["onClick"];
 var USE = "Use";
-//#endregion
-//#region src/features/McpCatalog.vue
+// src/features/McpCatalog.vue
 var McpCatalog_default = /* @__PURE__ */ defineComponent({
 	__name: "McpCatalog",
 	props: { onUse: { type: Function } },
@@ -6681,8 +6560,7 @@ var McpCatalog_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/mcp.ts
+// src/features/mcp.ts
 var deps$14 = {};
 /** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideMcpDeps(provided) {
@@ -7214,8 +7092,7 @@ function wireMcpCatalog() {
 		mcpCatalogTimer = setTimeout(() => void loadMcpCatalog(search.value.trim()), 300);
 	});
 }
-//#endregion
-//#region src/core/unread.ts
+// src/core/unread.ts
 /** Badge text: nothing at zero, capped so a busy room cannot widen the row. */
 function formatUnreadCount(n) {
 	if (!n || n <= 0) return "";
@@ -7253,11 +7130,9 @@ function firstUnreadIndex(msgs, lastReadAt, me) {
 	if (lastReadAt == null) return -1;
 	return msgs.findIndex((m) => m.type !== "system" && typeof m.created_at === "number" && m.created_at > lastReadAt && m.sender !== me);
 }
-//#endregion
-//#region src/features/ThreadNameInput.vue?vue&type=script&setup=true&lang.ts
+// src/features/ThreadNameInput.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$51 = ["aria-label"];
-//#endregion
-//#region src/features/ThreadNameInput.vue
+// src/features/ThreadNameInput.vue
 var ThreadNameInput_default = /* @__PURE__ */ defineComponent({
 	__name: "ThreadNameInput",
 	props: {
@@ -7329,13 +7204,11 @@ var ThreadNameInput_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/ThreadSwitcher.vue?vue&type=script&setup=true&lang.ts
+// src/features/ThreadSwitcher.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$50 = ["onClick"];
 var _hoisted_2$44 = { class: "thread-switcher-label" };
 var NEW_THREAD$2 = "+ New thread";
-//#endregion
-//#region src/features/ThreadSwitcher.vue
+// src/features/ThreadSwitcher.vue
 var ThreadSwitcher_default = /* @__PURE__ */ defineComponent({
 	__name: "ThreadSwitcher",
 	props: {
@@ -7382,8 +7255,7 @@ var ThreadSwitcher_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/threads.ts
+// src/features/threads.ts
 var deps$13 = {};
 /** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideThreadsDeps(provided) {
@@ -7646,14 +7518,12 @@ var threadActions = {
 		if (t) deleteThreadConfirm(t, null);
 	}
 };
-//#endregion
-//#region src/features/UndoTimer.vue?vue&type=script&setup=true&lang.ts
+// src/features/UndoTimer.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$49 = { class: "undo-timer" };
 var _hoisted_2$43 = { class: "undo-timer-label" };
 var _hoisted_3$40 = { class: "undo-timer-bar" };
 var UNDO = "Undo";
-//#endregion
-//#region src/features/UndoTimer.vue
+// src/features/UndoTimer.vue
 var UndoTimer_default = /* @__PURE__ */ defineComponent({
 	__name: "UndoTimer",
 	props: {
@@ -7703,8 +7573,7 @@ var UndoTimer_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/ThreadRows.vue?vue&type=script&setup=true&lang.ts
+// src/features/ThreadRows.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$48 = {
 	key: 0,
 	class: "thread-loading"
@@ -7738,8 +7607,7 @@ var DELETE = "Delete";
 var UNREAD$1 = " unread";
 var NEW_THREAD$1 = "New thread";
 var PLUS$1 = "+";
-//#endregion
-//#region src/features/ThreadRows.vue
+// src/features/ThreadRows.vue
 var ThreadRows_default = /* @__PURE__ */ defineComponent({
 	__name: "ThreadRows",
 	props: {
@@ -7865,8 +7733,7 @@ var ThreadRows_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/RoomList.vue?vue&type=script&setup=true&lang.ts
+// src/features/RoomList.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$47 = {
 	key: 0,
 	class: "room-list-empty"
@@ -7935,8 +7802,7 @@ var NO_MATCH$1 = "No rooms match.";
 /** Bound, never template text — template text carries surrounding newlines. */
 var MOVE_UP = "Move up";
 var MOVE_DOWN = "Move down";
-//#endregion
-//#region src/features/RoomList.vue
+// src/features/RoomList.vue
 var RoomList_default = /* @__PURE__ */ defineComponent({
 	__name: "RoomList",
 	props: {
@@ -8220,8 +8086,7 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/rooms.ts
+// src/features/rooms.ts
 var deps$12 = {};
 /** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideRoomsDeps(provided) {
@@ -8816,8 +8681,7 @@ function updateUnreadDots() {
 function activityOf(room) {
 	return Math.max(room.last_activity || room.created_at || 0, state.roomActivity.get(room.id) || 0);
 }
-//#endregion
-//#region src/features/files.ts
+// src/features/files.ts
 function formatFileSize(bytes) {
 	if (bytes < 1024) return `${bytes} B`;
 	if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -9131,8 +8995,7 @@ function arrayBufferToBase64(buf) {
 	for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
 	return btoa(binary);
 }
-//#endregion
-//#region src/features/compose-prefill.ts
+// src/features/compose-prefill.ts
 function originEl() {
 	return $("#compose-origin");
 }
@@ -9167,19 +9030,16 @@ function prefillComposer(text, filename) {
 		input.addEventListener("input", clearWhenEmpty);
 	}
 }
-//#endregion
-//#region src/features/slash-menu-state.ts
+// src/features/slash-menu-state.ts
 /** Commands matching what has been typed so far. */
 var slashRows = ref([]);
 /** Index of the highlighted row, moved by the composer's arrow keys. */
 var slashActiveIndex = ref(0);
-//#endregion
-//#region src/features/SlashMenu.vue?vue&type=script&setup=true&lang.ts
+// src/features/SlashMenu.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$46 = ["onMousedown"];
 var _hoisted_2$40 = { class: "slash-cmd" };
 var _hoisted_3$37 = { class: "slash-desc" };
-//#endregion
-//#region src/features/SlashMenu.vue
+// src/features/SlashMenu.vue
 var SlashMenu_default = /* @__PURE__ */ defineComponent({
 	__name: "SlashMenu",
 	props: { onPick: { type: Function } },
@@ -9208,8 +9068,7 @@ var SlashMenu_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/composer.ts
+// src/features/composer.ts
 var roomMentionPeople = [];
 async function fetchMentionablePeople() {
 	const roomId = state.currentRoom;
@@ -9590,8 +9449,7 @@ function getMentionSelectedIndex() {
 function setMentionSelectedIndex(v) {
 	mentionSelectedIndex$1 = v;
 }
-//#endregion
-//#region src/core/latest.ts
+// src/core/latest.ts
 /**
 * Latest-wins for overlapping async actions on the same thing (a default
 * picked twice in a row): each start takes a ticket, and a superseded run
@@ -9605,15 +9463,13 @@ function latestOnly() {
 		current: (ticket) => ticket === latest
 	};
 }
-//#endregion
-//#region src/features/wizard-state.ts
+// src/features/wizard-state.ts
 /** Model names returned by the last successful Ollama probe. */
 var wizardOllamaModels = ref([]);
 /** The model whose radio is checked. State, because two paths select one: the
 *  list's change listener and the post-pull path. */
 var wizardOllamaSelected = ref("");
-//#endregion
-//#region src/features/WizardOllamaModels.vue
+// src/features/WizardOllamaModels.vue
 var WizardOllamaModels_default = /* @__PURE__ */ defineComponent({
 	__name: "WizardOllamaModels",
 	setup(__props) {
@@ -9642,16 +9498,14 @@ var WizardOllamaModels_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/probe-results-state.ts
+// src/features/probe-results-state.ts
 /** One row per advertised model: the id and its default display name. */
 var probeRows = ref([]);
 /** Pre-check when the endpoint advertises exactly one model. */
 var probeSingle = ref(false);
 /** Empty-state copy — differs when the endpoint is credential-gated. */
 var probeEmptyNote = ref("");
-//#endregion
-//#region src/features/ProbeResults.vue?vue&type=script&setup=true&lang.ts
+// src/features/ProbeResults.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$45 = {
 	key: 0,
 	class: "empty-note"
@@ -9659,8 +9513,7 @@ var _hoisted_1$45 = {
 var _hoisted_2$39 = ["value", "checked"];
 var _hoisted_3$36 = ["data-model-id"];
 var NAME_PLACEHOLDER = "Display name";
-//#endregion
-//#region src/features/ProbeResults.vue
+// src/features/ProbeResults.vue
 var ProbeResults_default = /* @__PURE__ */ defineComponent({
 	__name: "ProbeResults",
 	setup(__props) {
@@ -9691,16 +9544,14 @@ var ProbeResults_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/model-picker-state.ts
+// src/features/model-picker-state.ts
 /** Rows in display order — the Default row is always first. */
 var pickerRows = ref([]);
 /** The model id currently assigned, '' for Default. */
 var pickerSelected = ref("");
 /** Empty-state copy, or '' when rows should show. */
 var pickerEmptyNote = ref("");
-//#endregion
-//#region src/features/ModelPicker.vue?vue&type=script&setup=true&lang.ts
+// src/features/ModelPicker.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$44 = [
 	"data-model-id",
 	"onClick",
@@ -9713,8 +9564,7 @@ var _hoisted_5$26 = {
 	key: 0,
 	class: "model-picker-empty"
 };
-//#endregion
-//#region src/features/ModelPicker.vue
+// src/features/ModelPicker.vue
 var ModelPicker_default = /* @__PURE__ */ defineComponent({
 	__name: "ModelPicker",
 	props: { onPick: { type: Function } },
@@ -9751,16 +9601,14 @@ var ModelPicker_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/reachability-state.ts
+// src/features/reachability-state.ts
 /** 'checking' while the probe runs, then 'error' or 'outcome'. */
 var reachPhase = ref("checking");
 /** Message for the error phase. */
 var reachError = ref("");
 /** Verdict line, plus the copy-paste fix when there is one. */
 var reachOutcome = ref(null);
-//#endregion
-//#region src/features/Reachability.vue?vue&type=script&setup=true&lang.ts
+// src/features/Reachability.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$43 = {
 	key: 0,
 	class: "model-reachability-result"
@@ -9774,8 +9622,7 @@ var _hoisted_4$29 = { class: "model-reachability-fix" };
 var CHECKING = "Checking reachability…";
 var COPY$1 = "Copy fix";
 var COPIED$1 = "Copied";
-//#endregion
-//#region src/features/Reachability.vue
+// src/features/Reachability.vue
 var Reachability_default = /* @__PURE__ */ defineComponent({
 	__name: "Reachability",
 	props: { onCopy: { type: Function } },
@@ -9810,8 +9657,7 @@ var Reachability_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/ollama-cards-state.ts
+// src/features/ollama-cards-state.ts
 /** Configured hosts, in the order /api/ollama/hosts returned them. */
 var hosts = ref([]);
 /** host → its model list. Keyed by host because the fetches race. */
@@ -9849,8 +9695,7 @@ var hostHealth = ref({});
 var fitJobs = ref([]);
 /** The owner's "Fit context to GPU" setting; null until loaded. */
 var fitContext = ref(null);
-//#endregion
-//#region src/features/ModelList.vue?vue&type=script&setup=true&lang.ts
+// src/features/ModelList.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$42 = {
 	key: 0,
 	style: {
@@ -9880,8 +9725,7 @@ var _hoisted_7$18 = ["onClick"];
 var REMOVE_GLYPH$1 = "−";
 var EMPTY$8 = "No models selected yet — use + on a server below, or “Add model endpoint…” for anything else.";
 var DOWN$1 = "Unreachable";
-//#endregion
-//#region src/features/ModelList.vue
+// src/features/ModelList.vue
 var ModelList_default = /* @__PURE__ */ defineComponent({
 	__name: "ModelList",
 	emits: ["pick", "remove"],
@@ -9929,8 +9773,7 @@ var ModelList_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/fit-context-offer.ts
+// src/features/fit-context-offer.ts
 function hostOf(endpoint) {
 	try {
 		return new URL(endpoint ?? "").hostname;
@@ -9974,8 +9817,7 @@ async function offerFitContext(added) {
 		return false;
 	}
 }
-//#endregion
-//#region src/features/select-toggle.ts
+// src/features/select-toggle.ts
 var deps$11 = {};
 function provideSelectToggleDeps(provided) {
 	Object.assign(deps$11, provided);
@@ -10042,16 +9884,13 @@ async function toggleSelectable(kind, endpoint, modelId, displayName, setBusy) {
 		setBusy(false);
 	}
 }
-//#endregion
-//#region src/features/model-usage-state.ts
+// src/features/model-usage-state.ts
 /** Agent names this model is assigned to. Empty renders the not-assigned note. */
 var modelAssignees = ref([]);
-//#endregion
-//#region src/features/ModelUsage.vue?vue&type=script&setup=true&lang.ts
+// src/features/ModelUsage.vue?vue&type=script&setup=true&lang.ts
 var PREFIX$1 = "Assigned to: ";
 var NONE = "Not assigned to any agent yet.";
-//#endregion
-//#region src/features/ModelUsage.vue
+// src/features/ModelUsage.vue
 var ModelUsage_default = /* @__PURE__ */ defineComponent({
 	__name: "ModelUsage",
 	setup(__props) {
@@ -10070,8 +9909,7 @@ var ModelUsage_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/route-list-state.ts
+// src/features/route-list-state.ts
 /** Routes in draft order — the order IS the match order. */
 var routeRows = ref([]);
 /** The route name that runs when nothing else matches. */
@@ -10082,8 +9920,7 @@ var routeSelectedIdx = ref(-1);
 var routeSuggestions = ref([]);
 /** Capabilities whose Create is in flight; on success the re-fetch drops the row. */
 var routeSuggestBusy = ref(/* @__PURE__ */ new Set());
-//#endregion
-//#region src/features/RouteList.vue?vue&type=script&setup=true&lang.ts
+// src/features/RouteList.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$41 = {
 	key: 0,
 	class: "ollama-muted"
@@ -10104,8 +9941,7 @@ var EMPTY$7 = "No routes yet — add one, or a suggestion will offer to.";
 var NO_DESC = "No description — click to add the rule";
 var DEFAULT_CHIP = "default";
 var PINNED = "pinned";
-//#endregion
-//#region src/features/RouteList.vue
+// src/features/RouteList.vue
 var RouteList_default = /* @__PURE__ */ defineComponent({
 	__name: "RouteList",
 	props: { onActivate: { type: Function } },
@@ -10142,12 +9978,10 @@ var RouteList_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/RouteSuggestions.vue?vue&type=script&setup=true&lang.ts
+// src/features/RouteSuggestions.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$40 = { class: "route-suggestion-text" };
 var _hoisted_2$34 = ["disabled", "onClick"];
-//#endregion
-//#region src/features/RouteSuggestions.vue
+// src/features/RouteSuggestions.vue
 var RouteSuggestions_default = /* @__PURE__ */ defineComponent({
 	__name: "RouteSuggestions",
 	props: { onCreate: { type: Function } },
@@ -10179,8 +10013,7 @@ var RouteSuggestions_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/routing-decisions-state.ts
+// src/features/routing-decisions-state.ts
 /** The already-filtered, already-sliced decision rows for the open profile. */
 var decisions = ref([]);
 /** Which of the three terminal states the list is in. One field, so rows from a
@@ -10188,8 +10021,7 @@ var decisions = ref([]);
 var decisionsPhase = ref("rows");
 /** Router profile name, shown in the empty message. */
 var decisionsRouter = ref("auto");
-//#endregion
-//#region src/features/RoutingDecisions.vue?vue&type=script&setup=true&lang.ts
+// src/features/RoutingDecisions.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$39 = {
 	key: 0,
 	class: "ollama-muted"
@@ -10200,8 +10032,7 @@ var _hoisted_2$33 = {
 };
 var _hoisted_3$31 = ["title"];
 var ERROR_TEXT = "Log unavailable";
-//#endregion
-//#region src/features/RoutingDecisions.vue
+// src/features/RoutingDecisions.vue
 var RoutingDecisions_default = /* @__PURE__ */ defineComponent({
 	__name: "RoutingDecisions",
 	setup(__props) {
@@ -10236,8 +10067,7 @@ var RoutingDecisions_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/docs.ts
+// src/features/docs.ts
 var docs = [];
 var loaded = false;
 /**
@@ -10418,8 +10248,7 @@ function wireDocLinks(root = document) {
 		openDoc(m[1], m[2] ?? "");
 	});
 }
-//#endregion
-//#region src/features/hostlist.ts
+// src/features/hostlist.ts
 function hostListEditor(root, save, empty = "<p class=\"cred-hint\">None.</p>") {
 	let hosts = [];
 	const listEl = root.querySelector("[data-hosts]");
@@ -10477,8 +10306,7 @@ function hostListEditor(root, save, empty = "<p class=\"cred-hint\">None.</p>") 
 		}
 	};
 }
-//#endregion
-//#region src/features/network.ts
+// src/features/network.ts
 var ago$1 = (t) => {
 	const s = Math.max(0, Math.round((Date.now() - t) / 1e3));
 	return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
@@ -10651,8 +10479,7 @@ function setAgentEgressHostsMode(mode) {
 	agentMode = mode || "host-only";
 	showAgentHosts();
 }
-//#endregion
-//#region src/features/agent-templates.ts
+// src/features/agent-templates.ts
 /** Empty until loadAgentTemplates() runs; the picker stays hidden while it is. */
 var templates = [];
 /** The chosen ref, or null for a blank agent. */
@@ -11077,14 +10904,12 @@ async function saveAsTemplate() {
 	await renderTemplateLibrary();
 	await loadAgentTemplates();
 }
-//#endregion
-//#region src/features/agent-skills-state.ts
+// src/features/agent-skills-state.ts
 var agentSkillRows = ref([]);
 var agentSkillsEnabled = ref(/* @__PURE__ */ new Set());
 /** The list's search box, as typed. */
 var agentSkillsQuery = ref("");
-//#endregion
-//#region src/features/AgentSkillsList.vue?vue&type=script&setup=true&lang.ts
+// src/features/AgentSkillsList.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$38 = {
 	key: 0,
 	class: "agent-mcp-empty"
@@ -11102,8 +10927,7 @@ var _hoisted_6$21 = [
 	"aria-label"
 ];
 var EMPTY$6 = "No skills available in this install";
-//#endregion
-//#region src/features/AgentSkillsList.vue
+// src/features/AgentSkillsList.vue
 var AgentSkillsList_default = /* @__PURE__ */ defineComponent({
 	__name: "AgentSkillsList",
 	emits: ["view", "dirty"],
@@ -11142,8 +10966,7 @@ var AgentSkillsList_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/learn-menu-state.ts
+// src/features/learn-menu-state.ts
 /**
 * Whether the two room-scoped toggles are shown at all. They appear only when
 * the caller can manage this room's learning AND the workspace master is on.
@@ -11153,8 +10976,7 @@ var learnTogglesVisible = ref(false);
 var learnAutoTrigger = ref(false);
 /** Auto-keep drafts, for this room. */
 var learnAutoKeep = ref(false);
-//#endregion
-//#region src/features/LearnMenu.vue?vue&type=script&setup=true&lang.ts
+// src/features/LearnMenu.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$37 = ["onClick"];
 var _hoisted_2$31 = {
 	class: "icon",
@@ -11166,8 +10988,7 @@ var _hoisted_5$22 = ["aria-checked"];
 var _hoisted_6$20 = ["aria-checked"];
 var AUTO_TRIGGER = "Auto-distill busy turns (this room)";
 var AUTO_KEEP = "Auto-keep drafts (this room)";
-//#endregion
-//#region src/features/LearnMenu.vue
+// src/features/LearnMenu.vue
 var LearnMenu_default = /* @__PURE__ */ defineComponent({
 	__name: "LearnMenu",
 	props: {
@@ -11232,8 +11053,7 @@ var LearnMenu_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/LearnTargetPicker.vue?vue&type=script&setup=true&lang.ts
+// src/features/LearnTargetPicker.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$36 = [
 	"^value",
 	"disabled",
@@ -11241,8 +11061,7 @@ var _hoisted_1$36 = [
 ];
 var _hoisted_2$30 = ["hidden"];
 var _hoisted_3$28 = ["value"];
-//#endregion
-//#region src/features/LearnTargetPicker.vue
+// src/features/LearnTargetPicker.vue
 var LearnTargetPicker_default = /* @__PURE__ */ defineComponent({
 	__name: "LearnTargetPicker",
 	setup(__props) {
@@ -11295,8 +11114,7 @@ var LearnTargetPicker_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/learn.ts
+// src/features/learn.ts
 var deps$10 = {};
 /** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideLearnDeps(provided) {
@@ -11570,16 +11388,14 @@ function wireLearnPanel() {
 	$("#learn-nudge-go")?.addEventListener("click", () => triggerLearn());
 	$("#learn-nudge-dismiss")?.addEventListener("click", hideLearnNudge);
 }
-//#endregion
-//#region src/features/SkillDuplicates.vue?vue&type=script&setup=true&lang.ts
+// src/features/SkillDuplicates.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$35 = { class: "skill-info" };
 var _hoisted_2$29 = { class: "skill-head" };
 var _hoisted_3$27 = { class: "skill-name" };
 var _hoisted_4$24 = { class: "skill-desc" };
 var _hoisted_5$21 = ["disabled", "onClick"];
 var PROMOTE = "Promote";
-//#endregion
-//#region src/features/SkillDuplicates.vue
+// src/features/SkillDuplicates.vue
 var SkillDuplicates_default = /* @__PURE__ */ defineComponent({
 	__name: "SkillDuplicates",
 	props: { onPromote: { type: Function } },
@@ -11615,8 +11431,7 @@ var SkillDuplicates_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/AgentScopedSkills.vue?vue&type=script&setup=true&lang.ts
+// src/features/AgentScopedSkills.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$34 = {
 	key: 0,
 	class: "agent-mcp-empty"
@@ -11629,8 +11444,7 @@ var _hoisted_6$19 = ["onClick"];
 var EMPTY$5 = "None yet — import one below (this agent only).";
 var REMOVE$3 = "Remove";
 var OPEN_TITLE = "View / edit this skill";
-//#endregion
-//#region src/features/AgentScopedSkills.vue
+// src/features/AgentScopedSkills.vue
 var AgentScopedSkills_default = /* @__PURE__ */ defineComponent({
 	__name: "AgentScopedSkills",
 	props: {
@@ -11680,8 +11494,7 @@ var AgentScopedSkills_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/SkillSources.vue?vue&type=script&setup=true&lang.ts
+// src/features/SkillSources.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$33 = { class: "skill-info" };
 var _hoisted_2$27 = { class: "skill-head" };
 var _hoisted_3$25 = { class: "skill-desc" };
@@ -11692,8 +11505,7 @@ var EDIT = "Edit";
 var REMOVE$2 = "Remove";
 var ADD$2 = "Add";
 var BUILT_IN = "built-in";
-//#endregion
-//#region src/features/SkillSources.vue
+// src/features/SkillSources.vue
 var SkillSources_default = /* @__PURE__ */ defineComponent({
 	__name: "SkillSources",
 	props: {
@@ -11731,8 +11543,7 @@ var SkillSources_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/SkillsRegistry.vue?vue&type=script&setup=true&lang.ts
+// src/features/SkillsRegistry.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$32 = {
 	key: 0,
 	class: "skills-empty"
@@ -11777,8 +11588,7 @@ var UPDATE = "Update";
 var UPDATING = "Updating…";
 var UPDATE_TITLE = "The source repo has newer commits — re-import from it";
 var CHEVRON$1 = "›";
-//#endregion
-//#region src/features/SkillsRegistry.vue
+// src/features/SkillsRegistry.vue
 var SkillsRegistry_default = /* @__PURE__ */ defineComponent({
 	__name: "SkillsRegistry",
 	props: {
@@ -11900,8 +11710,7 @@ var SkillsRegistry_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/SkillDrafts.vue?vue&type=script&setup=true&lang.ts
+// src/features/SkillDrafts.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$31 = ["data-draft-id"];
 var _hoisted_2$25 = ["onClick"];
 var _hoisted_3$23 = { class: "skill-head" };
@@ -11921,8 +11730,7 @@ var REVIEWING$1 = "Checking for overlaps…";
 var SOURCE = "from this conversation →";
 /** Bound, not a literal space: the compiler condenses whitespace between an interpolation and an element. */
 var SPACE = " ";
-//#endregion
-//#region src/features/SkillDrafts.vue
+// src/features/SkillDrafts.vue
 var SkillDrafts_default = /* @__PURE__ */ defineComponent({
 	__name: "SkillDrafts",
 	props: {
@@ -11999,8 +11807,7 @@ var SkillDrafts_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/SkillPool.vue?vue&type=script&setup=true&lang.ts
+// src/features/SkillPool.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$30 = {
 	key: 0,
 	class: "skills-empty"
@@ -12027,8 +11834,7 @@ var FAILED$1 = "Couldn’t load skills — import by URL below.";
 var REVIEW = "Review ↗";
 var ADDED = "added";
 var ADD$1 = "Add";
-//#endregion
-//#region src/features/SkillPool.vue
+// src/features/SkillPool.vue
 var SkillPool_default = /* @__PURE__ */ defineComponent({
 	__name: "SkillPool",
 	props: { onAdd: { type: Function } },
@@ -12070,8 +11876,7 @@ var SkillPool_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/SkillSuggestions.vue?vue&type=script&setup=true&lang.ts
+// src/features/SkillSuggestions.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$29 = { class: "skill-info" };
 var _hoisted_2$23 = { class: "skill-head" };
 var _hoisted_3$21 = { class: "skill-name" };
@@ -12086,8 +11891,7 @@ var _hoisted_6$14 = [
 	"aria-label"
 ];
 var AVAILABLE = "available";
-//#endregion
-//#region src/features/SkillSuggestions.vue
+// src/features/SkillSuggestions.vue
 var SkillSuggestions_default = /* @__PURE__ */ defineComponent({
 	__name: "SkillSuggestions",
 	setup(__props) {
@@ -12114,8 +11918,7 @@ var SkillSuggestions_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/RoomSkills.vue?vue&type=script&setup=true&lang.ts
+// src/features/RoomSkills.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$28 = {
 	key: 0,
 	class: "room-skill-row proposed"
@@ -12163,8 +11966,7 @@ var REVERT_TITLE = "Back to the previous revision";
 var RESTORE = "Restore";
 var ARCHIVED_TAG = "archived — unused";
 var REMOVE_GLYPH = "✕";
-//#endregion
-//#region src/features/RoomSkills.vue
+// src/features/RoomSkills.vue
 var RoomSkills_default = /* @__PURE__ */ defineComponent({
 	__name: "RoomSkills",
 	props: {
@@ -12255,8 +12057,7 @@ var RoomSkills_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/SkillEditorModal.vue?vue&type=script&setup=true&lang.ts
+// src/features/SkillEditorModal.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$27 = { class: "modal-header" };
 var _hoisted_2$21 = {
 	key: 0,
@@ -12270,8 +12071,7 @@ var _hoisted_7$12 = ["disabled"];
 var SAVING = "Saving…";
 var SAVE = "Save";
 var TITLE_ID = "skill-edit-modal-title";
-//#endregion
-//#region src/features/SkillEditorModal.vue
+// src/features/SkillEditorModal.vue
 var SkillEditorModal_default = /* @__PURE__ */ defineComponent({
 	__name: "SkillEditorModal",
 	props: {
@@ -12380,8 +12180,7 @@ var SkillEditorModal_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/skills.ts
+// src/features/skills.ts
 var deps$9 = {};
 /** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideSkillsDeps(provided) {
@@ -13857,16 +13656,14 @@ async function toggleBuiltinSource(id, wasDisabled) {
 		showToast("Failed: " + (err?.message || err), { kind: "error" });
 	}
 }
-//#endregion
-//#region src/features/usage-state.ts
+// src/features/usage-state.ts
 /** Per-user rows, already formatted into display strings. */
 var usageRows = ref([]);
 /** Per-day bars: height in px and a title. Empty means the sparkline is hidden. */
 var usageBars = ref([]);
 /** Per-model chips, already formatted. */
 var usageModels = ref([]);
-//#endregion
-//#region src/features/UsageTable.vue
+// src/features/UsageTable.vue
 var UsageTable_default = /* @__PURE__ */ defineComponent({
 	__name: "UsageTable",
 	setup(__props) {
@@ -13884,11 +13681,9 @@ var UsageTable_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/UsageSpark.vue?vue&type=script&setup=true&lang.ts
+// src/features/UsageSpark.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$26 = ["title"];
-//#endregion
-//#region src/features/UsageSpark.vue
+// src/features/UsageSpark.vue
 var UsageSpark_default = /* @__PURE__ */ defineComponent({
 	__name: "UsageSpark",
 	setup(__props) {
@@ -13908,8 +13703,7 @@ var UsageSpark_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/UsageModels.vue
+// src/features/UsageModels.vue
 var UsageModels_default = /* @__PURE__ */ defineComponent({
 	__name: "UsageModels",
 	setup(__props) {
@@ -13928,14 +13722,12 @@ var UsageModels_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/matrix-state.ts
+// src/features/matrix-state.ts
 var matrixRooms = ref([]);
 var matrixAgents = ref([]);
 /** "roomId|agentId" for every wired pair — the same key shape as matrixWired. */
 var matrixEdges = ref(/* @__PURE__ */ new Set());
-//#endregion
-//#region src/features/WiringMatrix.vue?vue&type=script&setup=true&lang.ts
+// src/features/WiringMatrix.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$25 = {
 	key: 1,
 	class: "matrix-table"
@@ -13950,8 +13742,7 @@ var _hoisted_4$15 = [
 var EMPTY$3 = "Nothing to wire yet — create a room and an agent first.";
 var CORNER = "Room \\ Agent";
 var NO_MODEL = "no model";
-//#endregion
-//#region src/features/WiringMatrix.vue
+// src/features/WiringMatrix.vue
 var WiringMatrix_default = /* @__PURE__ */ defineComponent({
 	__name: "WiringMatrix",
 	setup(__props) {
@@ -13982,8 +13773,7 @@ var WiringMatrix_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/journey-state.ts
+// src/features/journey-state.ts
 /** Every event loaded so far, oldest page first — 'Load more' appends. */
 var journeyEvents = ref([]);
 /** 'loading' | 'error' | 'empty' | 'ready'. */
@@ -13994,8 +13784,7 @@ var journeyFilter = ref({
 	kind: "",
 	skill: ""
 });
-//#endregion
-//#region src/features/JourneyList.vue?vue&type=script&setup=true&lang.ts
+// src/features/JourneyList.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$24 = {
 	key: 2,
 	class: "journey-empty"
@@ -14019,8 +13808,7 @@ var LOADING$2 = "Loading…";
 var FAILED = "Could not load the timeline.";
 var EMPTY$2 = "Nothing learned yet.";
 var REVERT = "Revert";
-//#endregion
-//#region src/features/JourneyList.vue
+// src/features/JourneyList.vue
 var JourneyList_default = /* @__PURE__ */ defineComponent({
 	__name: "JourneyList",
 	props: {
@@ -14126,8 +13914,7 @@ var JourneyList_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/views.ts
+// src/features/views.ts
 var deps$8 = {};
 /** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideViewsDeps(provided) {
@@ -15193,15 +14980,13 @@ function toggleHelp() {
 	if (helpActive.value) closeView("help");
 	else openHelp();
 }
-//#endregion
-//#region src/features/SelectToggle.vue?vue&type=script&setup=true&lang.ts
+// src/features/SelectToggle.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$23 = [
 	"title",
 	"aria-label",
 	"disabled"
 ];
-//#endregion
-//#region src/features/SelectToggle.vue
+// src/features/SelectToggle.vue
 var SelectToggle_default = /* @__PURE__ */ defineComponent({
 	__name: "SelectToggle",
 	props: {
@@ -15237,8 +15022,7 @@ var SelectToggle_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/router-roster-state.ts
+// src/features/router-roster-state.ts
 /** The router's endpoint — the toggle registers against it. */
 var rosterEndpoint = ref("");
 /** Assignable models, classifier excluded. */
@@ -15252,8 +15036,7 @@ var rosterSelectable = ref([]);
 var rosterSystem = ref([]);
 /** true when the router did not answer, or answered with no models at all. */
 var rosterUnreachable = ref(true);
-//#endregion
-//#region src/features/RouterRoster.vue?vue&type=script&setup=true&lang.ts
+// src/features/RouterRoster.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$22 = {
 	key: 0,
 	class: "ollama-muted"
@@ -15264,8 +15047,7 @@ var UNREACHABLE = "Router not reachable right now…";
 var SYS_HEADING$1 = "System — not selectable";
 var CLASSIFIER$1 = "classifier";
 var CLASSIFIER_TITLE$1 = "Auto-routing classifier — infrastructure, not a selectable or route-target model";
-//#endregion
-//#region src/features/RouterRoster.vue
+// src/features/RouterRoster.vue
 var RouterRoster_default = /* @__PURE__ */ defineComponent({
 	__name: "RouterRoster",
 	setup(__props) {
@@ -15294,8 +15076,7 @@ var RouterRoster_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/routing.ts
+// src/features/routing.ts
 async function refreshRouterMetrics() {
 	const section = $("#dash-router-section");
 	if (!section) return;
@@ -15699,8 +15480,7 @@ function closeRouteDetail() {
 	selectedRouteIdx.value = null;
 	if (routingDraft.value) renderRouteList();
 }
-//#endregion
-//#region src/features/OllamaPullStatus.vue?vue&type=script&setup=true&lang.ts
+// src/features/OllamaPullStatus.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$21 = ["hidden"];
 var _hoisted_2$17 = { class: "ollama-pull-line progress" };
 var _hoisted_3$15 = { class: "ollama-pull-text" };
@@ -15715,8 +15495,7 @@ var _hoisted_7$10 = {
 	class: "ollama-pull-line err"
 };
 var CANCEL = "Cancel";
-//#endregion
-//#region src/features/OllamaPullStatus.vue
+// src/features/OllamaPullStatus.vue
 var OllamaPullStatus_default = /* @__PURE__ */ defineComponent({
 	__name: "OllamaPullStatus",
 	props: {
@@ -15747,8 +15526,7 @@ var OllamaPullStatus_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/OllamaHostCards.vue?vue&type=script&setup=true&lang.ts
+// src/features/OllamaHostCards.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$20 = {
 	key: 0,
 	class: "setting-group install-row"
@@ -15800,8 +15578,7 @@ var DOTS = "…";
 var FIT_LABEL = "Fit context to GPU";
 var UP = "Reachable";
 var DOWN = "Unreachable";
-//#endregion
-//#region src/features/OllamaHostCards.vue
+// src/features/OllamaHostCards.vue
 var OllamaHostCards_default = /* @__PURE__ */ defineComponent({
 	__name: "OllamaHostCards",
 	props: {
@@ -15998,8 +15775,7 @@ var OllamaHostCards_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/ollama-cards.ts
+// src/features/ollama-cards.ts
 var cardsApp = null;
 function mountOllamaHostCards() {
 	cardsApp ??= mountIsland("#ollama-host-cards", () => createApp(OllamaHostCards_default, {
@@ -16123,8 +15899,7 @@ async function setFitContext(on) {
 		showToast("Could not save: " + (err?.message || err), { kind: "error" });
 	}
 }
-//#endregion
-//#region src/features/models.ts
+// src/features/models.ts
 var deps$7 = {};
 /** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideModelsDeps(provided) {
@@ -16875,8 +16650,7 @@ async function runProbe() {
 		restore();
 	}
 }
-//#endregion
-//#region src/features/installers.ts
+// src/features/installers.ts
 var deps$6 = {};
 /** Wire the composition-root helpers these runners call. Call once at startup. */
 function provideInstallerDeps(provided) {
@@ -17393,8 +17167,7 @@ async function pollOllamaPulls() {
 	};
 	ollamaPullPoller.value = setTimeout(tick, 0);
 }
-//#endregion
-//#region src/features/copilot-state.ts
+// src/features/copilot-state.ts
 /** "Copilot connected — octo · business · api.business.githubcopilot.com". */
 function copilotConnectedText(s) {
 	let host;
@@ -17418,8 +17191,7 @@ function copilotStatusLine(p) {
 	if (p.outcome && p.outcome !== "complete") return p.error || "The sign-in did not complete.";
 	return null;
 }
-//#endregion
-//#region src/features/wizard.ts
+// src/features/wizard.ts
 var deps$5 = {};
 /** Wire the composition-root helpers this module calls. Call once, before the wizard opens. */
 function provideWizardDeps(provided) {
@@ -19001,12 +18773,10 @@ async function resumeCopilotLogin() {
 		}
 	} catch {}
 }
-//#endregion
-//#region src/features/ConfirmInput.vue?vue&type=script&setup=true&lang.ts
+// src/features/ConfirmInput.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$19 = ["placeholder"];
 var _hoisted_2$15 = ["hidden"];
-//#endregion
-//#region src/features/ConfirmInput.vue
+// src/features/ConfirmInput.vue
 var ConfirmInput_default = /* @__PURE__ */ defineComponent({
 	__name: "ConfirmInput",
 	setup(__props) {
@@ -19041,14 +18811,12 @@ var ConfirmInput_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/ConfirmToggle.vue?vue&type=script&setup=true&lang.ts
+// src/features/ConfirmToggle.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$18 = {
 	key: 0,
 	class: "import-note"
 };
-//#endregion
-//#region src/features/ConfirmToggle.vue
+// src/features/ConfirmToggle.vue
 var ConfirmToggle_default = /* @__PURE__ */ defineComponent({
 	__name: "ConfirmToggle",
 	setup(__props) {
@@ -19075,8 +18843,7 @@ var ConfirmToggle_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/ConfirmModal.vue?vue&type=script&setup=true&lang.ts
+// src/features/ConfirmModal.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$17 = { class: "modal-header" };
 var _hoisted_2$14 = {
 	key: 0,
@@ -19084,8 +18851,7 @@ var _hoisted_2$14 = {
 };
 var _hoisted_3$13 = { class: "confirm-actions" };
 var _hoisted_4$11 = ["onClick"];
-//#endregion
-//#region src/features/ConfirmModal.vue
+// src/features/ConfirmModal.vue
 var ConfirmModal_default = /* @__PURE__ */ defineComponent({
 	__name: "ConfirmModal",
 	props: {
@@ -19158,14 +18924,12 @@ var ConfirmModal_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/mention-popover-state.ts
+// src/features/mention-popover-state.ts
 /** Candidate agents/people for the @-token being typed. */
 var mentionMatches = ref([]);
 /** Which candidate is highlighted — driven by arrow keys in the composer. */
 var mentionSelectedIndex = ref(0);
-//#endregion
-//#region src/features/MentionPopover.vue?vue&type=script&setup=true&lang.ts
+// src/features/MentionPopover.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$16 = ["onMousedown", "onTouchstart"];
 var _hoisted_2$13 = { class: "mention-popover-slug" };
 var _hoisted_3$12 = {
@@ -19182,8 +18946,7 @@ var _hoisted_5$9 = {
 };
 var PERSON = "person";
 var DEFAULT_AGENT = "default";
-//#endregion
-//#region src/features/MentionPopover.vue
+// src/features/MentionPopover.vue
 var MentionPopover_default = /* @__PURE__ */ defineComponent({
 	__name: "MentionPopover",
 	props: { onPick: { type: Function } },
@@ -19216,14 +18979,12 @@ var MentionPopover_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/codex-code-state.ts
+// src/features/codex-code-state.ts
 /** The device code to enter at the sign-in page. Empty when there is none. */
 var codexUserCode = ref("");
 /** true when the flow is Codex at all — otherwise the line renders nothing. */
 var codexActive = ref(false);
-//#endregion
-//#region src/features/CodexPairingCode.vue?vue&type=script&setup=true&lang.ts
+// src/features/CodexPairingCode.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$15 = {
 	class: "icon",
 	"aria-hidden": "true"
@@ -19233,8 +18994,7 @@ var PREFIX = "Pairing code: ";
 var NO_CODE = "Open the link, then approve the sign-in.";
 var COPY_TITLE = "Copy";
 var COPY_LABEL = "Copy pairing code";
-//#endregion
-//#region src/features/CodexPairingCode.vue
+// src/features/CodexPairingCode.vue
 var CodexPairingCode_default = /* @__PURE__ */ defineComponent({
 	__name: "CodexPairingCode",
 	props: { onCopy: { type: Function } },
@@ -19271,8 +19031,7 @@ var CodexPairingCode_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/modals.ts
+// src/features/modals.ts
 var deps$4 = {};
 /** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideModalsDeps(provided) {
@@ -19887,8 +19646,7 @@ function userCredsOauthStatus(msg, kind) {
 	el.textContent = msg;
 	el.className = "user-creds-oauth-status" + (kind ? " " + kind : "");
 }
-//#endregion
-//#region src/features/apps-actions.ts
+// src/features/apps-actions.ts
 var base = () => `/api/agents/${encodeURIComponent(appsAgentId.value ?? "")}`;
 var nameOf = (r) => r.app ?? r.workload;
 /** Load the agent's apps into the accordion, or hide it (not an admin, or workloads unused here). */
@@ -20113,8 +19871,7 @@ async function setDockerHub(on) {
 	}
 	await reload();
 }
-//#endregion
-//#region src/features/AgentApps.vue?vue&type=script&setup=true&lang.ts
+// src/features/AgentApps.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$14 = {
 	key: 0,
 	class: "apps"
@@ -20267,8 +20024,7 @@ var _hoisted_52 = {
 var NO_SERVICE = "None of its services declares a port to publish, so the agent publishes it with ncl workloads expose.";
 var LOADING = "Loading…";
 var NO_LOGS = "No logs yet";
-//#endregion
-//#region src/features/AgentApps.vue
+// src/features/AgentApps.vue
 var AgentApps_default = /* @__PURE__ */ defineComponent({
 	__name: "AgentApps",
 	setup(__props) {
@@ -20524,15 +20280,13 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/apps.ts
+// src/features/apps.ts
 var appsApp = null;
 async function renderAgentApps(agentId) {
 	await loadAgentApps(agentId);
 	appsApp ??= mountIsland("#agent-apps", () => createApp(AgentApps_default));
 }
-//#endregion
-//#region src/features/agents.ts
+// src/features/agents.ts
 var deps$3 = {};
 /** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideAgentsDeps(provided) {
@@ -22377,29 +22131,25 @@ async function removeToolSecret(scope, secret, listSel = "#secrets-list", agentG
 		showToast("Could not remove secret", { kind: "error" });
 	}
 }
-//#endregion
-//#region src/features/my-credentials-state.ts
+// src/features/my-credentials-state.ts
 /** One group per agent the user uses: their personal credentials for it. */
 var myCredGroups = ref([]);
 /** Agent group ids whose add-form request is in flight. */
 var myCredSaving = ref(/* @__PURE__ */ new Set());
-//#endregion
-//#region src/features/preflight-state.ts
+// src/features/preflight-state.ts
 /** 'running' | 'message' | 'checks' — the three things this element ever shows. */
 var preflightPhase = ref("running");
 /** Text for the running/error/empty states. */
 var preflightMessage = ref("");
 /** One row per check, already shaped. */
 var preflightChecks = ref([]);
-//#endregion
-//#region src/features/prejudge-state.ts
+// src/features/prejudge-state.ts
 /** One row per action: opted-in state and whether it is never-auto-approvable. */
 var prejudgeRows = ref([]);
 /** Judge-model options, filtered to what the PUT accepts. "Off" is a fixed
 *  first option, not in here. */
 var prejudgeModelOptions = ref([]);
-//#endregion
-//#region src/features/PrejudgeActions.vue?vue&type=script&setup=true&lang.ts
+// src/features/PrejudgeActions.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$13 = [
 	"data-action",
 	"checked",
@@ -22407,8 +22157,7 @@ var _hoisted_1$13 = [
 	"onChange"
 ];
 var NEVER_TITLE = "Always needs a human";
-//#endregion
-//#region src/features/PrejudgeActions.vue
+// src/features/PrejudgeActions.vue
 var PrejudgeActions_default = /* @__PURE__ */ defineComponent({
 	__name: "PrejudgeActions",
 	props: { onToggle: { type: Function } },
@@ -22436,8 +22185,7 @@ var PrejudgeActions_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/MyCredentials.vue?vue&type=script&setup=true&lang.ts
+// src/features/MyCredentials.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$12 = { class: "my-cred-head" };
 var _hoisted_2$10 = { class: "form-label" };
 var _hoisted_3$10 = ["onClick"];
@@ -22455,8 +22203,7 @@ var BADGE = "only you";
 var HOST_LABEL = "Host";
 var VALUE_LABEL = "Token or key";
 var HOST_PLACEHOLDER = "dev.azure.com";
-//#endregion
-//#region src/features/MyCredentials.vue
+// src/features/MyCredentials.vue
 var MyCredentials_default = /* @__PURE__ */ defineComponent({
 	__name: "MyCredentials",
 	props: {
@@ -22532,15 +22279,13 @@ var MyCredentials_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/Preflight.vue?vue&type=script&setup=true&lang.ts
+// src/features/Preflight.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$11 = { class: "preflight-check-head" };
 var _hoisted_2$9 = { class: "preflight-fix" };
 var _hoisted_3$9 = ["onClick"];
 var COPY = "Copy fix";
 var COPIED = "Copied";
-//#endregion
-//#region src/features/Preflight.vue
+// src/features/Preflight.vue
 var Preflight_default = /* @__PURE__ */ defineComponent({
 	__name: "Preflight",
 	props: { onCopy: { type: Function } },
@@ -22573,12 +22318,10 @@ var Preflight_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/settings-state.ts
+// src/features/settings-state.ts
 /** Which speech backend the operator picked in the STT installer: 'local' | … */
 var sttChosenBackend = ref("local");
-//#endregion
-//#region src/features/signins.ts
+// src/features/signins.ts
 var wired$1 = false;
 async function renderSignins() {
 	const section = $("#settings-signins");
@@ -22683,12 +22426,10 @@ function consumeSigninResult() {
 		});
 	} else if (done === "linked") showToast("Sign-in linked", { kind: "success" });
 }
-//#endregion
-//#region src/features/PrejudgeModelOptions.vue?vue&type=script&setup=true&lang.ts
+// src/features/PrejudgeModelOptions.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$10 = ["value"];
 var OFF = "Off";
-//#endregion
-//#region src/features/PrejudgeModelOptions.vue
+// src/features/PrejudgeModelOptions.vue
 var PrejudgeModelOptions_default = /* @__PURE__ */ defineComponent({
 	__name: "PrejudgeModelOptions",
 	setup(__props) {
@@ -22708,8 +22449,7 @@ var PrejudgeModelOptions_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/settings.ts
+// src/features/settings.ts
 var deps$2 = {};
 /** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideSettingsDeps(provided) {
@@ -23969,15 +23709,13 @@ var PREFLIGHT_ICON = {
 };
 var prejudgeApp = null;
 var myCredsApp = null;
-//#endregion
-//#region src/features/reply-preview.ts
+// src/features/reply-preview.ts
 function replyPreviewApplies(frame, currentThread, turnOpen) {
 	if (!frame.text) return true;
 	if (!turnOpen) return false;
 	return typeof frame.thread_id !== "string" || frame.thread_id === currentThread;
 }
-//#endregion
-//#region src/core/ws.ts
+// src/core/ws.ts
 var deps$1 = {};
 /** Wire the composition-root helpers the dispatcher calls. Call once at startup. */
 function provideWsDeps(provided) {
@@ -24396,8 +24134,7 @@ function handleStatusEvent(msg) {
 			appendSystem(msg.text || "The agent stopped responding. You may want to resend your message.");
 	}
 }
-//#endregion
-//#region src/boot.ts
+// src/boot.ts
 /**
 * On returning to a visible tab: reconnect if the socket dropped, otherwise
 * refresh approvals and advance the read marker for the open room.
@@ -24670,8 +24407,7 @@ async function clearBadgeCount() {
 		await navigator.clearAppBadge();
 	} catch {}
 }
-//#endregion
-//#region src/features/audit-log-state.ts
+// src/features/audit-log-state.ts
 /** Newest first, exactly as the server returned them. */
 var auditRows = ref([]);
 /** Distinct types/effects present in the scanned window, for the filter menus. */
@@ -24691,8 +24427,7 @@ var auditHasMore = ref(false);
 var auditTruncated = ref(false);
 var auditLoading = ref(false);
 var auditError = ref("");
-//#endregion
-//#region src/features/AuditLog.vue?vue&type=script&setup=true&lang.ts
+// src/features/AuditLog.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$9 = { class: "audit-log" };
 var _hoisted_2$8 = { class: "audit-filters" };
 var _hoisted_3$8 = ["value"];
@@ -24728,8 +24463,7 @@ var _hoisted_17$5 = {
 var EMPTY$1 = "No audit events match.";
 var OLDER = "Load older";
 var TRUNCATED = "Older entries exist beyond the scanned window.";
-//#endregion
-//#region src/features/AuditLog.vue
+// src/features/AuditLog.vue
 var AuditLog_default = /* @__PURE__ */ defineComponent({
 	__name: "AuditLog",
 	props: {
@@ -24818,8 +24552,7 @@ var AuditLog_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/audit-log.ts
+// src/features/audit-log.ts
 var app$2 = null;
 function mount() {
 	app$2 ??= mountIsland("#audit-log-view", () => createApp(AuditLog_default, {
@@ -24865,8 +24598,7 @@ async function loadAuditLog(opts = {}) {
 		auditLoading.value = false;
 	}
 }
-//#endregion
-//#region src/features/publishing-state.ts
+// src/features/publishing-state.ts
 var publishingView = shallowRef(null);
 /** The Connect button: Reconnect once the credential is in place. */
 function connectLabel(status) {
@@ -24895,8 +24627,7 @@ function errorField(err) {
 	const f = err?.body?.field;
 	return typeof f === "string" ? f : "";
 }
-//#endregion
-//#region src/features/publishing-actions.ts
+// src/features/publishing-actions.ts
 /** PUT a route's settings or switch; the answer is the whole fresh view. Throws the server's refusal. */
 async function saveRoute(kind, body) {
 	publishingView.value = await apiJson(`/api/publishing/${kind}`, {
@@ -24922,8 +24653,7 @@ async function connectRoute(kind, body) {
 		body
 	});
 }
-//#endregion
-//#region src/features/PublishingPanel.vue?vue&type=script&setup=true&lang.ts
+// src/features/PublishingPanel.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$8 = {
 	key: 0,
 	class: "publishing"
@@ -25022,8 +24752,7 @@ var _hoisted_49 = {
 };
 var _hoisted_50 = { class: "publishing-actions" };
 var _hoisted_51 = ["disabled"];
-//#endregion
-//#region src/features/PublishingPanel.vue
+// src/features/PublishingPanel.vue
 var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 	__name: "PublishingPanel",
 	setup(__props) {
@@ -25388,8 +25117,7 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/publishing.ts
+// src/features/publishing.ts
 var panelApp = null;
 async function renderPublishingSettings() {
 	const section = $("#settings-publishing");
@@ -25409,8 +25137,7 @@ async function renderPublishingSettings() {
 	publishingView.value = view;
 	panelApp ??= mountIsland("#publishing-panel", () => createApp(PublishingPanel_default));
 }
-//#endregion
-//#region src/features/machines-view.ts
+// src/features/machines-view.ts
 /**
 * The isolation line of a worker row: "Isolated", "Not isolated — host rules
 * missing" (with the fix behind the ⓘ), "Not checked yet" or "Not checked
@@ -25485,8 +25212,7 @@ function capForm(m) {
 		cpus: m.cap.cpus === null ? "" : String(m.cap.cpus)
 	};
 }
-//#endregion
-//#region src/features/ssh-join-view.ts
+// src/features/ssh-join-view.ts
 var initialSsh = () => ({
 	phase: "form",
 	host: "",
@@ -25546,8 +25272,7 @@ function parseSse(buf) {
 		rest
 	};
 }
-//#endregion
-//#region src/features/SshJoin.vue?vue&type=script&setup=true&lang.ts
+// src/features/SshJoin.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$7 = { class: "machine-ssh" };
 var _hoisted_2$6 = ["placeholder", "aria-label"];
 var _hoisted_3$6 = ["placeholder", "aria-label"];
@@ -25568,8 +25293,7 @@ var _hoisted_16$3 = {
 	"aria-live": "polite"
 };
 var _hoisted_17$3 = { class: "secret-actions" };
-//#endregion
-//#region src/features/SshJoin.vue
+// src/features/SshJoin.vue
 var SshJoin_default = /* @__PURE__ */ defineComponent({
 	__name: "SshJoin",
 	emits: ["close"],
@@ -25821,8 +25545,7 @@ var SshJoin_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/MachinesPanel.vue?vue&type=script&setup=true&lang.ts
+// src/features/MachinesPanel.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$6 = {
 	key: 0,
 	class: "setting-hint"
@@ -25882,8 +25605,7 @@ var _hoisted_29 = {
 	key: 2,
 	class: "secret-actions"
 };
-//#endregion
-//#region src/features/MachinesPanel.vue
+// src/features/MachinesPanel.vue
 var MachinesPanel_default = /* @__PURE__ */ defineComponent({
 	__name: "MachinesPanel",
 	setup(__props, { expose: __expose }) {
@@ -26143,8 +25865,7 @@ var MachinesPanel_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/scaling.ts
+// src/features/scaling.ts
 var app$1 = null;
 var panel = null;
 async function renderScalingSettings() {
@@ -26168,8 +25889,7 @@ async function renderScalingSettings() {
 	app$1 = mountIsland("#machines-panel", () => createApp(MachinesPanel_default));
 	panel = app$1?._instance?.exposed ?? null;
 }
-//#endregion
-//#region src/features/admin.ts
+// src/features/admin.ts
 /**
 * Hide a group whose every block hid itself, so a scoped admin never sees
 * headings over empty space. Asks the rendered children rather than re-deriving
@@ -26219,8 +25939,7 @@ function toggleAdmin() {
 	if (adminActive.value) closeView("admin");
 	else openAdmin();
 }
-//#endregion
-//#region src/features/signin-page.ts
+// src/features/signin-page.ts
 var CSRF = { "X-Webchat-CSRF": "1" };
 var view = null;
 var provider = "microsoft";
@@ -26385,8 +26104,7 @@ function toggleSigninPage() {
 	if (signinActive.value) closeView("signin");
 	else openSigninPage();
 }
-//#endregion
-//#region src/features/perms-audit.ts
+// src/features/perms-audit.ts
 function findRole(u, kind, agentGroupId) {
 	return u.roles.find((r) => r.kind === kind && r.agent_group_id === agentGroupId);
 }
@@ -26397,8 +26115,7 @@ function auditTooltip(audit) {
 	const when = whenIso ? new Date(whenIso).toLocaleString() : "";
 	return `Granted by ${who}${when ? " on " + when : ""}`;
 }
-//#endregion
-//#region src/features/PermsGlobalToggles.vue?vue&type=script&setup=true&lang.ts
+// src/features/PermsGlobalToggles.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$5 = { class: "perms-toggle-label" };
 var _hoisted_2$4 = {
 	key: 0,
@@ -26409,8 +26126,7 @@ var _hoisted_3$4 = [
 	"aria-label",
 	"onClick"
 ];
-//#endregion
-//#region src/features/PermsGlobalToggles.vue
+// src/features/PermsGlobalToggles.vue
 var PermsGlobalToggles_default = /* @__PURE__ */ defineComponent({
 	__name: "PermsGlobalToggles",
 	props: { onToggle: { type: Function } },
@@ -26458,8 +26174,7 @@ var PermsGlobalToggles_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/PermsMatrix.vue?vue&type=script&setup=true&lang.ts
+// src/features/PermsMatrix.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$4 = {
 	key: 0,
 	class: "perms-matrix-empty"
@@ -26468,8 +26183,7 @@ var _hoisted_2$3 = ["title"];
 var _hoisted_3$3 = ["aria-label", "onClick"];
 var _hoisted_4$3 = ["aria-label", "onClick"];
 var EMPTY = "No agent groups yet.";
-//#endregion
-//#region src/features/PermsMatrix.vue
+// src/features/PermsMatrix.vue
 var PermsMatrix_default = /* @__PURE__ */ defineComponent({
 	__name: "PermsMatrix",
 	props: { onToggle: { type: Function } },
@@ -26530,8 +26244,7 @@ var PermsMatrix_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/auth.ts
+// src/features/auth.ts
 var deps = {};
 /** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideAuthDeps(provided) {
@@ -26736,8 +26449,7 @@ function wireAuthPanel() {
 		}
 	});
 }
-//#endregion
-//#region src/features/perms.ts
+// src/features/perms.ts
 function openPermissions() {
 	openFullView(() => {
 		hideOtherFullViews("permissions");
@@ -26951,8 +26663,7 @@ function wirePermsNew() {
 function normalizeWebchatHandle(raw) {
 	return raw.toLowerCase().replace(/[^a-z0-9._@+-]/g, "-");
 }
-//#endregion
-//#region src/features/cloud-models.ts
+// src/features/cloud-models.ts
 async function loadCloudModels() {
 	if (!state.isOwnerView) return null;
 	let info;
@@ -26990,8 +26701,7 @@ function wireCloudModels() {
 		if (state.isOwnerView) loadCloudModels();
 	});
 }
-//#endregion
-//#region src/features/ollama-names.ts
+// src/features/ollama-names.ts
 /**
 * An Ollama model tag as the server spells it (ollama-manage.ts
 * normalizeOllamaModelName): trimmed, lowercase, no whitespace. The UI must
@@ -27007,15 +26717,13 @@ function sameOllamaModel(a, b) {
 	const y = normalizeOllamaModelName(b);
 	return x === y || x === `${y}:latest` || `${x}:latest` === y;
 }
-//#endregion
-//#region src/features/InstallProgress.vue?vue&type=script&setup=true&lang.ts
+// src/features/InstallProgress.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$3 = {
 	key: 0,
 	class: "wizard-code",
 	"aria-live": "polite"
 };
-//#endregion
-//#region src/features/InstallProgress.vue
+// src/features/InstallProgress.vue
 var InstallProgress_default = /* @__PURE__ */ defineComponent({
 	__name: "InstallProgress",
 	props: { text: {} },
@@ -27030,8 +26738,7 @@ var InstallProgress_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/model-catalog.ts
+// src/features/model-catalog.ts
 var MODEL_CATALOG = {
 	Mistral: [
 		{
@@ -27100,8 +26807,7 @@ var MODEL_CATALOG = {
 		gb: 8.1
 	}]
 };
-//#endregion
-//#region src/features/AddModel.vue?vue&type=script&setup=true&lang.ts
+// src/features/AddModel.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$2 = { class: "model-add-modes" };
 var _hoisted_2$2 = ["onClick"];
 var _hoisted_3$2 = {
@@ -27135,8 +26841,7 @@ var _hoisted_18$1 = ["disabled", "onClick"];
 var _hoisted_19$1 = { class: "model-add-row" };
 var _hoisted_20$1 = ["disabled"];
 var OTHER = "";
-//#endregion
-//#region src/features/AddModel.vue
+// src/features/AddModel.vue
 var AddModel_default = /* @__PURE__ */ defineComponent({
 	__name: "AddModel",
 	props: {
@@ -27522,8 +27227,7 @@ var AddModel_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/add-model.ts
+// src/features/add-model.ts
 var app = null;
 function showCustom(show) {
 	const box = $("#model-add-custom");
@@ -27547,8 +27251,7 @@ function openAddModel() {
 	});
 	app.mount(host);
 }
-//#endregion
-//#region src/features/JsonNode.vue?vue&type=script&setup=true&lang.ts
+// src/features/JsonNode.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$1 = ["open"];
 var _hoisted_2$1 = {
 	key: 0,
@@ -27572,8 +27275,7 @@ var _hoisted_7$1 = {
 	class: "json-key"
 };
 var CHILD_LIMIT = 500;
-//#endregion
-//#region src/features/JsonNode.vue
+// src/features/JsonNode.vue
 var JsonNode_default = /* @__PURE__ */ defineComponent({
 	name: "JsonNode",
 	__name: "JsonNode",
@@ -27653,8 +27355,7 @@ function composeTextFrom(event, frame, nonce) {
 	const clean = cleanComposeText(text).slice(0, COMPOSE_MAX);
 	return clean.trim() ? clean : null;
 }
-//#endregion
-//#region src/features/AttachmentDrawer.vue?vue&type=script&setup=true&lang.ts
+// src/features/AttachmentDrawer.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1 = [
 	"aria-valuenow",
 	"aria-valuetext",
@@ -27709,8 +27410,7 @@ var _hoisted_20 = {
 };
 var _hoisted_21 = ["aria-label"];
 var _hoisted_22 = ["innerHTML"];
-//#endregion
-//#region src/features/AttachmentDrawer.vue
+// src/features/AttachmentDrawer.vue
 var AttachmentDrawer_default = /* @__PURE__ */ defineComponent({
 	__name: "AttachmentDrawer",
 	setup(__props) {
@@ -28067,14 +27767,12 @@ var AttachmentDrawer_default = /* @__PURE__ */ defineComponent({
 		};
 	}
 });
-//#endregion
-//#region src/features/attachment-drawer.ts
+// src/features/attachment-drawer.ts
 var drawerApp = null;
 function mountAttachmentDrawer() {
 	drawerApp ??= mountIsland("#attachment-drawer-root", () => createApp(AttachmentDrawer_default));
 }
-//#endregion
-//#region src/composition-root.ts
+// src/composition-root.ts
 marked.setOptions({
 	breaks: true,
 	gfm: true
@@ -28635,4 +28333,3 @@ provideSelectToggleDeps({
 		if (!$("#mtab-routing").hidden) renderRouterRoster();
 	}
 });
-//#endregion
