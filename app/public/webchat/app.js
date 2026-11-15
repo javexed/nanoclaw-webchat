@@ -10419,290 +10419,6 @@ function wireDocLinks(root = document) {
 	});
 }
 //#endregion
-//#region src/features/runners.ts
-var data$1 = null;
-var agents$1 = [];
-var selectedFp = null;
-var wired$4 = false;
-var CSRF$2 = { "X-Webchat-CSRF": "1" };
-var who = (id) => id.replace(/^webchat:/, "");
-var short = (fp) => fp.slice(0, 12);
-var ago$1 = (t) => {
-	const s = Math.max(0, Math.round((Date.now() - t) / 1e3));
-	return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
-};
-/** Agent names for display; an empty list when they cannot be read. */
-async function loadAgents() {
-	try {
-		const a = await apiJson("/api/agents");
-		return Array.isArray(a) ? a : Array.isArray(a?.agents) ? a.agents : [];
-	} catch {
-		return [];
-	}
-}
-var agentName$1 = (id) => agents$1.find((a) => a.id === id)?.name ?? id;
-async function fetchRunners() {
-	const list = $("#runner-list");
-	if (!list) return;
-	wire$3();
-	const note = $("#runner-list-note");
-	try {
-		const res = await authFetch("/api/runners");
-		if (res.status === 403) {
-			list.innerHTML = "";
-			if (note) {
-				note.textContent = "Owners and global admins only.";
-				note.hidden = false;
-			}
-			return;
-		}
-		if (!res.ok) throw new Error(`HTTP ${res.status}`);
-		data$1 = await res.json();
-		agents$1 = await loadAgents();
-		if (note) {
-			note.hidden = data$1.enabled;
-			if (!data$1.enabled) note.textContent = "Runner endpoint off (WEBCHAT_RUNNER_ENABLED).";
-		}
-		renderList$1();
-		renderExtension();
-		if (selectedFp) renderDetail();
-	} catch (err) {
-		console.error("Failed to fetch runners:", err);
-		list.innerHTML = "";
-		if (note) {
-			note.textContent = `Load failed: ${err.message ?? err}`;
-			note.hidden = false;
-		}
-	}
-}
-function live(fp) {
-	return !!data$1?.runners.some((r) => r.fingerprint === fp);
-}
-function placedOn(fp) {
-	return data$1?.placements.filter((p) => p.fingerprint === fp) ?? [];
-}
-/**
-* The runner package this install serves. Paired machines are offered it on
-* their next keepalive, so publishing here reaches every developer without a
-* file changing hands — which is also why only an admin may do it.
-*/
-function renderExtension() {
-	const box = $("#runner-ext-current");
-	if (!box) return;
-	const e = data$1?.extension;
-	box.textContent = e ? `${e.version} · ${(e.size / 1024).toFixed(0)} KB · ${ago$1(Date.parse(e.publishedAt))}${e.signature ? " · signed" : ""}` : "None published.";
-}
-function renderList$1() {
-	const list = $("#runner-list");
-	if (!list || !data$1) return;
-	if (data$1.machines.length === 0) {
-		list.innerHTML = "<li style=\"cursor:default;opacity:.6\">No runners.</li>";
-		return;
-	}
-	list.innerHTML = data$1.machines.map((m) => {
-		const n = placedOn(m.fingerprint).length;
-		const on = live(m.fingerprint);
-		return `
-      <li data-fp="${esc(m.fingerprint)}" role="button" tabindex="0"${m.fingerprint === selectedFp ? " class=\"active\"" : ""}>
-        <span class="model-kind-badge kind-${m.status}">${m.status}</span>
-        <span class="model-row-name"><span class="runner-dot${on ? " on" : ""}" title="${on ? "connected now" : "offline"}"></span>${esc(m.hostname || short(m.fingerprint))}</span>
-        <span class="model-row-host">${esc(who(m.user_id))} · ${esc(m.os)}/${esc(m.arch)}${on ? "" : ` · seen ${ago$1(m.last_seen)}`}</span>
-        ${n > 0 ? `<span class="model-row-uses">${n}×</span>` : ""}
-      </li>`;
-	}).join("");
-}
-function openRunnerDetail(fp) {
-	selectedFp = fp;
-	closeAgentDetail();
-	closeRoomDetail();
-	closeMcpDetail();
-	closeModelDetail();
-	renderList$1();
-	renderDetail();
-	const aside = $("#runner-detail");
-	if (aside) aside.hidden = false;
-}
-function closeRunnerDetail() {
-	selectedFp = null;
-	const aside = $("#runner-detail");
-	if (aside) aside.hidden = true;
-	if (data$1) renderList$1();
-}
-function renderDetail() {
-	const m = data$1?.machines.find((x) => x.fingerprint === selectedFp);
-	if (!m) {
-		closeRunnerDetail();
-		return;
-	}
-	const badge = $("#runner-detail-badge");
-	if (badge) {
-		badge.className = `model-kind-badge kind-${m.status}`;
-		badge.textContent = m.status;
-	}
-	const title = $("#runner-detail-title");
-	if (title) title.textContent = m.hostname || short(m.fingerprint);
-	const on = live(m.fingerprint);
-	const facts = $("#runner-detail-facts");
-	if (facts) facts.textContent = `${who(m.user_id)} · ${m.os}/${m.arch} · ${m.runner_version || "runner"} · ${on ? "online" : ago$1(m.last_seen)}`;
-	const pending = $("#runner-detail-pending");
-	if (pending) pending.hidden = m.status !== "pending";
-	const approved = m.status === "approved";
-	const section = $("#runner-placed-section");
-	if (section) section.hidden = !approved;
-	const approve = $("#runner-approve-actions");
-	if (approve) approve.hidden = approved;
-	const danger = $("#runner-danger");
-	if (danger) danger.hidden = !approved;
-	if (!approved) return;
-	const placed = placedOn(m.fingerprint);
-	const ul = $("#runner-placed-list");
-	if (ul) ul.innerHTML = placed.map((p) => `
-      <li class="agent-mcp-row">
-        <div class="agent-mcp-info">
-          <span class="agent-mcp-name">${esc(agentName$1(p.agent_group_id))}</span>
-          <span class="agent-mcp-meta">placed by ${esc(who(p.created_by))}</span>
-        </div>
-        <button type="button" class="agent-mcp-remove" data-unplace="${esc(p.agent_group_id)}" aria-label="Remove ${esc(agentName$1(p.agent_group_id))} from this machine">
-          <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
-        </button>
-      </li>`).join("");
-	const empty = $("#runner-placed-empty");
-	if (empty) empty.hidden = placed.length > 0;
-	const taken = new Set(data$1.placements.map((p) => p.agent_group_id));
-	const options = agents$1.filter((a) => !taken.has(a.id));
-	const select = $("#runner-place-select");
-	const btn = $("#runner-place-btn");
-	if (select) {
-		select.innerHTML = `<option value="">${options.length ? "Place agent…" : "All placed"}</option>` + options.map((a) => `<option value="${esc(a.id)}">${esc(a.name ?? a.id)}</option>`).join("");
-		select.disabled = options.length === 0;
-	}
-	if (btn) btn.disabled = options.length === 0;
-}
-async function act(run, what) {
-	try {
-		await run();
-	} catch (err) {
-		console.error(`${what} failed`, err);
-		toastError(err, `${what} failed`);
-	}
-	await fetchRunners();
-}
-function wire$3() {
-	if (wired$4) return;
-	wired$4 = true;
-	const list = $("#runner-list");
-	list?.addEventListener("click", (e) => {
-		const li = e.target.closest("li[data-fp]");
-		if (li?.dataset.fp) openRunnerDetail(li.dataset.fp);
-	});
-	list?.addEventListener("keydown", (e) => {
-		if (e.key !== "Enter" && e.key !== " ") return;
-		const li = e.target.closest("li[data-fp]");
-		if (li?.dataset.fp) {
-			e.preventDefault();
-			openRunnerDetail(li.dataset.fp);
-		}
-	});
-	$("#runner-ext-file")?.addEventListener("change", (e) => {
-		const input = e.target;
-		const files = [...input.files ?? []];
-		input.value = "";
-		if (!files.length) return;
-		const vsix = files.find((f) => f.name.endsWith(".vsix"));
-		const sig = files.find((f) => f.name.endsWith(".sig"));
-		const pub = files.find((f) => f.name.endsWith(".pub"));
-		if (vsix && !/^nanoclaw-\d+\.\d+\.\d+.*\.vsix$/.test(vsix.name)) {
-			showToast(`Expected a package named nanoclaw-<version>.vsix, not ${vsix.name}`, { kind: "error" });
-			return;
-		}
-		const failed = async (res) => {
-			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
-			return res.json();
-		};
-		if (pub) {
-			act(async () => {
-				return apiJson("/api/runners/client-config", {
-					method: "PUT",
-					headers: CSRF$2,
-					body: { releaseKey: (await pub.text()).trim() }
-				});
-			}, "Save release key");
-			return;
-		}
-		if (vsix) {
-			act(async () => {
-				const headers = {
-					...CSRF$2,
-					"X-NanoClaw-Filename": vsix.name,
-					"Content-Type": "application/octet-stream"
-				};
-				if (sig) headers["X-NanoClaw-Signature"] = btoa((await sig.text()).trim());
-				return failed(await authFetch("/api/runners/extension", {
-					method: "POST",
-					headers,
-					body: await vsix.arrayBuffer()
-				}));
-			}, `Publish ${vsix.name}`);
-			return;
-		}
-		if (sig) act(async () => {
-			const body = await sig.text();
-			return failed(await authFetch("/api/runners/extension/signature", {
-				method: "PUT",
-				headers: {
-					...CSRF$2,
-					"Content-Type": "application/json"
-				},
-				body
-			}));
-		}, `Upload ${sig.name}`);
-	});
-	$("#runner-detail-close")?.addEventListener("click", () => closeRunnerDetail());
-	$("#runner-approve-btn")?.addEventListener("click", () => {
-		const fp = selectedFp;
-		if (!fp) return;
-		act(() => apiJson(`/api/runners/machines/${encodeURIComponent(fp)}/approve`, {
-			method: "POST",
-			headers: CSRF$2
-		}), "Approve");
-	});
-	$("#runner-revoke-btn")?.addEventListener("click", () => {
-		if (!selectedFp) return;
-		const fp = selectedFp;
-		const m = data$1?.machines.find((x) => x.fingerprint === fp);
-		(async () => {
-			if (!await showConfirmModal({
-				title: `Revoke ${m?.hostname ?? "this runner"}?`,
-				body: "Its agents stop and it must be approved again to come back.",
-				confirmLabel: "Revoke",
-				destructive: true
-			})) return;
-			await act(() => apiJson(`/api/runners/machines/${encodeURIComponent(fp)}/revoke`, {
-				method: "POST",
-				headers: CSRF$2
-			}), "Revoke");
-		})();
-	});
-	$("#runner-place-btn")?.addEventListener("click", () => {
-		const agent = $("#runner-place-select")?.value;
-		if (!selectedFp || !agent) return;
-		act(() => apiJson(`/api/runners/placements/${encodeURIComponent(agent)}`, {
-			method: "PUT",
-			headers: CSRF$2,
-			body: { fingerprint: selectedFp }
-		}), "Place");
-	});
-	$("#runner-placed-list")?.addEventListener("click", (e) => {
-		const btn = e.target.closest("button[data-unplace]");
-		if (!btn) return;
-		const ag = btn.dataset.unplace;
-		act(() => apiJson(`/api/runners/placements/${encodeURIComponent(ag)}`, {
-			method: "DELETE",
-			headers: CSRF$2
-		}), "Remove placement");
-	});
-}
-//#endregion
 //#region src/features/hostlist.ts
 function hostListEditor(root, save, empty = "<p class=\"cred-hint\">None.</p>") {
 	let hosts = [];
@@ -10763,6 +10479,19 @@ function hostListEditor(root, save, empty = "<p class=\"cred-hint\">None.</p>") 
 }
 //#endregion
 //#region src/features/network.ts
+var ago$1 = (t) => {
+	const s = Math.max(0, Math.round((Date.now() - t) / 1e3));
+	return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
+};
+/** Agent names for display; an empty list when they cannot be read. */
+async function loadAgents() {
+	try {
+		const a = await apiJson("/api/agents");
+		return Array.isArray(a) ? a : Array.isArray(a?.agents) ? a.agents : [];
+	} catch {
+		return [];
+	}
+}
 /** One-click additions. Organisation-specific hosts belong in the install's own defaults (.env), not here. */
 var PRESETS = {
 	npm: ["registry.npmjs.org"],
@@ -10835,10 +10564,10 @@ async function saveInstall(list) {
 		return null;
 	}
 }
-var wired$3 = false;
+var wired$2 = false;
 function wire$2() {
-	if (wired$3) return;
-	wired$3 = true;
+	if (wired$2) return;
+	wired$2 = true;
 	const root = $("#runner-egress-hosts");
 	if (root) editor = hostListEditor(root, saveInstall);
 	$("#runner-egress-presets")?.addEventListener("click", (e) => {
@@ -14453,9 +14182,6 @@ function switchManageTab(tab) {
 	$("#mtab-agents").hidden = tab !== "agents";
 	$("#mtab-models").hidden = tab !== "models";
 	$("#mtab-mcp").hidden = tab !== "mcp";
-	const runnersPane = $("#mtab-runners");
-	if (runnersPane) runnersPane.hidden = tab !== "runners";
-	if (tab !== "runners") closeRunnerDetail();
 	const networkPane = $("#mtab-network");
 	if (networkPane) networkPane.hidden = tab !== "network";
 	$("#mtab-skills").hidden = tab !== "skills";
@@ -14474,7 +14200,6 @@ function switchManageTab(tab) {
 	}
 	if (tab === "agents") fetchAgents();
 	else if (tab === "models") fetchModels();
-	else if (tab === "runners") fetchRunners();
 	else if (tab === "network") fetchNetwork();
 	else if (tab === "mcp") {
 		fetchMcpServers();
@@ -22854,7 +22579,7 @@ var Preflight_default = /* @__PURE__ */ defineComponent({
 var sttChosenBackend = ref("local");
 //#endregion
 //#region src/features/signins.ts
-var wired$2 = false;
+var wired$1 = false;
 async function renderSignins() {
 	const section = $("#settings-signins");
 	if (!section) return;
@@ -22885,8 +22610,8 @@ async function renderSignins() {
 	$("#signins-signout").hidden = !view.viaSession;
 }
 function wire$1() {
-	if (wired$2) return;
-	wired$2 = true;
+	if (wired$1) return;
+	wired$1 = true;
 	$("#signins-list").addEventListener("click", (e) => {
 		const btn = e.target.closest(".signins-unlink");
 		if (btn?.dataset.alias) unlink(btn.dataset.alias);
@@ -22957,100 +22682,6 @@ function consumeSigninResult() {
 			timeout: 9e3
 		});
 	} else if (done === "linked") showToast("Sign-in linked", { kind: "success" });
-}
-//#endregion
-//#region src/features/vscode.ts
-var wired$1 = false;
-/** The id the extension is published under by default; an install may package its own (central says which). */
-var DEFAULT_EXTENSION_ID = "nanoclaw.vscode";
-/** <publisher>.<name>, as central reads it from the published package (runner-extension.ts). */
-var EXTENSION_ID = /^[A-Za-z0-9][A-Za-z0-9-]*\.[A-Za-z0-9][A-Za-z0-9-]*$/;
-/**
-* vscode://<extension id>/connect?server=…, with only the settings that are
-* set. An id that is not <publisher>.<name> would change what the URL points
-* at, so it falls back to the default.
-*/
-function connectLink(origin, config, extensionId = DEFAULT_EXTENSION_ID) {
-	const id = typeof extensionId === "string" && EXTENSION_ID.test(extensionId) ? extensionId : DEFAULT_EXTENSION_ID;
-	const q = new URLSearchParams({ server: origin });
-	for (const k of [
-		"signIn",
-		"tenantId",
-		"appIdUri",
-		"clientId",
-		"releaseKey"
-	]) {
-		const v = config[k];
-		if (typeof v === "string" && v) q.set(k, v);
-	}
-	return `vscode://${id}/connect?${q}`;
-}
-async function renderVsCodeSettings() {
-	const section = $("#settings-vscode");
-	if (!section) return;
-	let published = false;
-	try {
-		await apiJson("/api/runners/extension");
-		published = true;
-	} catch {
-		published = false;
-	}
-	section.hidden = !published;
-	if (!published || wired$1) return;
-	wired$1 = true;
-	$("#vscode-download")?.addEventListener("click", () => void download());
-	$("#vscode-connect")?.addEventListener("click", () => void connect$1());
-}
-async function download() {
-	try {
-		const res = await authFetch("/api/runners/extension/download");
-		if (!res.ok) throw new Error(`HTTP ${res.status}`);
-		const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? "nanoclaw.vsix";
-		const url = URL.createObjectURL(await res.blob());
-		Object.assign(document.createElement("a"), {
-			href: url,
-			download: name
-		}).click();
-		setTimeout(() => URL.revokeObjectURL(url), 1e4);
-	} catch (err) {
-		toastError(err, "Download failed");
-	}
-}
-/**
-* Does this person have the extension on a machine that can answer the link?
-* An older build carries a different extension id, so VS Code fails the link
-* with "not found". Central only knows which build each machine last connected
-* with, so this decides whether to add advice, never whether to open the link.
-*/
-function hasCurrentExtension(machines) {
-	return machines.some((m) => {
-		const v = /(\d+)\.(\d+)\.(\d+)/.exec(m.runner ?? "");
-		return v !== null && (Number(v[1]) > 0 || Number(v[2]) >= 13);
-	});
-}
-/** Open the connect link; where the extension may be missing, say what a "not found" means. */
-async function connect$1() {
-	let machines = [];
-	try {
-		machines = (await apiJson("/api/runners/mine")).machines;
-	} catch {
-		machines = [];
-	}
-	let extensionId;
-	try {
-		extensionId = (await apiJson("/api/runners/extension")).id;
-	} catch {
-		extensionId = void 0;
-	}
-	try {
-		const res = await authFetch("/api/runners/client-config");
-		if (!res.ok) throw new Error(`HTTP ${res.status}`);
-		window.location.href = connectLink(window.location.origin, await res.json(), extensionId);
-	} catch (err) {
-		toastError(err, "Connect failed");
-		return;
-	}
-	if (!hasCurrentExtension(machines)) showToast("VS Code says \"not found\"? Install the extension first: 1. Download, then \"Install from VSIX\" in VS Code.", { timeout: 15e3 });
 }
 //#endregion
 //#region src/features/PrejudgeModelOptions.vue?vue&type=script&setup=true&lang.ts
@@ -23551,7 +23182,6 @@ function openSettings() {
 	renderSettingsModal();
 	Promise.allSettled([renderTtsSetupSettings(), renderSttSetupSettings()]).then(syncFeaturesColumn);
 	renderMyCredentials();
-	renderVsCodeSettings();
 	renderSignins();
 	$("#settings-overlay").hidden = false;
 	const focusable = $("#settings-overlay .modal").querySelectorAll("button, input, select, [tabindex]:not([tabindex=\"-1\"])");
@@ -24702,12 +24332,10 @@ async function probeIsOwner() {
 			state.isOwnerView = !!(me && userIsOwner(me));
 			isWorkspaceAdminView.value = state.isOwnerView || !!(me && userIsGlobalAdmin(me));
 			$("#overflow-signin").hidden = !isWorkspaceAdminView.value;
-			let extensions = [];
 			try {
 				const fr = await authFetch("/api/webchat/features");
 				const feats = fr.ok ? await fr.json() : {};
 				state.marketplaceEnabled = feats.marketplaceEnabled === true;
-				extensions = Array.isArray(feats.extensions) ? feats.extensions : [];
 				renderCredentialIsolation(feats);
 			} catch {
 				state.marketplaceEnabled = false;
@@ -24716,10 +24344,6 @@ async function probeIsOwner() {
 				$("#overflow-mcp")?.removeAttribute("hidden");
 				$("#mtab-mcp-btn")?.removeAttribute("hidden");
 				$("#mtab-skills-btn")?.removeAttribute("hidden");
-				if (extensions.includes("vscode")) {
-					$("#mtab-runners-btn")?.removeAttribute("hidden");
-					$("#overflow-runners")?.removeAttribute("hidden");
-				}
 				$("#mtab-network-btn")?.removeAttribute("hidden");
 				$("#overflow-network")?.removeAttribute("hidden");
 				$("#overflow-skills")?.removeAttribute("hidden");
@@ -26650,9 +26274,6 @@ function fillOidc() {
 	input("#si-client").value = same ? v.oidc.clientId : "";
 	input("#si-secret").value = "";
 	input("#si-secret").placeholder = same && v.oidc.secretSet ? "••••••••" : "optional";
-	input("#si-appiduri").value = v.vscode.appIdUri;
-	input("#si-appiduri").placeholder = v.vscode.defaultAppIdUri || "api://<client id>";
-	input("#si-vscode-client").value = v.vscode.clientId;
 }
 /** Send a change; on refusal show why and put the page back as it was. */
 async function send(path, method, body) {
@@ -26689,27 +26310,8 @@ async function saveOidc() {
 	};
 	const secret = input("#si-secret").value.trim();
 	if (secret) body.clientSecret = secret;
-	const appIdUri = input("#si-appiduri").value.trim();
-	const clientId = input("#si-vscode-client").value.trim();
 	document.activeElement?.blur();
 	if (!await send("oidc", "PUT", body)) return;
-	if (provider === "microsoft") {
-		if (appIdUri !== view?.vscode.appIdUri || clientId !== view?.vscode.clientId) {
-			try {
-				await apiJson("/api/runners/client-config", {
-					method: "PUT",
-					headers: CSRF,
-					body: {
-						appIdUri,
-						clientId
-					}
-				});
-			} catch (err) {
-				toastError(err, "VS Code settings not saved");
-			}
-			await load();
-		}
-	}
 	showToast("Saved", { kind: "success" });
 }
 function wire() {
@@ -26929,48 +26531,6 @@ var PermsMatrix_default = /* @__PURE__ */ defineComponent({
 	}
 });
 //#endregion
-//#region src/features/vscode-start.ts
-var POLL_MS = 1e4;
-var published = null;
-var timer = null;
-var started = false;
-async function refreshStatus() {
-	const line = $("#vscode-start-status");
-	if (!line) return;
-	let machines = [];
-	try {
-		machines = (await apiJson("/api/runners/mine")).machines;
-	} catch {
-		machines = [];
-	}
-	const m = machines[0];
-	line.hidden = !m;
-	if (m) line.textContent = `${m.hostname || "This runner"}: ${m.status === "pending" ? "waiting for approval" : "approved"}`;
-}
-function show(on) {
-	const card = $("#vscode-start");
-	if (!card) return;
-	card.hidden = !on;
-	if (on && !timer) {
-		refreshStatus();
-		timer = setInterval(() => void refreshStatus(), POLL_MS);
-	} else if (!on && timer) {
-		clearInterval(timer);
-		timer = null;
-	}
-}
-function initVsCodeStart() {
-	if (started) return;
-	started = true;
-	$("#vscode-start-download")?.addEventListener("click", () => void download());
-	$("#vscode-start-connect")?.addEventListener("click", () => void connect$1());
-	apiJson("/api/runners/extension").then(() => published = true).catch(() => published = false).finally(() => {
-		watchEffect(() => {
-			show(Boolean(published) && roomsReceived.value && !state.currentRoom && state.lastRoomsList.length === 0);
-		});
-	});
-}
-//#endregion
 //#region src/features/auth.ts
 var deps = {};
 /** Wire the composition-root helpers this module calls. Call once at startup. */
@@ -27027,7 +26587,6 @@ function enterAuthedApp() {
 	connect();
 	cacheAuthHint();
 	if (state.settings?.notifications && typeof Notification !== "undefined" && Notification.permission === "granted") enableWebPush();
-	initVsCodeStart();
 	maybeAutoOpenWizard();
 	maybeSuggestBearerRetire();
 	initSttFeature();
@@ -28566,7 +28125,6 @@ $("#overflow-menu")?.addEventListener("click", (e) => {
 	else if (action === "models") openManage("models");
 	else if (action === "mcp") openManage("mcp");
 	else if (action === "skills") openManage("skills");
-	else if (action === "runners") openManage("runners");
 	else if (action === "network") openManage("network");
 	else if (action === "routing") openManage("routing");
 	else if (action === "journey") toggleJourney();

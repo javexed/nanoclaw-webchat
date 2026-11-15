@@ -11,7 +11,7 @@
  *
  * Origin: a browser WebSocket carries the page's Origin, and a cross-site
  * page must not open one with the visitor's ambient identity. Clients that
- * are not browsers (the VS Code extension) send none.
+ * are not browsers (scripts, CLIs) send none.
  */
 import type { IncomingMessage } from 'http';
 import net from 'net';

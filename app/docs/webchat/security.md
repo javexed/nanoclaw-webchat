@@ -490,34 +490,6 @@ control. The real boundary is the user mapping plus the mount set.
 On a swapless host `--memory` is a hard cap and a runaway is OOM-killed at the
 limit.
 
-## Runner releases
-
-With the VS Code runner (`/add-vscode-runner`), central serves the extension
-package to every paired laptop. HTTPS proves only that the bytes came from
-central; a compromised central could ship its own. Releases are therefore
-signed with an operator Ed25519 key kept off central
-(`scripts/sign-runner-release.ts` in the overlay repo), and the extension
-verifies against a key pinned per install origin before installing an update.
-Central stores and serves signatures and checks uploads against the install's
-release key, but cannot make one. The first pin (and any key change) is a modal
-confirmation showing the fingerprint — trust on first use; declining it refuses
-that install's releases; `nanoclaw.releaseSigningKey` pins out of band.
-Details: [runners.md](./runners.md#signed-releases).
-
-## Runner machine identity
-
-A runner connection authenticates twice: as a person (Entra token, Tailscale
-or trusted-proxy identity) and as a machine. The machine proves an Ed25519
-key held in VS Code's secret storage by signing a fresh challenge bound to its
-fingerprint and to the origin it dialled, checked against the addresses
-central is configured with (never the request's own headers, which a relaying
-server controls); the registry binds the key on first
-sight and never replaces it (`webchat_runner_machines.public_key`, cleared by
-revoke). A new machine without a key is refused, and so is one revoked and
-approved again; machines paired before keys existed are admitted keyless and
-audited until they bind one. Protocol and
-cases: [runners.md](./runners.md#pairing-and-placement).
-
 ## Approval TTL
 
 A pending approval that nobody answers **denies itself** after

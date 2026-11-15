@@ -33,11 +33,8 @@ import { stagedEnv } from './staged-env.js';
 import { registerChannelAdapter } from '../channel-registry.js';
 import type { ChannelAdapter, ChannelSetup, InboundMessage, OutboundMessage } from '../adapter.js';
 import type { AgentActivityStatus } from '../../seam/index.js';
-import { runChannelStart } from './extensions.js';
 import { isOllamaLenient, primeOllamaLenient, refreshOllamaLenient } from './ollama-lenient.js';
 import { ensureRouterNetwork, syncRouterSecretHold } from './cloud-models.js';
-// Registers every installed extension before the server starts.
-import './extensions-installed.js';
 import { pruneSigninSessions } from './signins.js';
 import { pruneAuditFiles } from '../../audit.js';
 import { redactSensitiveData } from './redact.js';
@@ -191,8 +188,6 @@ function createAdapter(): ChannelAdapter {
       void startMcpRelayIfAssigned();
       // Before any spawn reads it: which groups run on a local Ollama model.
       primeOllamaLenient().catch((err) => log.warn('Ollama lenient-mode prime failed', { err }));
-      // Installed extensions' own background services (./extensions.ts).
-      runChannelStart();
       // Which model hosts answer: failover at spawn, the classifier's host, the router's host list.
       startModelHostSweep();
       // A GitHub Copilot sign-in killed with the last host leaves a 0600 token

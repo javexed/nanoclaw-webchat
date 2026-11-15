@@ -148,43 +148,6 @@ export function getActiveTurns(roomId: string): string[] {
   return [...(activeTurns.get(roomId) ?? [])];
 }
 
-/** Anything that mirrors a room outside the PWA socket (a laptop's chat view over the runner link). Gets the REDACTED message. */
-const roomMessageSubscribers = new Set<(roomId: string, msg: Record<string, unknown>) => void>();
-export function onRoomMessage(cb: (roomId: string, msg: Record<string, unknown>) => void): () => void {
-  roomMessageSubscribers.add(cb);
-  return () => roomMessageSubscribers.delete(cb);
-}
-/** Hand an already-redacted room message to the mirrors. `broadcast` calls this; tests may too. */
-export function notifyRoomMessage(roomId: string, msg: Record<string, unknown>): void {
-  for (const cb of roomMessageSubscribers) {
-    try {
-      cb(roomId, msg);
-    } catch (err) {
-      log.warn('Webchat: room message subscriber threw', { roomId, err });
-    }
-  }
-}
-
-/**
- * Agent activity (`status` frames: start / tool / progress / reasoning / done /
- * stalled) for mirrors that are not websocket clients — the VS Code chat view.
- * The frames are already redacted by the adapter that emits them.
- */
-const roomStatusSubscribers = new Set<(roomId: string, msg: Record<string, unknown>) => void>();
-export function onRoomStatus(cb: (roomId: string, msg: Record<string, unknown>) => void): () => void {
-  roomStatusSubscribers.add(cb);
-  return () => roomStatusSubscribers.delete(cb);
-}
-export function notifyRoomStatus(roomId: string, msg: Record<string, unknown>): void {
-  for (const cb of roomStatusSubscribers) {
-    try {
-      cb(roomId, msg);
-    } catch (err) {
-      log.warn('Webchat: room status subscriber threw', { roomId, err });
-    }
-  }
-}
-
 /**
  * Fan a frame out to the room's clients, and for a message, an `unread` (or
  * `mention`) signal to everyone elsewhere. `senderUserId` names the user who
@@ -194,11 +157,9 @@ export function notifyRoomStatus(roomId: string, msg: Record<string, unknown>): 
  */
 export async function broadcast(roomId: string, msg: object, excludeId?: string, senderUserId?: string): Promise<void> {
   const isMessage = (msg as { type?: string }).type === 'message';
-  if ((msg as { type?: string }).type === 'status') notifyRoomStatus(roomId, msg as Record<string, unknown>);
   const outgoing = isMessage
     ? { ...msg, content: redactMessageContent((msg as { content?: string }).content || '') }
     : msg;
-  if (isMessage) notifyRoomMessage(roomId, outgoing as Record<string, unknown>);
   const payload = JSON.stringify(outgoing);
   const notifyPayload = isMessage ? JSON.stringify({ type: 'unread', room_id: roomId }) : '';
 

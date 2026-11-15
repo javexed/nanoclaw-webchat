@@ -230,7 +230,7 @@ src/modules/approvals/primitive.ts
 src/modules/approvals/response-handler.test.ts
     tests for the double-fire guard
 src/modules/approvals/response-handler.ts
-    double-fire guard on the approve path (slow handler tempts a second click); session-less rows (runner pairing) routed to sessionless.ts
+    double-fire guard on the approve path (slow handler tempts a second click); session-less rows (workload approval cards) routed to sessionless.ts
     checkApprovalClick: a refusal carries a reason the channel can show; an owner may decide a card named for someone else (audited as approval.owner_override)
 src/modules/self-mod/apply.ts
     respawn ALL of a group's sessions after install/mcp change, not just one

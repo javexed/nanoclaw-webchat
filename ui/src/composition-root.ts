@@ -374,7 +374,6 @@ $('#overflow-menu')?.addEventListener('click', (e) => {
   else if (action === 'models') openManage('models');
   else if (action === 'mcp') openManage('mcp');
   else if (action === 'skills') openManage('skills');
-  else if (action === 'runners') openManage('runners');
   else if (action === 'network') openManage('network');
   else if (action === 'routing') openManage('routing');
   else if (action === 'journey') toggleJourney();

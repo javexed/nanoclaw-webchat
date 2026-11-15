@@ -129,9 +129,6 @@
         <path d="M9 2v2" />
         <path d="M9 20v2" />
       </symbol>
-      <symbol id="i-laptop" viewBox="0 0 24 24">
-        <path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16" />
-      </symbol>
       <symbol id="i-plug" viewBox="0 0 24 24">
         <path d="M12 22v-5" />
         <path d="M9 8V2" />
@@ -284,9 +281,6 @@
                 <button id="overflow-skills" class="overflow-item" data-action="skills" role="menuitem" hidden>
                   <svg class="icon" aria-hidden="true"><use href="#i-book-open"></use></svg>&nbsp;&nbsp;Skills
                   <span id="learn-drafts-count" class="menu-count" hidden></span>
-                </button>
-                <button id="overflow-runners" class="overflow-item" data-action="runners" role="menuitem" hidden>
-                  <svg class="icon" aria-hidden="true"><use href="#i-laptop"></use></svg>&nbsp;&nbsp;Runners
                 </button>
                 <button id="overflow-network" class="overflow-item" data-action="network" role="menuitem" hidden>
                   <svg class="icon" aria-hidden="true"><use href="#i-globe"></use></svg>&nbsp;&nbsp;Network
@@ -526,16 +520,6 @@
             >
               <div id="messages">
                 <div id="empty-state" class="empty-state">Select a room from the sidebar to start chatting</div>
-              </div>
-              <!-- VS Code, first run (vscode-start.ts): shown while you have no rooms. -->
-              <div id="vscode-start" class="vscode-start" hidden>
-                <h3 class="settings-section-title">VS Code</h3>
-                <p class="cred-hint">Install the download in VS Code first.</p>
-                <div class="settings-vscode-actions">
-                  <button id="vscode-start-download" type="button" class="btn btn-secondary">1. Download</button>
-                  <button id="vscode-start-connect" type="button" class="btn btn-primary">2. Connect VS Code</button>
-                </div>
-                <p id="vscode-start-status" class="cred-hint" hidden></p>
               </div>
             </div>
             <div id="typing-indicator" class="typing-indicator" aria-hidden="true"></div>
@@ -1372,34 +1356,6 @@
               </div>
             </div>
           </aside>
-          <aside id="runner-detail" class="agent-detail" hidden>
-            <div class="agent-detail-header">
-              <span id="runner-detail-badge" class="model-kind-badge"></span>
-              <span id="runner-detail-title">Runner</span>
-              <button id="runner-detail-close" class="members-close" aria-label="Close">
-                <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
-              </button>
-            </div>
-            <div class="agent-detail-form">
-              <p id="runner-detail-facts" class="room-prime-note"></p>
-              <p id="runner-detail-pending" class="room-prime-note" hidden>Awaiting approval.</p>
-              <div id="runner-placed-section" class="agent-mcp-section">
-                <span class="form-label">Placed agents</span>
-                <ul id="runner-placed-list" class="agent-mcp-list"></ul>
-                <p id="runner-placed-empty" class="agent-mcp-empty" hidden>None.</p>
-                <div id="runner-place-row" class="model-id-row">
-                  <select id="runner-place-select" aria-label="Agent to place"></select>
-                  <button type="button" id="runner-place-btn" class="btn btn-secondary">Place</button>
-                </div>
-              </div>
-              <div id="runner-approve-actions" class="agent-detail-actions">
-                <button type="button" id="runner-approve-btn" class="btn btn-primary">Approve</button>
-              </div>
-              <div id="runner-danger" class="agent-detail-danger">
-                <button type="button" id="runner-revoke-btn" class="btn btn-danger">Revoke</button>
-              </div>
-            </div>
-          </aside>
           <aside id="mcp-detail" class="agent-detail" hidden>
             <!-- Edit mode -->
             <div id="mcp-edit-view">
@@ -1598,9 +1554,6 @@
             <button class="manage-tab" data-mtab="models" role="tab" aria-selected="false" aria-controls="mtab-models" aria-label="Models" title="Models">
               <svg class="icon" aria-hidden="true"><use href="#i-cpu"></use></svg>
             </button>
-            <button id="mtab-runners-btn" class="manage-tab" data-mtab="runners" role="tab" aria-selected="false" aria-controls="mtab-runners" aria-label="Runners" title="Runners" hidden>
-              <svg class="icon" aria-hidden="true"><use href="#i-laptop"></use></svg>
-            </button>
             <button id="mtab-network-btn" class="manage-tab" data-mtab="network" role="tab" aria-selected="false" aria-controls="mtab-network" aria-label="Network" title="Network" hidden>
               <svg class="icon" aria-hidden="true"><use href="#i-globe"></use></svg>
             </button>
@@ -1662,14 +1615,6 @@
               <div id="ollama-host-cards"></div>
             </div>
                       </div>
-          <div id="mtab-runners" class="manage-pane" role="tabpanel" hidden>
-            <ul id="runner-list"></ul>
-            <p id="runner-list-note" class="runners-note" hidden></p>
-            <h3 class="runners-h">Runner extension</h3>
-            <p id="runner-ext-current" class="runners-note"></p>
-            <label class="btn btn-secondary btn-sm" for="runner-ext-file">Publish…</label>
-            <input id="runner-ext-file" type="file" accept=".vsix,.sig,.pub" multiple hidden />
-          </div>
           <div id="mtab-network" class="manage-pane" role="tabpanel" hidden>
             <h3 class="runners-h">Allowlist</h3>
             <p class="runners-note">Every agent on Allowlist: <code>host</code>, <code>*.domain</code>, <code>:port</code> optional. Other than 443 or 80, a port connects directly (SSH).</p>
@@ -2027,12 +1972,6 @@
               </label>
               <label class="signin-field"><span class="form-label">Client secret</span>
                 <input id="si-secret" type="password" placeholder="optional" autocomplete="new-password" spellcheck="false" />
-              </label>
-              <label class="signin-field" data-for="microsoft"><span class="form-label">VS Code App ID URI</span>
-                <input id="si-appiduri" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" />
-              </label>
-              <label class="signin-field" data-for="microsoft"><span class="form-label">VS Code client ID</span>
-                <input id="si-vscode-client" type="text" placeholder="optional" autocomplete="off" autocapitalize="none" spellcheck="false" />
               </label>
               <div class="signin-field"><span class="form-label">Redirect URI</span>
                 <div class="signin-copy"><code id="si-redirect"></code><button id="si-redirect-copy" type="button" class="btn btn-ghost btn-sm">Copy</button></div>
@@ -2775,17 +2714,6 @@
               <h3 class="settings-section-title">Secrets only you use</h3>
               <p class="cred-hint">Your own turns only. Wins over the agent’s and all-agents ones.</p>
               <div id="my-credentials-list"></div>
-            </div>
-            <!-- VS Code — the runner extension, for everyone; hidden until one is published. -->
-            <div id="settings-vscode" class="settings-credentials" hidden>
-              <h3 class="settings-section-title">VS Code</h3>
-              <!-- Connect opens a vscode:// link, which only works once the extension is
-                   installed; VS Code otherwise looks it up in its marketplace and fails. -->
-              <p class="cred-hint">Install the download in VS Code first.</p>
-              <div class="settings-vscode-actions">
-                <button id="vscode-download" type="button" class="btn btn-secondary btn-sm">1. Download</button>
-                <button id="vscode-connect" type="button" class="btn btn-secondary btn-sm">2. Connect VS Code</button>
-              </div>
             </div>
             <!-- Workspace credentials policy — owner only (shown when canEdit). -->
             <!-- Access & security — owner/global-admin. The bearer-token opt-out

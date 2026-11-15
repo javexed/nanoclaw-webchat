@@ -30,7 +30,6 @@ import {
 import { setBearerTokenDisabled, setPromoteFirstTailscaleOwner } from '../db.js';
 import { CALLBACK_PATH, requestOrigin } from '../oidc-login.js';
 import { isGlobalAdmin, isOwner } from '../roles.js';
-import { extensionSigninSections } from '../extensions.js';
 import {
   applyOidc,
   applyProxy,
@@ -65,8 +64,6 @@ async function view(req: IncomingMessage, auth: AuthResult): Promise<Record<stri
     oidc: { ...readOidc(), redirectUri: `${requestOrigin(req, isTls(req))}${CALLBACK_PATH}` },
     proxy: readProxy(),
     token: { configured: info.bearerConfigured, enabled: info.bearerActive },
-    // Sections installed extensions add (e.g. vscode, from the VS Code runner).
-    ...(await extensionSigninSections()),
   };
 }
 

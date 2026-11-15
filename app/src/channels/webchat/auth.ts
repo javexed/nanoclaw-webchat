@@ -148,7 +148,7 @@ const PLATFORM_HEADERS: Array<{ identity: string; verify: string; name: string }
  * other OpenID Connect provider (Okta, Google, Keycloak, Authentik …).
  *
  * Tokens arrive three ways: the web app's own sign-in (oidc-login.ts), a
- * Bearer from a non-browser client (the VS Code extension), and App Service
+ * Bearer from a non-browser client (a script or CLI), and App Service
  * EasyAuth's x-ms-token-aad-id-token. Verifying the token is strictly better
  * than trusting EasyAuth's sibling x-ms-client-principal-name header: that is
  * unsigned base64, protected only by network position.
@@ -533,7 +533,7 @@ async function authenticate(req: IncomingMessage): Promise<AuthResult | AuthFail
   //
   //     Two sources. EasyAuth forwards the browser's id token in
   //     x-ms-token-aad-id-token when its token store is on; a non-browser
-  //     client (a runner daemon, an extension) would present its own token as
+  //     client (a script or CLI) would present its own token as
   //     a Bearer. Same verification either way.
   //
   //     A token that fails verification FALLS THROUGH rather than refusing:
