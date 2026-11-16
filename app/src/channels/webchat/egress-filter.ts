@@ -138,7 +138,7 @@ export function inOwnNetwork(host: string, cidrs: string[]): boolean {
 }
 
 /** Pipe a client to a socket this filter opened itself (no gateway in between). */
-function spliceDirect(client: ProxyClient, req: ParsedRequest, rest: Buffer, upstream: Duplex): void {
+export function spliceDirect(client: ProxyClient, req: ParsedRequest, rest: Buffer, upstream: Duplex): void {
   upstream.on('error', () => client.destroy());
   client.on('error', () => upstream.destroy());
   if (req.kind === 'connect') client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
@@ -181,7 +181,7 @@ async function connectDirect(host: string, port: number, pinned?: string, privat
 }
 
 /** A TCP connection to a literal address, with the direct-connect timeout. */
-function connectTcp(address: string, port: number): Promise<net.Socket> {
+export function connectTcp(address: string, port: number): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
     const sock = net.connect({ host: address, port });
     const timer = setTimeout(() => {
@@ -210,7 +210,7 @@ export type ProxyClient = Duplex & { remoteAddress?: string };
 const HEAD_TIMEOUT_MS = 10_000;
 
 /** Answer a proxy client and close. */
-function answer(sock: ProxyClient, status: string, message: string, extra = ''): void {
+export function answer(sock: ProxyClient, status: string, message: string, extra = ''): void {
   const body = `${message}\n`;
   sock.end(
     `HTTP/1.1 ${status}\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n${extra}\r\n${body}`,
@@ -311,9 +311,12 @@ export function parseProxyHead(head: string): ParsedRequest | { error: string; s
   return { error: 'this proxy speaks CONNECT and absolute-form HTTP', status: '501 Not Implemented' };
 }
 
-/** Serve one proxied connection from a local agent's container. */
-export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDeps): Promise<void> {
-  client.on('error', () => {});
+/**
+ * Read a proxy request's head (up to the blank line), or null: too long, the
+ * client went away, or it sent nothing in time. The client is left paused,
+ * with whatever followed the head in `rest`.
+ */
+export async function readProxyHead(client: ProxyClient): Promise<{ head: string; rest: Buffer } | null> {
   let buf = Buffer.alloc(0);
   let timer: NodeJS.Timeout | undefined;
   const head = await new Promise<{ head: string; rest: Buffer } | null>((resolve) => {
@@ -338,6 +341,13 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
     timer = setTimeout(() => resolve(null), HEAD_TIMEOUT_MS);
   });
   clearTimeout(timer);
+  return head;
+}
+
+/** Serve one proxied connection from a local agent's container. */
+export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDeps): Promise<void> {
+  client.on('error', () => {});
+  const head = await readProxyHead(client);
   if (!head) return void client.destroy();
   const req = parseProxyHead(head.head);
   if ('error' in req) return answer(client, req.status, req.error);
