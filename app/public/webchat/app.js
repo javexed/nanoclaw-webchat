@@ -5503,8 +5503,8 @@ var appsService = ref(/* @__PURE__ */ new Map());
 var appsInfoKey = ref(null);
 /** Rows with a request in flight. */
 var appsBusy = ref(/* @__PURE__ */ new Set());
-/** "Allow Docker Hub for builds": a request in flight, and a refusal shown under it. */
-var appsBuildsBusy = ref(false);
+/** Build sources: the one with a request in flight, and a refusal shown under them. */
+var appsBuildsBusy = ref(null);
 var appsBuildsError = ref("");
 // src/features/file-preview-state.ts
 var previewRows = ref([]);
@@ -19852,22 +19852,25 @@ async function extend(r) {
 	if (out && typeof out.expiresAt === "number") showToast(`Expires ${shortDay(out.expiresAt)}`, { kind: "success" });
 	await reload();
 }
-/** "Allow Docker Hub for builds": on goes to an approval card, off applies at once. */
-async function setDockerHub(on) {
+/** A build source: on goes to an approval card, off applies at once. */
+async function setBuildSource(source, on) {
 	if (appsBuildsBusy.value) return;
-	appsBuildsBusy.value = true;
+	appsBuildsBusy.value = source;
 	appsBuildsError.value = "";
 	try {
 		const out = await apiJson(`${base()}/apps/build-registries`, {
 			method: "PUT",
-			body: { on }
+			body: {
+				source,
+				on
+			}
 		});
 		if (out?.pending) showToast("Sent for approval");
 		else if (out?.applied) showToast("Saved", { kind: "success" });
 	} catch (err) {
 		appsBuildsError.value = err?.message || "That did not work";
 	} finally {
-		appsBuildsBusy.value = false;
+		appsBuildsBusy.value = null;
 	}
 	await reload();
 }
@@ -19882,63 +19885,66 @@ var _hoisted_2$11 = {
 };
 var _hoisted_3$11 = {
 	key: 0,
-	id: "agent-apps-docker-hub",
-	class: "setting-group install-row apps-builds"
+	id: "agent-apps-build-sources",
+	class: "apps-build-sources",
+	role: "group",
+	"aria-labelledby": "agent-apps-build-sources-label"
 };
-var _hoisted_4$9 = {
+var _hoisted_4$9 = ["id"];
+var _hoisted_5$8 = { class: "setting-label" };
+var _hoisted_6$8 = {
 	key: 0,
 	class: "btn-spinner",
 	"aria-hidden": "true"
 };
-var _hoisted_5$8 = {
+var _hoisted_7$8 = {
 	key: 1,
 	class: "app-state app-state-needs-approval"
 };
-var _hoisted_6$8 = { class: "setting-toggle" };
-var _hoisted_7$8 = ["checked", "disabled"];
-var _hoisted_8$7 = {
+var _hoisted_8$7 = { class: "setting-toggle" };
+var _hoisted_9$7 = [
+	"aria-label",
+	"checked",
+	"disabled",
+	"onChange"
+];
+var _hoisted_10$7 = {
 	key: 1,
-	id: "agent-apps-docker-hub",
+	id: "agent-apps-build-sources",
 	class: "cred-hint apps-gate"
 };
-var _hoisted_9$7 = {
+var _hoisted_11$6 = {
 	key: 2,
 	class: "cred-hint err",
 	role: "alert"
 };
-var _hoisted_10$7 = {
+var _hoisted_12$6 = {
 	key: 3,
 	class: "apps-empty"
 };
-var _hoisted_11$6 = {
+var _hoisted_13$6 = {
 	key: 4,
 	class: "apps-list"
 };
-var _hoisted_12$6 = ["aria-busy"];
-var _hoisted_13$6 = { class: "app-row-head" };
-var _hoisted_14$6 = { class: "app-name" };
-var _hoisted_15$6 = {
+var _hoisted_14$6 = ["aria-busy"];
+var _hoisted_15$6 = { class: "app-row-head" };
+var _hoisted_16$6 = { class: "app-name" };
+var _hoisted_17$6 = {
 	key: 0,
 	class: "btn-spinner",
 	"aria-hidden": "true"
 };
-var _hoisted_16$6 = ["href"];
-var _hoisted_17$6 = [
+var _hoisted_18$4 = ["href"];
+var _hoisted_19$4 = [
 	"aria-label",
 	"aria-expanded",
 	"onClick",
 	"innerHTML"
 ];
-var _hoisted_18$4 = {
+var _hoisted_20$4 = {
 	key: 0,
 	class: "app-row-controls"
 };
-var _hoisted_19$4 = [
-	"value",
-	"disabled",
-	"onChange"
-];
-var _hoisted_20$4 = ["value"];
 var _hoisted_21$3 = [
 	"value",
 	"disabled",
@@ -19946,78 +19952,84 @@ var _hoisted_21$3 = [
 ];
 var _hoisted_22$3 = ["value"];
 var _hoisted_23$2 = [
-	"aria-expanded",
-	"onClick",
-	"innerHTML"
-];
-var _hoisted_24$2 = [
 	"value",
 	"disabled",
 	"onChange"
 ];
-var _hoisted_25$2 = ["value"];
-var _hoisted_26$2 = ["onClick"];
-var _hoisted_27$2 = {
+var _hoisted_24$2 = ["value"];
+var _hoisted_25$2 = [
+	"aria-expanded",
+	"onClick",
+	"innerHTML"
+];
+var _hoisted_26$2 = [
+	"value",
+	"disabled",
+	"onChange"
+];
+var _hoisted_27$2 = ["value"];
+var _hoisted_28$2 = ["onClick"];
+var _hoisted_29$2 = {
 	key: 1,
 	class: "cred-hint"
 };
-var _hoisted_28$2 = {
+var _hoisted_30$1 = {
 	key: 2,
 	class: "cred-hint err",
 	role: "alert"
 };
-var _hoisted_29$2 = {
+var _hoisted_31$1 = {
 	key: 3,
 	class: "app-menu",
 	role: "menu"
 };
-var _hoisted_30$1 = ["onClick"];
-var _hoisted_31$1 = ["onClick"];
 var _hoisted_32$1 = ["onClick"];
 var _hoisted_33$1 = ["onClick"];
 var _hoisted_34$1 = ["onClick"];
 var _hoisted_35$1 = ["onClick"];
-var _hoisted_36$1 = {
+var _hoisted_36$1 = ["onClick"];
+var _hoisted_37$1 = ["onClick"];
+var _hoisted_38$1 = {
 	key: 0,
 	class: "app-drawer"
 };
-var _hoisted_37$1 = { class: "app-drawer-head" };
-var _hoisted_38$1 = {
+var _hoisted_39$1 = { class: "app-drawer-head" };
+var _hoisted_40$1 = {
 	key: 0,
 	class: "apps-empty"
 };
-var _hoisted_39$1 = {
+var _hoisted_41$1 = {
 	key: 1,
 	class: "app-logs"
 };
-var _hoisted_40$1 = {
+var _hoisted_42$1 = {
 	key: 1,
 	class: "app-drawer"
 };
-var _hoisted_41$1 = { class: "app-drawer-head" };
-var _hoisted_42$1 = {
+var _hoisted_43$1 = { class: "app-drawer-head" };
+var _hoisted_44$1 = {
 	key: 0,
 	class: "apps-empty"
 };
-var _hoisted_43$1 = {
+var _hoisted_45$1 = {
 	key: 1,
 	class: "apps-empty"
 };
-var _hoisted_44$1 = {
+var _hoisted_46$1 = {
 	key: 2,
 	class: "app-drawer-row"
 };
-var _hoisted_45$1 = ["value"];
-var _hoisted_46$1 = ["onClick"];
-var _hoisted_47$1 = {
+var _hoisted_47$1 = ["value"];
+var _hoisted_48$1 = ["onClick"];
+var _hoisted_49$1 = {
 	key: 2,
 	class: "app-drawer"
 };
-var _hoisted_48$1 = { class: "app-drawer-head" };
-var _hoisted_49$1 = { class: "app-drawer-row" };
-var _hoisted_50$1 = ["onKeydown"];
-var _hoisted_51$1 = ["disabled", "onClick"];
-var _hoisted_52 = {
+var _hoisted_50$1 = { class: "app-drawer-head" };
+var _hoisted_51$1 = { class: "app-drawer-row" };
+var _hoisted_52 = ["onKeydown"];
+var _hoisted_53 = ["disabled", "onClick"];
+var _hoisted_54 = {
 	key: 0,
 	class: "cred-hint err"
 };
@@ -20030,7 +20042,7 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 	setup(__props) {
 		/**
 		* An agent's apps, mounted into <div id="agent-apps"> (apps.ts). Above the list:
-		* "Allow Docker Hub for builds" while confined builds are on (a gate line while
+		* Build sources (Docker Hub, npm, …) while confined builds are on (a gate line while
 		* they are off, or while workloads are). One row per app (or per unpublished
 		* workload): name, state, its expiry, route, who can open it, Open ↗ and a ⋯
 		* menu. Renders from apps-state.ts; every action lives in apps-actions.ts.
@@ -20052,12 +20064,13 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 		const view = computed(() => appsView.value);
 		const builds = computed(() => view.value?.builds ?? null);
 		const expiry = (r) => r.deployed ? expiryText(r.expiresAt, Date.now(), void 0, r.renewsWhileUsed === true) : null;
-		function dockerHubChanged(e) {
+		function sourceChanged(id, e) {
 			const el = e.target;
 			const on = el.checked;
 			el.checked = !on;
-			setDockerHub(on);
+			setBuildSource(id, on);
 		}
+		const sourceElId = (id) => id === "dockerhub" ? "agent-apps-docker-hub" : `agent-apps-source-${id}`;
 		const disk = computed(() => diskText(view.value?.disk ?? null));
 		const busy = (r) => appsBusy.value.has(rowKey(r));
 		const drawerOf = (r) => appsDrawer.value?.key === rowKey(r) ? appsDrawer.value : null;
@@ -20095,26 +20108,35 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 					key: 1,
 					class: normalizeClass(["apps-disk", `apps-disk-${view.value.disk?.level}`])
 				}, toDisplayString(disk.value), 3)) : createCommentVNode("", true),
-				view.value.available && builds.value ? (openBlock(), createElementBlock(Fragment, { key: 2 }, [builds.value.on ? (openBlock(), createElementBlock("div", _hoisted_3$11, [
-					_cache[5] || (_cache[5] = createElementVNode("span", { class: "setting-label" }, "Allow Docker Hub for builds", -1)),
-					unref(appsBuildsBusy) ? (openBlock(), createElementBlock("span", _hoisted_4$9)) : builds.value.pending ? (openBlock(), createElementBlock("span", _hoisted_5$8, "Needs approval")) : createCommentVNode("", true),
-					createElementVNode("label", _hoisted_6$8, [createElementVNode("input", {
-						type: "checkbox",
-						"aria-label": "Allow Docker Hub for builds",
-						checked: builds.value.dockerHub,
-						disabled: unref(appsBuildsBusy) || builds.value.pending && !builds.value.dockerHub || void 0,
-						onChange: dockerHubChanged
-					}, null, 40, _hoisted_7$8)])
-				])) : (openBlock(), createElementBlock("p", _hoisted_8$7, " Builds are off — an owner turns them on in Admin → Publishing ")), unref(appsBuildsError) ? (openBlock(), createElementBlock("p", _hoisted_9$7, toDisplayString(unref(appsBuildsError)), 1)) : createCommentVNode("", true)], 64)) : createCommentVNode("", true),
-				!view.value.apps.length ? (openBlock(), createElementBlock("p", _hoisted_10$7, "No apps yet")) : (openBlock(), createElementBlock("ul", _hoisted_11$6, [(openBlock(true), createElementBlock(Fragment, null, renderList(view.value.apps, (r) => {
+				view.value.available && builds.value ? (openBlock(), createElementBlock(Fragment, { key: 2 }, [builds.value.on ? (openBlock(), createElementBlock("div", _hoisted_3$11, [_cache[5] || (_cache[5] = createElementVNode("span", {
+					id: "agent-apps-build-sources-label",
+					class: "form-label"
+				}, "Build sources", -1)), (openBlock(true), createElementBlock(Fragment, null, renderList(builds.value.sources, (s) => {
+					return openBlock(), createElementBlock("div", {
+						id: sourceElId(s.id),
+						key: s.id,
+						class: "setting-group install-row apps-builds"
+					}, [
+						createElementVNode("span", _hoisted_5$8, toDisplayString(s.label), 1),
+						unref(appsBuildsBusy) === s.id ? (openBlock(), createElementBlock("span", _hoisted_6$8)) : s.pending ? (openBlock(), createElementBlock("span", _hoisted_7$8, "Needs approval")) : createCommentVNode("", true),
+						createElementVNode("label", _hoisted_8$7, [createElementVNode("input", {
+							type: "checkbox",
+							"aria-label": `${s.label} for builds`,
+							checked: s.on,
+							disabled: !!unref(appsBuildsBusy) || s.pending && !s.on || void 0,
+							onChange: ($event) => sourceChanged(s.id, $event)
+						}, null, 40, _hoisted_9$7)])
+					], 8, _hoisted_4$9);
+				}), 128))])) : (openBlock(), createElementBlock("p", _hoisted_10$7, " Builds are off — an owner turns them on in Admin → Publishing ")), unref(appsBuildsError) ? (openBlock(), createElementBlock("p", _hoisted_11$6, toDisplayString(unref(appsBuildsError)), 1)) : createCommentVNode("", true)], 64)) : createCommentVNode("", true),
+				!view.value.apps.length ? (openBlock(), createElementBlock("p", _hoisted_12$6, "No apps yet")) : (openBlock(), createElementBlock("ul", _hoisted_13$6, [(openBlock(true), createElementBlock(Fragment, null, renderList(view.value.apps, (r) => {
 					return openBlock(), createElementBlock("li", {
 						key: unref(rowKey)(r),
 						class: "app-row",
 						"aria-busy": busy(r) || void 0
 					}, [
-						createElementVNode("div", _hoisted_13$6, [
-							createElementVNode("span", _hoisted_14$6, toDisplayString(r.app ?? r.workload), 1),
-							busy(r) ? (openBlock(), createElementBlock("span", _hoisted_15$6)) : createCommentVNode("", true),
+						createElementVNode("div", _hoisted_15$6, [
+							createElementVNode("span", _hoisted_16$6, toDisplayString(r.app ?? r.workload), 1),
+							busy(r) ? (openBlock(), createElementBlock("span", _hoisted_17$6)) : createCommentVNode("", true),
 							createElementVNode("span", { class: normalizeClass(["app-state", `app-state-${r.state}`]) }, toDisplayString(unref(STATE_LABEL)[r.state]), 3),
 							expiry(r) ? (openBlock(), createElementBlock("span", {
 								key: 1,
@@ -20126,7 +20148,7 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								href: r.url,
 								target: "_blank",
 								rel: "noopener noreferrer"
-							}, "Open ↗", 8, _hoisted_16$6)) : createCommentVNode("", true),
+							}, "Open ↗", 8, _hoisted_18$4)) : createCommentVNode("", true),
 							r.deployed ? (openBlock(), createElementBlock("button", {
 								key: 3,
 								class: "app-kebab",
@@ -20135,9 +20157,9 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								"aria-expanded": unref(appsMenuKey) === unref(rowKey)(r),
 								onClick: withModifiers(($event) => unref(toggleMenu)(r), ["stop"]),
 								innerHTML: unref(KEBAB)
-							}, null, 8, _hoisted_17$6)) : createCommentVNode("", true)
+							}, null, 8, _hoisted_19$4)) : createCommentVNode("", true)
 						]),
-						r.deployed ? (openBlock(), createElementBlock("div", _hoisted_18$4, [
+						r.deployed ? (openBlock(), createElementBlock("div", _hoisted_20$4, [
 							createElementVNode("select", {
 								value: r.route,
 								"aria-label": "Route",
@@ -20147,8 +20169,8 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								return openBlock(), createElementBlock("option", {
 									key: o.value,
 									value: o.value
-								}, toDisplayString(o.label), 9, _hoisted_20$4);
-							}), 128))], 40, _hoisted_19$4),
+								}, toDisplayString(o.label), 9, _hoisted_22$3);
+							}), 128))], 40, _hoisted_21$3),
 							!r.app && r.services.length > 1 ? (openBlock(), createElementBlock("select", {
 								key: 0,
 								value: unref(appsService).get(unref(rowKey)(r)) ?? r.services[0],
@@ -20159,8 +20181,8 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								return openBlock(), createElementBlock("option", {
 									key: sv,
 									value: sv
-								}, toDisplayString(sv), 9, _hoisted_22$3);
-							}), 128))], 40, _hoisted_21$3)) : createCommentVNode("", true),
+								}, toDisplayString(sv), 9, _hoisted_24$2);
+							}), 128))], 40, _hoisted_23$2)) : createCommentVNode("", true),
 							!r.app && !r.canPublish ? (openBlock(), createElementBlock("button", {
 								key: 1,
 								class: "feature-info-btn",
@@ -20169,7 +20191,7 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								"aria-label": "Why it can’t be published here",
 								onClick: ($event) => unref(toggleInfo)(r),
 								innerHTML: unref(INFO)
-							}, null, 8, _hoisted_23$2)) : createCommentVNode("", true),
+							}, null, 8, _hoisted_25$2)) : createCommentVNode("", true),
 							r.route !== "off" ? (openBlock(), createElementBlock("select", {
 								key: 2,
 								value: r.who,
@@ -20180,84 +20202,84 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								return openBlock(), createElementBlock("option", {
 									key: o.value,
 									value: o.value
-								}, toDisplayString(o.label), 9, _hoisted_25$2);
-							}), 128))], 40, _hoisted_24$2)) : createCommentVNode("", true),
+								}, toDisplayString(o.label), 9, _hoisted_27$2);
+							}), 128))], 40, _hoisted_26$2)) : createCommentVNode("", true),
 							r.who === "specific" && r.route === "cloudflare" ? (openBlock(), createElementBlock("button", {
 								key: 3,
 								class: "btn btn-ghost",
 								type: "button",
 								onClick: ($event) => unref(openPeople)(r)
-							}, toDisplayString(r.emails.length === 1 ? "1 person" : `${r.emails.length} people`), 9, _hoisted_26$2)) : createCommentVNode("", true)
+							}, toDisplayString(r.emails.length === 1 ? "1 person" : `${r.emails.length} people`), 9, _hoisted_28$2)) : createCommentVNode("", true)
 						])) : createCommentVNode("", true),
-						!r.app && !r.canPublish && unref(appsInfoKey) === unref(rowKey)(r) ? (openBlock(), createElementBlock("p", _hoisted_27$2, toDisplayString(NO_SERVICE))) : createCommentVNode("", true),
-						unref(appsErrors).get(unref(rowKey)(r)) ? (openBlock(), createElementBlock("p", _hoisted_28$2, toDisplayString(unref(appsErrors).get(unref(rowKey)(r))), 1)) : createCommentVNode("", true),
-						unref(appsMenuKey) === unref(rowKey)(r) ? (openBlock(), createElementBlock("div", _hoisted_29$2, [
+						!r.app && !r.canPublish && unref(appsInfoKey) === unref(rowKey)(r) ? (openBlock(), createElementBlock("p", _hoisted_29$2, toDisplayString(NO_SERVICE))) : createCommentVNode("", true),
+						unref(appsErrors).get(unref(rowKey)(r)) ? (openBlock(), createElementBlock("p", _hoisted_30$1, toDisplayString(unref(appsErrors).get(unref(rowKey)(r))), 1)) : createCommentVNode("", true),
+						unref(appsMenuKey) === unref(rowKey)(r) ? (openBlock(), createElementBlock("div", _hoisted_31$1, [
 							createElementVNode("button", {
 								type: "button",
 								role: "menuitem",
 								onClick: withModifiers(($event) => unref(startStop)(r), ["stop"])
-							}, toDisplayString(r.running ? "Stop" : "Start"), 9, _hoisted_30$1),
+							}, toDisplayString(r.running ? "Stop" : "Start"), 9, _hoisted_32$1),
 							createElementVNode("button", {
 								type: "button",
 								role: "menuitem",
 								onClick: withModifiers(($event) => unref(redeploy)(r), ["stop"])
-							}, "Redeploy", 8, _hoisted_31$1),
+							}, "Redeploy", 8, _hoisted_33$1),
 							r.expiresAt !== null ? (openBlock(), createElementBlock("button", {
 								key: 0,
 								type: "button",
 								role: "menuitem",
 								onClick: withModifiers(($event) => unref(extend)(r), ["stop"])
-							}, "Extend", 8, _hoisted_32$1)) : createCommentVNode("", true),
+							}, "Extend", 8, _hoisted_34$1)) : createCommentVNode("", true),
 							createElementVNode("button", {
 								type: "button",
 								role: "menuitem",
 								onClick: withModifiers(($event) => unref(openLogs)(r), ["stop"])
-							}, "Logs", 8, _hoisted_33$1),
+							}, "Logs", 8, _hoisted_35$1),
 							createElementVNode("button", {
 								type: "button",
 								role: "menuitem",
 								onClick: withModifiers(($event) => unref(openRestore)(r), ["stop"])
-							}, "Restore backup…", 8, _hoisted_34$1),
+							}, "Restore backup…", 8, _hoisted_36$1),
 							createElementVNode("button", {
 								type: "button",
 								role: "menuitem",
 								class: "app-menu-danger",
 								onClick: withModifiers(($event) => unref(remove)(r), ["stop"])
-							}, "Delete…", 8, _hoisted_35$1)
+							}, "Delete…", 8, _hoisted_37$1)
 						])) : createCommentVNode("", true),
-						drawerOf(r) ? (openBlock(), createElementBlock(Fragment, { key: 4 }, [drawerOf(r).kind === "logs" ? (openBlock(), createElementBlock("div", _hoisted_36$1, [createElementVNode("div", _hoisted_37$1, [_cache[6] || (_cache[6] = createElementVNode("span", { class: "form-label" }, "Logs", -1)), createElementVNode("button", {
+						drawerOf(r) ? (openBlock(), createElementBlock(Fragment, { key: 4 }, [drawerOf(r).kind === "logs" ? (openBlock(), createElementBlock("div", _hoisted_38$1, [createElementVNode("div", _hoisted_39$1, [_cache[6] || (_cache[6] = createElementVNode("span", { class: "form-label" }, "Logs", -1)), createElementVNode("button", {
 							class: "btn btn-ghost",
 							type: "button",
 							onClick: _cache[0] || (_cache[0] = (...args) => unref(closeDrawer) && unref(closeDrawer)(...args))
-						}, "Close")]), drawerOf(r).text === null ? (openBlock(), createElementBlock("p", _hoisted_38$1, [_cache[7] || (_cache[7] = createElementVNode("span", {
+						}, "Close")]), drawerOf(r).text === null ? (openBlock(), createElementBlock("p", _hoisted_40$1, [_cache[7] || (_cache[7] = createElementVNode("span", {
 							class: "btn-spinner",
 							"aria-hidden": "true"
-						}, null, -1)), createTextVNode(toDisplayString(LOADING))])) : (openBlock(), createElementBlock("pre", _hoisted_39$1, toDisplayString(drawerOf(r).text || NO_LOGS), 1))])) : drawerOf(r).kind === "restore" ? (openBlock(), createElementBlock("div", _hoisted_40$1, [createElementVNode("div", _hoisted_41$1, [_cache[8] || (_cache[8] = createElementVNode("span", { class: "form-label" }, "Restore backup", -1)), createElementVNode("button", {
+						}, null, -1)), createTextVNode(toDisplayString(LOADING))])) : (openBlock(), createElementBlock("pre", _hoisted_41$1, toDisplayString(drawerOf(r).text || NO_LOGS), 1))])) : drawerOf(r).kind === "restore" ? (openBlock(), createElementBlock("div", _hoisted_42$1, [createElementVNode("div", _hoisted_43$1, [_cache[8] || (_cache[8] = createElementVNode("span", { class: "form-label" }, "Restore backup", -1)), createElementVNode("button", {
 							class: "btn btn-ghost",
 							type: "button",
 							onClick: _cache[1] || (_cache[1] = (...args) => unref(closeDrawer) && unref(closeDrawer)(...args))
-						}, "Close")]), drawerOf(r).backups === null ? (openBlock(), createElementBlock("p", _hoisted_42$1, [_cache[9] || (_cache[9] = createElementVNode("span", {
+						}, "Close")]), drawerOf(r).backups === null ? (openBlock(), createElementBlock("p", _hoisted_44$1, [_cache[9] || (_cache[9] = createElementVNode("span", {
 							class: "btn-spinner",
 							"aria-hidden": "true"
-						}, null, -1)), createTextVNode(toDisplayString(LOADING))])) : !drawerOf(r).backups.length ? (openBlock(), createElementBlock("p", _hoisted_43$1, "No backups yet")) : (openBlock(), createElementBlock("div", _hoisted_44$1, [withDirectives(createElementVNode("select", {
+						}, null, -1)), createTextVNode(toDisplayString(LOADING))])) : !drawerOf(r).backups.length ? (openBlock(), createElementBlock("p", _hoisted_45$1, "No backups yet")) : (openBlock(), createElementBlock("div", _hoisted_46$1, [withDirectives(createElementVNode("select", {
 							"onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => restoreStamp.value = $event),
 							"aria-label": "Backup"
 						}, [(openBlock(true), createElementBlock(Fragment, null, renderList(drawerOf(r).backups, (b) => {
 							return openBlock(), createElementBlock("option", {
 								key: b.stamp,
 								value: b.stamp
-							}, toDisplayString(b.at), 9, _hoisted_45$1);
+							}, toDisplayString(b.at), 9, _hoisted_47$1);
 						}), 128))], 512), [[vModelSelect, restoreStamp.value]]), createElementVNode("button", {
 							class: "btn btn-danger",
 							type: "button",
 							onClick: ($event) => doRestore(r, drawerOf(r).backups)
-						}, " Restore ", 8, _hoisted_46$1)]))])) : (openBlock(), createElementBlock("div", _hoisted_47$1, [
-							createElementVNode("div", _hoisted_48$1, [_cache[10] || (_cache[10] = createElementVNode("span", { class: "form-label" }, "Specific people", -1)), createElementVNode("button", {
+						}, " Restore ", 8, _hoisted_48$1)]))])) : (openBlock(), createElementBlock("div", _hoisted_49$1, [
+							createElementVNode("div", _hoisted_50$1, [_cache[10] || (_cache[10] = createElementVNode("span", { class: "form-label" }, "Specific people", -1)), createElementVNode("button", {
 								class: "btn btn-ghost",
 								type: "button",
 								onClick: _cache[3] || (_cache[3] = (...args) => unref(closeDrawer) && unref(closeDrawer)(...args))
 							}, "Close")]),
-							createElementVNode("div", _hoisted_49$1, [withDirectives(createElementVNode("input", {
+							createElementVNode("div", _hoisted_51$1, [withDirectives(createElementVNode("input", {
 								"onUpdate:modelValue": _cache[4] || (_cache[4] = ($event) => peopleText.value = $event),
 								onKeydown: withKeys(withModifiers(($event) => people.value.emails.length && !people.value.bad.length && unref(savePeople)(r, people.value.emails), ["prevent"]), ["enter"]),
 								type: "text",
@@ -20266,15 +20288,15 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								spellcheck: "false",
 								placeholder: "name@example.com, …",
 								"aria-label": "Email addresses"
-							}, null, 40, _hoisted_50$1), [[vModelText, peopleText.value]]), createElementVNode("button", {
+							}, null, 40, _hoisted_52), [[vModelText, peopleText.value]]), createElementVNode("button", {
 								class: "btn btn-primary",
 								type: "button",
 								disabled: !people.value.emails.length || people.value.bad.length > 0 || void 0,
 								onClick: ($event) => unref(savePeople)(r, people.value.emails)
-							}, " Save ", 8, _hoisted_51$1)]),
-							people.value.bad.length ? (openBlock(), createElementBlock("p", _hoisted_52, "Not an email address: " + toDisplayString(people.value.bad.join(", ")), 1)) : createCommentVNode("", true)
+							}, " Save ", 8, _hoisted_53)]),
+							people.value.bad.length ? (openBlock(), createElementBlock("p", _hoisted_54, "Not an email address: " + toDisplayString(people.value.bad.join(", ")), 1)) : createCommentVNode("", true)
 						]))], 64)) : createCommentVNode("", true)
-					], 8, _hoisted_12$6);
+					], 8, _hoisted_14$6);
 				}), 128))]))
 			])) : createCommentVNode("", true);
 		};

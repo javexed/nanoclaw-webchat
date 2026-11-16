@@ -270,9 +270,9 @@ describe('Agent → Apps and Admin → Publishing', () => {
     });
   });
 
-  describe('Allow Docker Hub for builds', () => {
-    const put = (who: string, on: unknown, csrf = true) =>
-      req('PUT', '/api/agents/ag-a/apps/build-registries', who, { on }, csrf);
+  describe('Build sources', () => {
+    const put = (who: string, on: unknown, csrf = true, source?: string) =>
+      req('PUT', '/api/agents/ag-a/apps/build-registries', who, source ? { source, on } : { on }, csrf);
     const hosts = async () => (await import('../../modules/workloads/store.js')).buildRegistries('ag-a');
 
     it('the agent’s admins only, with the CSRF header', async () => {
@@ -293,7 +293,15 @@ describe('Agent → Apps and Admin → Publishing', () => {
       expect(fx.cards[0]).toMatchObject({ action: 'workloads_build_registries' });
       expect(await hosts()).toEqual([]);
       const v = JSON.parse((await req('GET', '/api/agents/ag-a/apps', 'admina')).body);
-      expect(v.builds).toMatchObject({ on: true, dockerHub: false });
+      expect(v.builds.on).toBe(true);
+      expect(v.builds.sources.find((s: { id: string }) => s.id === 'dockerhub')).toMatchObject({ on: false });
+    });
+
+    it('names a source in the body; an unknown one is refused', async () => {
+      vi.stubEnv('NANOCLAW_WORKLOAD_CONFINED_BUILDS', '1');
+      expect((await put('admina', true, true, 'npm')).status).toBe(202);
+      expect(fx.cards[0]).toMatchObject({ payload: { source: 'npm', hosts: ['registry.npmjs.org'] } });
+      expect((await put('admina', true, true, 'evil')).status).toBe(400);
     });
 
     it('off applies at once', async () => {

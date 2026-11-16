@@ -77,8 +77,8 @@ A build:
   agent into — there is no install-wide registry list, since a registry a
   build can pull from is one it can push to:
   `ncl workloads build-registries --group <id> --hosts '["registry-1.docker.io","auth.docker.io","production.cloudflare.docker.com","production.cloudfront.docker.com"]'`,
-  or, for Docker Hub, **Allow Docker Hub for builds** in the agent's Apps
-  (an approval card, see 7);
+  or a build source (Docker Hub, npm, OS packages, PyPI, GitHub images) in
+  the agent's Apps (an approval card, see 7);
 - runs with an empty Docker config (no registry logins reach it) and never
   through the credential gateway;
 - hands back an image file, which a helper container repacks to hold one
@@ -479,12 +479,22 @@ disk use against its quota. There is no Compose or build editing here: that is
 the agent's job. While workloads are off on the host, a line says so and
 where an owner turns them on.
 
-Above the list, while confined builds are on: **Allow Docker Hub for builds**,
-a switch over the agent's build registries (`registry-1.docker.io`,
-`auth.docker.io`, `production.cloudflare.docker.com`,
-`production.cloudfront.docker.com`; the same list `ncl workloads
-build-registries` sets). While builds are off, a line says so instead. Its
-element id, `agent-apps-docker-hub`, is stable for a link to it.
+Above the list, while confined builds are on: **Build sources**, one switch
+per package source, each over its hosts in the agent's build registries (the
+same list `ncl workloads build-registries` sets):
+
+| Source | Hosts |
+|---|---|
+| Docker Hub | `registry-1.docker.io`, `auth.docker.io`, `production.cloudflare.docker.com`, `production.cloudfront.docker.com` |
+| npm | `registry.npmjs.org` |
+| OS packages | `dl-cdn.alpinelinux.org`, `deb.debian.org`, `security.debian.org`, `archive.ubuntu.com`, `security.ubuntu.com`, `ports.ubuntu.com` |
+| PyPI | `pypi.org`, `files.pythonhosted.org` |
+| GitHub images | `ghcr.io`, `pkg-containers.githubusercontent.com` |
+
+A switch shows on when all its hosts are in the list. While builds are off, a
+line says so instead. The Docker Hub row's element id,
+`agent-apps-docker-hub`, is stable for a link to it; the others are
+`agent-apps-source-<id>` (`npm`, `os`, `pypi`, `ghcr`).
 
 **A person can always narrow; widening is a card.** A change is compared with
 the app as it is now:
@@ -495,8 +505,8 @@ the app as it is now:
 | A narrower "who can open", fewer named people | Applied at once |
 | Off to a route, one route to the other | An approval card |
 | A wider "who can open", anyone named who was not | An approval card |
-| Allow Docker Hub for builds: on | An approval card (a registry a build pulls from is one it can send to) |
-| Allow Docker Hub for builds: off | Applied at once (it clears the agent's build registries) |
+| A build source: on | An approval card (a registry a build pulls from is one it can send to) |
+| A build source: off | Applied at once (it removes that source's hosts from the agent's build registries) |
 
 The card goes to the owners and global admins, **whoever asks, owners
 included**: the card is the confirmation and the record, the same for

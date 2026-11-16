@@ -55,9 +55,12 @@ Where builds are on:
   args need `up` (a new card), and the Dockerfile is checked again right
   before each build;
 - builds run with your own network access (plus any registries allowed for
-  your builds) through `HTTP(S)_PROXY`, and get no credentials. Base images
-  from Docker Hub (`FROM node:22`) need **Allow Docker Hub for builds**, which
-  an admin of this agent turns on in **Agent → Apps** (an owner approves it).
+  your builds) through `HTTP(S)_PROXY`, and get no credentials. Package
+  sources a build downloads from are switches an admin of this agent turns on
+  in **Agent → Apps → Build sources** (an owner approves each): **Docker Hub**
+  (base images such as `FROM node:22`), **npm**, **OS packages** (`apk add`,
+  `apt-get install`), **PyPI** and **GitHub images** (`ghcr.io`). Name the
+  one the build needs.
   If a build is refused reaching a registry, tell the person that;
 - tools that ignore the proxy (e.g. `pecl`, some installers) have no way out:
   fetch with `curl` first, then install from the file;
