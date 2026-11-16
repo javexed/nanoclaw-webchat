@@ -25,6 +25,7 @@ import { LOCAL_NODE } from './docker.js';
 import { subnetFor, type OverrideInput } from './override.js';
 import { declaredEgress, type CheckedStack } from './policy.js';
 import { approvedEgress, decodeApproved } from './shape.js';
+import { egressRefusal } from './preflight.js';
 import { workloadEgressPort } from './settings.js';
 import { allNetworks, listWorkloads, type Workload } from './store.js';
 import { edgeSettings } from './tailnet/config.js';
@@ -36,6 +37,9 @@ export const EGRESS_OFF =
 export function requireWorkloadEgress(): number {
   const port = workloadEgressPort();
   if (port === null) throw new Error(EGRESS_OFF);
+  // The preflight's check of the port (preflight.ts): let through, and held by nothing else here.
+  const refused = egressRefusal(port);
+  if (refused) throw new Error(refused);
   return port;
 }
 
@@ -135,7 +139,9 @@ export async function openAgentEgress(idx: number, port: number): Promise<void> 
  * configured port), none elsewhere. `agentGroupId` limits it to one agent.
  */
 export async function syncWorkloadEgress(agentGroupId?: string): Promise<void> {
-  const port = workloadEgressPort();
+  const set = workloadEgressPort();
+  // A port the preflight refused (a host service holds it, the rule is missing) gets no listener.
+  const port = set !== null && egressRefusal(set) === null ? set : null;
   const nets = await allNetworks();
   const gateways = new Set(nets.map((n) => subnetFor(n.idx).gateway));
   // Stale first: a port that changed, a network that is gone, or the feature switched off.

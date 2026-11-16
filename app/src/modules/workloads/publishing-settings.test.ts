@@ -8,7 +8,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { OFF_REASON, type PreflightResult } from './preflight.js';
 import {
@@ -56,6 +56,12 @@ describe('the Workloads and Confined builds lines', () => {
       text: 'Host rules missing',
       fix: 'sudo bash /srv/nanoclaw/deploy/workloads-host-rules.sh --install-unit',
     });
+    // With runtime egress on, the command keeps its port open.
+    vi.stubEnv('NANOCLAW_WORKLOAD_EGRESS_PORT', '8472');
+    expect(st(failed('the host rules are missing', true)).fix).toBe(
+      'sudo bash /srv/nanoclaw/deploy/workloads-host-rules.sh --stack-egress-port 8472 --install-unit',
+    );
+    vi.unstubAllEnvs();
     expect(rules.detail).toMatch(/^Workload containers can reach this host/);
     expect(
       st(

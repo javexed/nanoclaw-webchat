@@ -43,6 +43,7 @@ import {
 } from './egress.js';
 import { buildOverride } from './override.js';
 import { placeWorkload } from './placement.js';
+import { __setPreflightForTest } from './preflight.js';
 import { checkStack, declaredEgress, EGRESS_KEY } from './policy.js';
 import { approvedEgress, decodeApproved, describeShape, encodeApproved, stackShape } from './shape.js';
 import type { Workload } from './store.js';
@@ -191,7 +192,16 @@ describe('the switch and the subset rule', () => {
     vi.stubEnv('NANOCLAW_WORKLOAD_EGRESS_PORT', 'nope');
     expect(() => requireWorkloadEgress()).toThrow(EGRESS_OFF);
     vi.stubEnv('NANOCLAW_WORKLOAD_EGRESS_PORT', '8472');
+    expect(() => requireWorkloadEgress()).toThrow(/still being checked/);
+    const passed = { ok: true, reason: '', isolationOpen: false, at: 1 };
+    __setPreflightForTest({ ...passed, egress: { port: 8472, ok: false, reason: 'a service listens on port 8472' } });
+    expect(() => requireWorkloadEgress()).toThrow('a service listens on port 8472');
+    __setPreflightForTest({ ...passed, egress: { port: 8472, ok: true, reason: '' } });
     expect(requireWorkloadEgress()).toBe(8472);
+    // Checked on another port: not this one.
+    vi.stubEnv('NANOCLAW_WORKLOAD_EGRESS_PORT', '8473');
+    expect(() => requireWorkloadEgress()).toThrow(/still being checked/);
+    __setPreflightForTest(null);
   });
 
   it('holds each entry to what the agent may reach itself', async () => {

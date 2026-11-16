@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  egressRefusal,
   OFF_REASON,
   preflightDue,
   PREFLIGHT_EVERY_MS,
@@ -58,5 +59,23 @@ describe('the workloads preflight', () => {
     });
     expect(broken).toMatchObject({ ok: false, isolationOpen: false });
     expect(broken.reason).toMatch(/could not run: no docker/);
+  });
+
+  it('checks the runtime egress port only when it is set, and refuses only egress on failure', async () => {
+    vi.stubEnv('NANOCLAW_WORKLOADS', '1');
+    const probed: number[] = [];
+    const egressProbe = async (port: number) => (probed.push(port), 'refused' as const);
+    expect((await runPreflight({ ...ok, egressProbe })).egress).toBeUndefined();
+    expect(probed).toEqual([]);
+    vi.stubEnv('NANOCLAW_WORKLOAD_EGRESS_PORT', '8472');
+    expect((await runPreflight({ ...ok, egressProbe })).egress).toEqual({ port: 8472, ok: true, reason: '' });
+    expect(probed).toEqual([8472]);
+    expect(egressRefusal(8472)).toBeNull();
+    const held = await runPreflight({ ...ok, egressProbe: async () => 'answered' });
+    expect(held.ok).toBe(true);
+    expect(held.egress).toMatchObject({ ok: false });
+    expect(egressRefusal(8472)).toMatch(/listens on port 8472 on every address/);
+    await runPreflight({ ...ok, egressProbe: async () => 'dropped' });
+    expect(egressRefusal(8472)).toMatch(/--stack-egress-port 8472/);
   });
 });

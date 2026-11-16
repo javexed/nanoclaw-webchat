@@ -170,8 +170,39 @@ Go through the proxy your container is given (`HTTP_PROXY`/`http_proxy`;
 curl uses it): a stack on another machine is reached only that way, so raw
 sockets (`/dev/tcp`, `nc`, a database client) time out there.
 Services reach each other by service name, as in any Compose project.
-Stacks have **no internet access** and cannot reach the host — pulls and
-builds happen at deploy time, so put dependencies in the image.
+Stacks cannot reach the host, and have **no internet access by default** —
+pulls and builds happen at deploy time, so put dependencies in the image.
+
+## Calling out at runtime (`x-nanoclaw-egress`)
+
+When a service must call something while it runs (an outside API, a model
+server on the LAN), declare those hosts on that service:
+
+```yaml
+services:
+  api:
+    image: ghcr.io/example/cards-api:1.4
+    x-nanoclaw-egress:
+      - api.example.com          # ports 443 and 80
+      - "*.example.org"          # its subdomains, port 443 only
+      - "192.168.0.20:11434"     # a LAN address: literal, with its port
+```
+
+- It needs an owner's card: the card lists what each service may call, and
+  adding or removing a host later needs a new card (`up`, not `redeploy`).
+- Every entry must be something **you** may reach yourself (your Network
+  allowlist, or your own model's address). Ask an admin to add a host to your
+  Network list first; if it is later removed from you, your stacks lose it too.
+- It works over HTTP(S) through the proxy NanoClaw sets on that service
+  (`HTTP_PROXY`/`HTTPS_PROXY`, `NO_PROXY` for your own stack,
+  `NODE_USE_ENV_PROXY=1` for Node). A client that ignores those variables, or
+  anything that is not HTTP (a database, SMTP), gets nowhere.
+- No bare `*`, at most 10 entries, never this host or `localhost`. An Ollama
+  server takes inference only, over plain `http://`.
+- Such a stack runs on central only. If a deploy says runtime egress is off,
+  tell the person an owner turns it on.
+- `ncl workloads status --name <name>` shows what each service may call and
+  what it was refused lately.
 
 **Never** give a person a `198.18.…` address or a port as a link; those work
 only from your own container. To let people open an app, publish it (below).
