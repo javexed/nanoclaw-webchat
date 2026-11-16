@@ -34,9 +34,27 @@ export async function latestCommitSha(ref: SkillOriginRef, maxAgeMs = 3600_000):
   return sha;
 }
 
+// The only hosts an import talks to: the API, and the raw host its download_urls name.
+const GITHUB_HOSTS = new Set(['api.github.com', 'raw.githubusercontent.com']);
+
+/** Throws unless `url` is https on one of GitHub's own hosts. */
+export function assertGithubUrl(url: string): void {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    throw new Error('Not a GitHub URL');
+  }
+  if (u.protocol !== 'https:' || !GITHUB_HOSTS.has(u.hostname) || u.port || u.username || u.password)
+    throw new Error('Not a GitHub URL');
+}
+
 // fetch() that retries once on a 5xx or network error — GitHub's gateway
 // returns transient 502s under load, which shouldn't fail a whole import.
+// Only GitHub's own hosts: a download_url comes from the API's answer, so it is
+// checked here rather than trusted.
 export async function githubFetch(url: string, headers: Record<string, string>): Promise<Response> {
+  assertGithubUrl(url);
   for (let attempt = 0; ; attempt++) {
     try {
       const r = await fetch(url, { headers, signal: AbortSignal.timeout(12000) });
@@ -124,9 +142,9 @@ export async function resolveSourceUrl(
   const root = u.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
   if (root) {
     try {
-      const r = await fetch(`https://api.github.com/repos/${root[1]}/${root[2]}`, {
-        headers: { 'User-Agent': 'nanoclaw', Accept: 'application/vnd.github+json' },
-        signal: AbortSignal.timeout(10000),
+      const r = await githubFetch(`https://api.github.com/repos/${root[1]}/${root[2]}`, {
+        'User-Agent': 'nanoclaw',
+        Accept: 'application/vnd.github+json',
       });
       if (!r.ok) return null;
       const branch = ((await r.json()) as { default_branch?: string }).default_branch || 'main';

@@ -3227,8 +3227,9 @@ function encodedBody(entry: CachedAsset, accept: string, compressible: boolean):
 function servePwa(req: IncomingMessage, res: ServerResponse, publicDir: string): boolean {
   let urlPath = req.url?.split('?')[0] ?? '/';
   if (urlPath === '/') urlPath = '/index.html';
-  const filePath = path.join(publicDir, urlPath);
-  if (!filePath.startsWith(publicDir + path.sep) && filePath !== publicDir) {
+  const root = path.resolve(publicDir);
+  const filePath = path.resolve(root, '.' + urlPath);
+  if (!filePath.startsWith(root + path.sep)) {
     res.writeHead(403);
     res.end();
     return true;
