@@ -23,13 +23,14 @@
  * the link.
  */
 import fs from 'fs';
+import path from 'path';
 
 import { log } from '../../log.js';
 import { backupRoot, backupWorkload, listBackups, removeBackups, stampTime } from './backup.js';
 import { deployInFlight, extendWorkload, parsePs, serviceImages, stopWorkload } from './control.js';
 import { diskLevel, gb, measureDisk, recordUsage, type DiskLevel } from './disk.js';
 import { isLinked } from '../machines/links.js';
-import { compose, joinAgentContainers, LOCAL_NODE } from './docker.js';
+import { compose, joinAgentContainers, LOCAL_NODE, workDir } from './docker.js';
 import { dayText, notifyWorkloadAgent } from './notify.js';
 import { lastOpened, USED_WITHIN_MS } from './opened.js';
 import { preflightDue, runPreflight, type PreflightResult } from './preflight.js';
@@ -230,6 +231,8 @@ export async function settleInterrupted(
     update?: typeof updateWorkload;
     tell?: (agentGroupId: string, text: string) => Promise<unknown>;
     linked?: (node: string) => boolean;
+    /** Whether the stack file was ever written: a first deploy cut off while building has none. */
+    written?: (w: Workload) => boolean;
     now?: number;
   } = {},
 ): Promise<void> {
@@ -238,6 +241,7 @@ export async function settleInterrupted(
   const update = deps.update ?? updateWorkload;
   const tell = deps.tell ?? notifyWorkloadAgent;
   const linked = deps.linked ?? ((n: string) => n === LOCAL_NODE || isLinked(n));
+  const written = deps.written ?? ((w: Workload) => fs.existsSync(path.join(workDir(w.id), 'stack.yml')));
   const states =
     deps.states ??
     (async (w: Workload) =>
@@ -250,7 +254,9 @@ export async function settleInterrupted(
     if (w.state !== 'deploying' || deployInFlight(w.id) || now - w.updatedAt < 60_000 || !linked(w.node)) continue;
     try {
       // Running only when every service has a running container: half a stack is a failed one.
-      const running = new Set((await states(w)).filter((c) => c.state === 'running').map((c) => c.service));
+      // No stack file: nothing of it was ever started, and `compose ps` could not even be asked.
+      const seen = written(w) ? await states(w) : [];
+      const running = new Set(seen.filter((c) => c.state === 'running').map((c) => c.service));
       const up = Object.keys(w.stack.compose.services).every((s) => running.has(s));
       const why = 'its last deploy was cut off by a NanoClaw restart';
       await update(w.id, {
