@@ -52,7 +52,9 @@ export const HALLUCINATION_PHRASES: ReadonlySet<string> = new Set([
 ]);
 
 /** Bracketed/asterisked tags or music glyphs with nothing else around them. */
-const NON_SPEECH_ONLY = /^(?:\s*(?:\[[^\]]*\]|\([^)]*\)|\*[^*]*\*|[♪♫]+)\s*)+$/u;
+// One token per repetition, whitespace only after it: each token starts with a
+// distinct character, so there is one way to match and no backtracking blow-up.
+const NON_SPEECH_ONLY = /^\s*(?:(?:\[[^\]]*\]|\([^)]*\)|\*[^*]*\*|[♪♫])\s*)+$/u;
 
 /** Lowercase, drop punctuation (apostrophes and dots join — "don't" → "dont",
  *  "amara.org" → "amaraorg"), collapse whitespace. */

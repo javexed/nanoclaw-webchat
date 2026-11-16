@@ -27,9 +27,16 @@ concurrency:
   group: compose-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: true
 
+# Read-only token by default; jobs that post a failure comment add issues: write.
+permissions:
+  contents: read
+
 jobs:
   compose:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     steps:
       # Anonymous checkout: on some runners the per-job task token is refused
       # for repos under this owner. The repo is public, so fetch without
@@ -496,6 +503,9 @@ jobs:
   # touch the UI (the scope step decides, the same way as in compose).
   ui:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     steps:
       - name: checkout (anonymous)
         run: |
