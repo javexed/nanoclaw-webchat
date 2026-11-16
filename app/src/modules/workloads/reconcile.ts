@@ -36,6 +36,7 @@ import { lastOpened, USED_WITHIN_MS } from './opened.js';
 import { preflightDue, runPreflight, type PreflightResult } from './preflight.js';
 import { allNetworks, listWorkloads, quotaFor, updateWorkload, type Workload } from './store.js';
 import { reconcileWorkerIsolation } from './worker-isolation.js';
+import { syncWorkloadEgress } from './egress.js';
 
 const EVERY_MS = 2 * 60_000;
 const DISK_EVERY_MS = 10 * 60_000;
@@ -60,6 +61,8 @@ export interface ReconcileDeps {
   measure: typeof measureDisk;
   backup: typeof backupWorkload;
   workers: (now: number) => Promise<void>;
+  /** Runtime egress listeners in line with what runs (egress.ts); left out in tests that do not need it. */
+  egress?: () => Promise<void>;
 }
 
 const defaults: ReconcileDeps = {
@@ -71,6 +74,7 @@ const defaults: ReconcileDeps = {
   measure: measureDisk,
   backup: backupWorkload,
   workers: (now) => reconcileWorkerIsolation(now),
+  egress: () => syncWorkloadEgress(),
 };
 
 /** Stop every running stack on this host: it is reachable from workload networks. */
@@ -160,6 +164,8 @@ export async function reconcileWorkloads(now = Date.now(), deps: ReconcileDeps =
         log.warn('Workload network join failed', { agentGroupId: n.agentGroupId, err: String(err).slice(0, 200) }),
       );
   }
+  // Cheap and in memory: re-opens listeners after a restart, closes those nothing needs.
+  await deps.egress?.().catch((err) => log.warn('Workload egress sync failed', { err: String(err).slice(0, 200) }));
   if (now - lastDisk >= DISK_EVERY_MS) {
     lastDisk = now;
     await checkDisk(deps).catch((err) => log.warn('Workload disk check failed', { err: String(err).slice(0, 200) }));

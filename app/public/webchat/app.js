@@ -19943,93 +19943,97 @@ var _hoisted_19$4 = [
 ];
 var _hoisted_20$4 = {
 	key: 0,
+	class: "cred-hint app-calls"
+};
+var _hoisted_21$3 = {
+	key: 1,
 	class: "app-row-controls"
 };
-var _hoisted_21$3 = [
+var _hoisted_22$3 = [
 	"value",
 	"disabled",
 	"onChange"
 ];
-var _hoisted_22$3 = ["value"];
-var _hoisted_23$2 = [
+var _hoisted_23$2 = ["value"];
+var _hoisted_24$2 = [
 	"value",
 	"disabled",
 	"onChange"
 ];
-var _hoisted_24$2 = ["value"];
-var _hoisted_25$2 = [
+var _hoisted_25$2 = ["value"];
+var _hoisted_26$2 = [
 	"aria-expanded",
 	"onClick",
 	"innerHTML"
 ];
-var _hoisted_26$2 = [
+var _hoisted_27$2 = [
 	"value",
 	"disabled",
 	"onChange"
 ];
-var _hoisted_27$2 = ["value"];
-var _hoisted_28$2 = ["onClick"];
-var _hoisted_29$2 = {
-	key: 1,
-	class: "cred-hint"
-};
+var _hoisted_28$2 = ["value"];
+var _hoisted_29$2 = ["onClick"];
 var _hoisted_30$1 = {
 	key: 2,
-	class: "cred-hint err",
-	role: "alert"
+	class: "cred-hint"
 };
 var _hoisted_31$1 = {
 	key: 3,
+	class: "cred-hint err",
+	role: "alert"
+};
+var _hoisted_32$1 = {
+	key: 4,
 	class: "app-menu",
 	role: "menu"
 };
-var _hoisted_32$1 = ["onClick"];
 var _hoisted_33$1 = ["onClick"];
 var _hoisted_34$1 = ["onClick"];
 var _hoisted_35$1 = ["onClick"];
 var _hoisted_36$1 = ["onClick"];
 var _hoisted_37$1 = ["onClick"];
-var _hoisted_38$1 = {
+var _hoisted_38$1 = ["onClick"];
+var _hoisted_39$1 = {
 	key: 0,
 	class: "app-drawer"
 };
-var _hoisted_39$1 = { class: "app-drawer-head" };
-var _hoisted_40$1 = {
+var _hoisted_40$1 = { class: "app-drawer-head" };
+var _hoisted_41$1 = {
 	key: 0,
 	class: "apps-empty"
-};
-var _hoisted_41$1 = {
-	key: 1,
-	class: "app-logs"
 };
 var _hoisted_42$1 = {
 	key: 1,
+	class: "app-logs"
+};
+var _hoisted_43$1 = {
+	key: 1,
 	class: "app-drawer"
 };
-var _hoisted_43$1 = { class: "app-drawer-head" };
-var _hoisted_44$1 = {
+var _hoisted_44$1 = { class: "app-drawer-head" };
+var _hoisted_45$1 = {
 	key: 0,
 	class: "apps-empty"
 };
-var _hoisted_45$1 = {
+var _hoisted_46$1 = {
 	key: 1,
 	class: "apps-empty"
 };
-var _hoisted_46$1 = {
+var _hoisted_47$1 = {
 	key: 2,
 	class: "app-drawer-row"
 };
-var _hoisted_47$1 = ["value"];
-var _hoisted_48$1 = ["onClick"];
-var _hoisted_49$1 = {
+var _hoisted_48$1 = ["value"];
+var _hoisted_49$1 = ["onClick"];
+var _hoisted_50$1 = {
 	key: 2,
 	class: "app-drawer"
 };
-var _hoisted_50$1 = { class: "app-drawer-head" };
-var _hoisted_51$1 = { class: "app-drawer-row" };
-var _hoisted_52$1 = ["onKeydown"];
-var _hoisted_53$1 = ["disabled", "onClick"];
-var _hoisted_54$1 = {
+var _hoisted_51$1 = { class: "app-drawer-head" };
+var _hoisted_52$1 = { class: "app-drawer-row" };
+var _hoisted_53$1 = ["onKeydown"];
+var _hoisted_54$1 = ["disabled", "onClick"];
+var _hoisted_55$1 = {
 	key: 0,
 	class: "cred-hint err"
 };
@@ -20159,7 +20163,8 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								innerHTML: unref(KEBAB)
 							}, null, 8, _hoisted_19$4)) : createCommentVNode("", true)
 						]),
-						r.deployed ? (openBlock(), createElementBlock("div", _hoisted_20$4, [
+						r.canCall?.length ? (openBlock(), createElementBlock("p", _hoisted_20$4, [createTextVNode(" Can call: " + toDisplayString(r.canCall.join(", ")), 1), r.egressRefused ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createTextVNode(" · Refused: " + toDisplayString(r.egressRefused), 1)], 64)) : createCommentVNode("", true)])) : createCommentVNode("", true),
+						r.deployed ? (openBlock(), createElementBlock("div", _hoisted_21$3, [
 							createElementVNode("select", {
 								value: r.route,
 								"aria-label": "Route",
@@ -20169,8 +20174,8 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								return openBlock(), createElementBlock("option", {
 									key: o.value,
 									value: o.value
-								}, toDisplayString(o.label), 9, _hoisted_22$3);
-							}), 128))], 40, _hoisted_21$3),
+								}, toDisplayString(o.label), 9, _hoisted_23$2);
+							}), 128))], 40, _hoisted_22$3),
 							!r.app && r.services.length > 1 ? (openBlock(), createElementBlock("select", {
 								key: 0,
 								value: unref(appsService).get(unref(rowKey)(r)) ?? r.services[0],
@@ -20181,8 +20186,8 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								return openBlock(), createElementBlock("option", {
 									key: sv,
 									value: sv
-								}, toDisplayString(sv), 9, _hoisted_24$2);
-							}), 128))], 40, _hoisted_23$2)) : createCommentVNode("", true),
+								}, toDisplayString(sv), 9, _hoisted_25$2);
+							}), 128))], 40, _hoisted_24$2)) : createCommentVNode("", true),
 							!r.app && !r.canPublish ? (openBlock(), createElementBlock("button", {
 								key: 1,
 								class: "feature-info-btn",
@@ -20191,7 +20196,7 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								"aria-label": "Why it can’t be published here",
 								onClick: ($event) => unref(toggleInfo)(r),
 								innerHTML: unref(INFO)
-							}, null, 8, _hoisted_25$2)) : createCommentVNode("", true),
+							}, null, 8, _hoisted_26$2)) : createCommentVNode("", true),
 							r.route !== "off" ? (openBlock(), createElementBlock("select", {
 								key: 2,
 								value: r.who,
@@ -20202,84 +20207,84 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								return openBlock(), createElementBlock("option", {
 									key: o.value,
 									value: o.value
-								}, toDisplayString(o.label), 9, _hoisted_27$2);
-							}), 128))], 40, _hoisted_26$2)) : createCommentVNode("", true),
+								}, toDisplayString(o.label), 9, _hoisted_28$2);
+							}), 128))], 40, _hoisted_27$2)) : createCommentVNode("", true),
 							r.who === "specific" && r.route === "cloudflare" ? (openBlock(), createElementBlock("button", {
 								key: 3,
 								class: "btn btn-ghost",
 								type: "button",
 								onClick: ($event) => unref(openPeople)(r)
-							}, toDisplayString(r.emails.length === 1 ? "1 person" : `${r.emails.length} people`), 9, _hoisted_28$2)) : createCommentVNode("", true)
+							}, toDisplayString(r.emails.length === 1 ? "1 person" : `${r.emails.length} people`), 9, _hoisted_29$2)) : createCommentVNode("", true)
 						])) : createCommentVNode("", true),
-						!r.app && !r.canPublish && unref(appsInfoKey) === unref(rowKey)(r) ? (openBlock(), createElementBlock("p", _hoisted_29$2, toDisplayString(NO_SERVICE))) : createCommentVNode("", true),
-						unref(appsErrors).get(unref(rowKey)(r)) ? (openBlock(), createElementBlock("p", _hoisted_30$1, toDisplayString(unref(appsErrors).get(unref(rowKey)(r))), 1)) : createCommentVNode("", true),
-						unref(appsMenuKey) === unref(rowKey)(r) ? (openBlock(), createElementBlock("div", _hoisted_31$1, [
+						!r.app && !r.canPublish && unref(appsInfoKey) === unref(rowKey)(r) ? (openBlock(), createElementBlock("p", _hoisted_30$1, toDisplayString(NO_SERVICE))) : createCommentVNode("", true),
+						unref(appsErrors).get(unref(rowKey)(r)) ? (openBlock(), createElementBlock("p", _hoisted_31$1, toDisplayString(unref(appsErrors).get(unref(rowKey)(r))), 1)) : createCommentVNode("", true),
+						unref(appsMenuKey) === unref(rowKey)(r) ? (openBlock(), createElementBlock("div", _hoisted_32$1, [
 							createElementVNode("button", {
 								type: "button",
 								role: "menuitem",
 								onClick: withModifiers(($event) => unref(startStop)(r), ["stop"])
-							}, toDisplayString(r.running ? "Stop" : "Start"), 9, _hoisted_32$1),
+							}, toDisplayString(r.running ? "Stop" : "Start"), 9, _hoisted_33$1),
 							createElementVNode("button", {
 								type: "button",
 								role: "menuitem",
 								onClick: withModifiers(($event) => unref(redeploy)(r), ["stop"])
-							}, "Redeploy", 8, _hoisted_33$1),
+							}, "Redeploy", 8, _hoisted_34$1),
 							r.expiresAt !== null ? (openBlock(), createElementBlock("button", {
 								key: 0,
 								type: "button",
 								role: "menuitem",
 								onClick: withModifiers(($event) => unref(extend)(r), ["stop"])
-							}, "Extend", 8, _hoisted_34$1)) : createCommentVNode("", true),
+							}, "Extend", 8, _hoisted_35$1)) : createCommentVNode("", true),
 							createElementVNode("button", {
 								type: "button",
 								role: "menuitem",
 								onClick: withModifiers(($event) => unref(openLogs)(r), ["stop"])
-							}, "Logs", 8, _hoisted_35$1),
+							}, "Logs", 8, _hoisted_36$1),
 							createElementVNode("button", {
 								type: "button",
 								role: "menuitem",
 								onClick: withModifiers(($event) => unref(openRestore)(r), ["stop"])
-							}, "Restore backup…", 8, _hoisted_36$1),
+							}, "Restore backup…", 8, _hoisted_37$1),
 							createElementVNode("button", {
 								type: "button",
 								role: "menuitem",
 								class: "app-menu-danger",
 								onClick: withModifiers(($event) => unref(remove)(r), ["stop"])
-							}, "Delete…", 8, _hoisted_37$1)
+							}, "Delete…", 8, _hoisted_38$1)
 						])) : createCommentVNode("", true),
-						drawerOf(r) ? (openBlock(), createElementBlock(Fragment, { key: 4 }, [drawerOf(r).kind === "logs" ? (openBlock(), createElementBlock("div", _hoisted_38$1, [createElementVNode("div", _hoisted_39$1, [_cache[6] || (_cache[6] = createElementVNode("span", { class: "form-label" }, "Logs", -1)), createElementVNode("button", {
+						drawerOf(r) ? (openBlock(), createElementBlock(Fragment, { key: 5 }, [drawerOf(r).kind === "logs" ? (openBlock(), createElementBlock("div", _hoisted_39$1, [createElementVNode("div", _hoisted_40$1, [_cache[6] || (_cache[6] = createElementVNode("span", { class: "form-label" }, "Logs", -1)), createElementVNode("button", {
 							class: "btn btn-ghost",
 							type: "button",
 							onClick: _cache[0] || (_cache[0] = (...args) => unref(closeDrawer) && unref(closeDrawer)(...args))
-						}, "Close")]), drawerOf(r).text === null ? (openBlock(), createElementBlock("p", _hoisted_40$1, [_cache[7] || (_cache[7] = createElementVNode("span", {
+						}, "Close")]), drawerOf(r).text === null ? (openBlock(), createElementBlock("p", _hoisted_41$1, [_cache[7] || (_cache[7] = createElementVNode("span", {
 							class: "btn-spinner",
 							"aria-hidden": "true"
-						}, null, -1)), createTextVNode(toDisplayString(LOADING))])) : (openBlock(), createElementBlock("pre", _hoisted_41$1, toDisplayString(drawerOf(r).text || NO_LOGS), 1))])) : drawerOf(r).kind === "restore" ? (openBlock(), createElementBlock("div", _hoisted_42$1, [createElementVNode("div", _hoisted_43$1, [_cache[8] || (_cache[8] = createElementVNode("span", { class: "form-label" }, "Restore backup", -1)), createElementVNode("button", {
+						}, null, -1)), createTextVNode(toDisplayString(LOADING))])) : (openBlock(), createElementBlock("pre", _hoisted_42$1, toDisplayString(drawerOf(r).text || NO_LOGS), 1))])) : drawerOf(r).kind === "restore" ? (openBlock(), createElementBlock("div", _hoisted_43$1, [createElementVNode("div", _hoisted_44$1, [_cache[8] || (_cache[8] = createElementVNode("span", { class: "form-label" }, "Restore backup", -1)), createElementVNode("button", {
 							class: "btn btn-ghost",
 							type: "button",
 							onClick: _cache[1] || (_cache[1] = (...args) => unref(closeDrawer) && unref(closeDrawer)(...args))
-						}, "Close")]), drawerOf(r).backups === null ? (openBlock(), createElementBlock("p", _hoisted_44$1, [_cache[9] || (_cache[9] = createElementVNode("span", {
+						}, "Close")]), drawerOf(r).backups === null ? (openBlock(), createElementBlock("p", _hoisted_45$1, [_cache[9] || (_cache[9] = createElementVNode("span", {
 							class: "btn-spinner",
 							"aria-hidden": "true"
-						}, null, -1)), createTextVNode(toDisplayString(LOADING))])) : !drawerOf(r).backups.length ? (openBlock(), createElementBlock("p", _hoisted_45$1, "No backups yet")) : (openBlock(), createElementBlock("div", _hoisted_46$1, [withDirectives(createElementVNode("select", {
+						}, null, -1)), createTextVNode(toDisplayString(LOADING))])) : !drawerOf(r).backups.length ? (openBlock(), createElementBlock("p", _hoisted_46$1, "No backups yet")) : (openBlock(), createElementBlock("div", _hoisted_47$1, [withDirectives(createElementVNode("select", {
 							"onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => restoreStamp.value = $event),
 							"aria-label": "Backup"
 						}, [(openBlock(true), createElementBlock(Fragment, null, renderList(drawerOf(r).backups, (b) => {
 							return openBlock(), createElementBlock("option", {
 								key: b.stamp,
 								value: b.stamp
-							}, toDisplayString(b.at), 9, _hoisted_47$1);
+							}, toDisplayString(b.at), 9, _hoisted_48$1);
 						}), 128))], 512), [[vModelSelect, restoreStamp.value]]), createElementVNode("button", {
 							class: "btn btn-danger",
 							type: "button",
 							onClick: ($event) => doRestore(r, drawerOf(r).backups)
-						}, " Restore ", 8, _hoisted_48$1)]))])) : (openBlock(), createElementBlock("div", _hoisted_49$1, [
-							createElementVNode("div", _hoisted_50$1, [_cache[10] || (_cache[10] = createElementVNode("span", { class: "form-label" }, "Specific people", -1)), createElementVNode("button", {
+						}, " Restore ", 8, _hoisted_49$1)]))])) : (openBlock(), createElementBlock("div", _hoisted_50$1, [
+							createElementVNode("div", _hoisted_51$1, [_cache[10] || (_cache[10] = createElementVNode("span", { class: "form-label" }, "Specific people", -1)), createElementVNode("button", {
 								class: "btn btn-ghost",
 								type: "button",
 								onClick: _cache[3] || (_cache[3] = (...args) => unref(closeDrawer) && unref(closeDrawer)(...args))
 							}, "Close")]),
-							createElementVNode("div", _hoisted_51$1, [withDirectives(createElementVNode("input", {
+							createElementVNode("div", _hoisted_52$1, [withDirectives(createElementVNode("input", {
 								"onUpdate:modelValue": _cache[4] || (_cache[4] = ($event) => peopleText.value = $event),
 								onKeydown: withKeys(withModifiers(($event) => people.value.emails.length && !people.value.bad.length && unref(savePeople)(r, people.value.emails), ["prevent"]), ["enter"]),
 								type: "text",
@@ -20288,13 +20293,13 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								spellcheck: "false",
 								placeholder: "name@example.com, …",
 								"aria-label": "Email addresses"
-							}, null, 40, _hoisted_52$1), [[vModelText, peopleText.value]]), createElementVNode("button", {
+							}, null, 40, _hoisted_53$1), [[vModelText, peopleText.value]]), createElementVNode("button", {
 								class: "btn btn-primary",
 								type: "button",
 								disabled: !people.value.emails.length || people.value.bad.length > 0 || void 0,
 								onClick: ($event) => unref(savePeople)(r, people.value.emails)
-							}, " Save ", 8, _hoisted_53$1)]),
-							people.value.bad.length ? (openBlock(), createElementBlock("p", _hoisted_54$1, "Not an email address: " + toDisplayString(people.value.bad.join(", ")), 1)) : createCommentVNode("", true)
+							}, " Save ", 8, _hoisted_54$1)]),
+							people.value.bad.length ? (openBlock(), createElementBlock("p", _hoisted_55$1, "Not an email address: " + toDisplayString(people.value.bad.join(", ")), 1)) : createCommentVNode("", true)
 						]))], 64)) : createCommentVNode("", true)
 					], 8, _hoisted_14$6);
 				}), 128))]))

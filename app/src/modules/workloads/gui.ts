@@ -29,6 +29,8 @@ import { log } from '../../log.js';
 import { registerSessionlessApprovalHandler, requestSessionlessApproval } from '../approvals/sessionless.js';
 import { getUser } from '../permissions/db/users.js';
 import { diskLevel, diskUsed, gb, type DiskLevel } from './disk.js';
+import { egressOf } from './egress.js';
+import { workloadEgressRefusals } from '../../channels/webchat/workload-egress-refusals.js';
 import { syncGateway } from './gateway/index.js';
 import { enabledRoutes, isRouteKind, publishingRoute, ROUTE_KIND_WORDS, type RouteKind } from './gateway/publishing.js';
 import { declaredPort, exposeApp, parseEmails, planExpose, routeView, unexposeApp, widensAccess } from './publish.js';
@@ -222,6 +224,10 @@ export interface AppRow {
   expiresAt: number | null;
   /** Published: renewed near its expiry while people open it (reconcile.ts). */
   renewsWhileUsed: boolean;
+  /** Hosts its services may call at runtime, as approved (x-nanoclaw-egress); empty: none. */
+  canCall: string[];
+  /** Calls its services were refused lately (workload-egress-refusals.ts). */
+  egressRefused: number;
 }
 
 export interface AppsView {
@@ -265,6 +271,10 @@ export async function appsOf(agentGroupId: string): Promise<AppsView> {
     if (w.state === 'deleted') continue;
     shown.add(w.name);
     const base = w.state === 'running' ? 'running' : 'stopped';
+    const calls = {
+      canCall: [...new Set(Object.values(egressOf(w)).flat())],
+      egressRefused: workloadEgressRefusals(agentGroupId, w.id).length,
+    };
     const mine = published.filter((r) => r.workloadId === w.id);
     for (const r of mine) {
       const v = await routeView(r);
@@ -282,6 +292,7 @@ export async function appsOf(agentGroupId: string): Promise<AppsView> {
         running: w.state === 'running',
         expiresAt: w.expiresAt,
         renewsWhileUsed: w.expiresAt !== null,
+        ...calls,
       });
     }
     if (!mine.length)
@@ -299,6 +310,7 @@ export async function appsOf(agentGroupId: string): Promise<AppsView> {
         running: w.state === 'running',
         expiresAt: w.expiresAt,
         renewsWhileUsed: false,
+        ...calls,
       });
   }
   // A first deploy waiting for its card has no workload row yet.
@@ -318,6 +330,8 @@ export async function appsOf(agentGroupId: string): Promise<AppsView> {
         running: false,
         expiresAt: null,
         renewsWhileUsed: false,
+        canCall: [],
+        egressRefused: 0,
       });
   const used = diskUsed(agentGroupId);
   return {
