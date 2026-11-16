@@ -9,7 +9,9 @@ import { json, readJsonObject } from './http.js';
 import { defaultProviderChanges, readDefaultProvider } from './default-provider.js';
 import {
   cancelCopilotLogin,
+  copilotLoginBusy,
   copilotStatus,
+  CopilotDisconnectError,
   disconnectCopilot,
   getCopilotLoginProgress,
   startCopilotLogin,
@@ -18,6 +20,8 @@ import { cancelGrokLogin, getGrokLoginProgress, startGrokLogin } from './grok-au
 import { grokStatus } from './grok-status.js';
 import { scheduleHostRestart } from '../ollama-manage.js';
 import { upsertEnv } from '../env-write.js';
+import { log } from '../../../log.js';
+import { getUser } from '../../../modules/permissions/db/users.js';
 import { availableProviders, copilotAvailable, grokAvailable } from './providers.js';
 import { hasFeatureInstall, installStatus, startFeatureInstall } from '../install-engine.js';
 import type { RouteCtx } from '../server.js';
@@ -124,30 +128,38 @@ export async function rGrokLoginPost(ctx: RouteCtx, m: RegExpMatchArray): Promis
  * answers both "is the sign-in done" and "what is connected".
  */
 export async function rCopilotLoginGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  return json(ctx.res, 200, { ...getCopilotLoginProgress(), ...copilotStatus() });
+  return json(ctx.res, 200, { ...getCopilotLoginProgress(ctx.userId), ...copilotStatus() });
 }
 
 export async function rCopilotLoginPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
+  const { res, userId } = ctx;
   const verb = m[1];
-  if (verb === 'cancel') return json(res, 200, { ...cancelCopilotLogin(), ...getCopilotLoginProgress() });
+  const progress = () => getCopilotLoginProgress(userId);
+  if (verb === 'cancel') return json(res, 200, { ...cancelCopilotLogin(), ...progress() });
   if (!copilotAvailable())
     return json(res, 409, {
       error: 'GitHub Copilot is not installed — install it first, then connect.',
       code: 'not-installed',
     });
   if (verb === 'disconnect') {
+    // A sign-in (or one still stopping) may be saving: removing now could
+    // miss what it stores a moment later.
+    if (copilotLoginBusy()) return json(res, 409, { error: 'Sign-in in progress.', code: 'login-running' });
     try {
       await disconnectCopilot();
-    } catch {
+    } catch (err) {
+      if (err instanceof CopilotDisconnectError)
+        return json(res, 502, { error: err.message, code: err.code, ...copilotStatus() });
       // The gateway's own errors can quote request details; never relay them.
+      log.warn('Copilot disconnect failed', { err: String(err) });
       return json(res, 502, { error: 'Could not remove the Copilot credential — check the gateway is running.' });
     }
-    return json(res, 200, { ...getCopilotLoginProgress(), ...copilotStatus() });
+    return json(res, 200, { ...progress(), ...copilotStatus() });
   }
-  const r = startCopilotLogin();
-  if (r.error === 'already-running') return json(res, 200, { ...getCopilotLoginProgress(), started: false });
-  return json(res, 202, { ...getCopilotLoginProgress(), started: true });
+  const name = (await getUser(userId))?.display_name || userId.replace(/^[^:]*:/, '');
+  const r = startCopilotLogin(process.cwd(), { id: userId, name });
+  if (r.error === 'already-running') return json(res, 200, { ...progress(), started: false });
+  return json(res, 202, { ...progress(), started: true });
 }
 
 /**

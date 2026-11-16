@@ -8,6 +8,8 @@ export function buttonBusy(btn: HTMLElement & { disabled?: boolean }, busyLabel:
   // The label's own nodes, so an icon in it comes back too (textContent would drop it).
   const original = Array.from(btn.childNodes);
   btn.disabled = true;
+  // Screen readers hear the wait too, not only see the spinner.
+  btn.setAttribute('aria-busy', 'true');
   btn.textContent = '';
   const spin = document.createElement('span');
   spin.className = 'btn-spinner';
@@ -16,6 +18,7 @@ export function buttonBusy(btn: HTMLElement & { disabled?: boolean }, busyLabel:
   btn.appendChild(document.createTextNode(busyLabel));
   return () => {
     btn.disabled = false;
+    btn.removeAttribute('aria-busy');
     btn.replaceChildren(...original);
   };
 }

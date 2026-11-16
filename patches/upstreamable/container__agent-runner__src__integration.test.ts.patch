@@ -1,5 +1,5 @@
 diff --git a/container/agent-runner/src/integration.test.ts b/container/agent-runner/src/integration.test.ts
-index 88ae479a..caed1638 100644
+index 88ae479a..dbba050c 100644
 --- a/container/agent-runner/src/integration.test.ts
 +++ b/container/agent-runner/src/integration.test.ts
 @@ -236,17 +236,56 @@ describe('poll loop integration', () => {
@@ -81,3 +81,33 @@ index 88ae479a..caed1638 100644
        providerName: 'mock',
        cwd: '/tmp',
        signal,
+@@ -690,3 +734,29 @@ class BlockingProvider {
+     };
+   }
+ }
++
++describe('poll loop — the Stop button during a turn', () => {
++  it('answers "Stopped." — not the model/configuration warning — when the person stops a turn before any reply', async () => {
++    insertMessage('m-stop', { sender: 'Alice', text: 'long running request' }, { platformId: 'chan-1', channelType: 'discord' });
++    const provider = new BlockingProvider();
++    const controller = new AbortController();
++    const loopPromise = runPollLoopWithTimeout(provider as unknown as MockProvider, controller.signal, 20000);
++
++    await waitFor(() => provider.queries === 1, 15000);
++    getInboundDb()
++      .prepare(
++        `INSERT INTO messages_in (id, kind, timestamp, status, platform_id, channel_type, thread_id, content, trigger)
++         VALUES ('interrupt-1', 'interrupt', datetime('now'), 'pending', 'chan-1', 'discord', NULL, '{"reason":"user-stop"}', 0)`,
++      )
++      .run();
++
++    await waitFor(() => provider.aborts === 1, 15000);
++    await waitFor(() => getUndeliveredMessages().some((m) => JSON.parse(m.content).text === 'Stopped.'), 15000);
++    controller.abort();
++
++    const texts = getUndeliveredMessages().map((m) => JSON.parse(m.content).text);
++    expect(texts).toContain('Stopped.');
++    expect(texts.some((t: string) => /configuration problem/.test(t))).toBe(false);
++    await loopPromise.catch(() => {});
++  }, 30000);
++});

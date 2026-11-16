@@ -226,6 +226,8 @@ async function runPersona(browser, persona) {
           status: 200,
           contentType: 'application/json',
           body: JSON.stringify({
+            workloads: { on: false, status: { text: 'Off', ok: false, checking: false, fix: '', detail: '' } },
+            builds: { on: false, status: { text: 'Off', ok: false, checking: false, fix: '', detail: '' } },
             gate: null,
             tailnet: { on: false, domain: '', status: { text: 'Off', ok: false, warnings: [] } },
             cloudflare: {

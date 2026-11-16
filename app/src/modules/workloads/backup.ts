@@ -4,23 +4,33 @@
  * their owners inside the archive and the host never needs root. The stack is
  * paused while it is copied, so a database's files are consistent. Nightly
  * from the reconcile loop; the newest KEEP are kept per workload.
+ *
+ * A stack on a worker is backed up the same way there, the archive streamed
+ * over the link (worker-main.ts vol-out / vol-in) and kept on central, so a
+ * stack whose worker is gone can be restored on another one.
  */
 import { execFile, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { Transform, type Readable } from 'stream';
 import { promisify } from 'util';
 
 import { DATA_DIR } from '../../config.js';
 import { CONTAINER_RUNTIME_BIN } from '../../container-runtime.js';
 import { log } from '../../log.js';
-import { compose, dockerEnv, projectName, sliceName } from './docker.js';
+import { callWorker, openWorkerStream } from '../machines/links.js';
+import { compose, dockerEnv, LOCAL_NODE, projectName, shipImage, sliceName, tagHere } from './docker.js';
 import { HELPER_IMAGE } from './images.js';
 import type { Workload } from './store.js';
 
 const run = promisify(execFile);
 export const KEEP = 3;
 /** Leave at least this much free on the backup disk. */
-const MIN_FREE_BYTES = 5 * 1024 ** 3;
+export const MIN_FREE_BYTES = 5 * 1024 ** 3;
+/** The most one volume's archive from a worker may take here: a worker must not fill central's disk. */
+export const MAX_WORKER_ARCHIVE_BYTES = 20 * 1024 ** 3;
+/** How often (in bytes received) the free disk is checked again while an archive arrives. */
+const FREE_CHECK_EVERY = 64 * 1024 ** 2;
 
 export const backupRoot = (id: string): string => path.join(DATA_DIR, 'workload-backups', id);
 const STAMP_RE = /^\d{8}T\d{6}Z$/;
@@ -75,18 +85,23 @@ function prune(id: string, keep = KEEP): void {
 
 /** The stack's named volumes: compose short name → docker volume name. */
 export async function stackVolumes(w: Workload): Promise<Record<string, string>> {
-  const { stdout } = await run(
-    CONTAINER_RUNTIME_BIN,
-    [
-      'volume',
-      'ls',
-      '--filter',
-      `label=com.docker.compose.project=${projectName(w)}`,
-      '--format',
-      '{{.Name}}\t{{.Label "com.docker.compose.volume"}}',
-    ],
-    { env: dockerEnv() },
-  );
+  const stdout =
+    w.node === LOCAL_NODE
+      ? (
+          await run(
+            CONTAINER_RUNTIME_BIN,
+            [
+              'volume',
+              'ls',
+              '--filter',
+              `label=com.docker.compose.project=${projectName(w)}`,
+              '--format',
+              '{{.Name}}\t{{.Label "com.docker.compose.volume"}}',
+            ],
+            { env: dockerEnv() },
+          )
+        ).stdout
+      : String(await callWorker(w.node, 'volumes', { project: projectName(w) }));
   const out: Record<string, string> = {};
   for (const line of stdout.trim().split('\n').filter(Boolean)) {
     const [name, short] = line.split('\t');
@@ -150,6 +165,115 @@ function helper(args: string[], io: { toFile?: string; fromFile?: string }, time
   });
 }
 
+/**
+ * Write what a worker sends to `file`, within limits: at most `maxBytes`,
+ * and never once the disk it lands on has less than `minFreeBytes` free
+ * (checked at the start and every 64 MB). Over either, the stream is cut and
+ * the partial file removed, as on any other failure. Resolves once the file
+ * is complete; the sender ends the stream only when its tar succeeded.
+ */
+export function receiveCapped(
+  src: Readable & { destroy(err?: Error): unknown },
+  file: string,
+  limits: { maxBytes: number; minFreeBytes: number },
+  freeBytes: (file: string) => number = (f) => {
+    const st = fs.statfsSync(path.dirname(f));
+    return st.bavail * st.bsize;
+  },
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let received = 0;
+    let nextCheck = 0;
+    const out = fs.createWriteStream(file, { mode: 0o600, flags: 'wx' });
+    const fail = (err: Error): void => {
+      if (settled) return;
+      settled = true;
+      src.destroy(err);
+      out.destroy();
+      fs.rmSync(file, { force: true });
+      reject(err);
+    };
+    const meter = new Transform({
+      transform(chunk: Buffer, _enc, cb) {
+        received += chunk.length;
+        if (received > limits.maxBytes)
+          return cb(new Error(`the archive is larger than ${Math.round(limits.maxBytes / 1024 ** 3)} GB`));
+        if (received >= nextCheck) {
+          nextCheck = received + FREE_CHECK_EVERY;
+          if (freeBytes(file) < limits.minFreeBytes)
+            return cb(new Error('not enough free disk on this host for a backup'));
+        }
+        cb(null, chunk);
+      },
+    });
+    src.on('error', fail);
+    meter.on('error', fail);
+    out.on('error', fail);
+    out.on('finish', () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    });
+    src.pipe(meter).pipe(out);
+  });
+}
+
+/** A volume of a stack on a worker, out to a file here or in from one (worker-main.ts vol-out / vol-in). */
+function workerVolume(
+  w: Workload,
+  volume: string,
+  io: { toFile?: string; fromFile?: string },
+  timeoutMs = 3_600_000,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const s = openWorkerStream(w.node, {
+      kind: io.toFile ? 'vol-out' : 'vol-in',
+      project: projectName(w),
+      volume,
+      image: workerHelperTag(),
+    });
+    const timer = setTimeout(() => s.destroy(new Error('timed out')), timeoutMs);
+    const done = (err?: Error): void => {
+      clearTimeout(timer);
+      if (err) reject(err);
+      else resolve();
+    };
+    if (io.toFile) {
+      // The worker ends the stream only when its tar succeeded; a failure resets it.
+      receiveCapped(s, io.toFile, { maxBytes: MAX_WORKER_ARCHIVE_BYTES, minFreeBytes: MIN_FREE_BYTES }).then(
+        () => done(),
+        (e: Error) => done(e),
+      );
+    } else {
+      s.on('error', (e: Error) => done(e));
+      const src = fs.createReadStream(io.fromFile!);
+      src.on('error', (e) => (s.destroy(), done(e)));
+      s.on('end', () => done());
+      s.resume();
+      src.pipe(s);
+    }
+  });
+}
+
+/**
+ * The name the helper image goes by on a worker: a tag of NanoClaw's own.
+ * `docker save` of a digest reference loads as a bare image ID on the other
+ * end, so the reference would not resolve there; a tag is kept.
+ */
+export const workerHelperTag = (): string =>
+  `nanoclaw-workload-helper:${(HELPER_IMAGE().split('@sha256:')[1] ?? 'latest').slice(0, 16)}`;
+
+/** The helper image where the copy (or a worker's isolation check) runs: here, or sent to the worker (it never pulls). Its name there. */
+export async function helperOn(node: string): Promise<string> {
+  await ensureHelperImage();
+  if (node === LOCAL_NODE) return HELPER_IMAGE();
+  const tag = workerHelperTag();
+  await tagHere(HELPER_IMAGE(), tag);
+  await shipImage(node, tag);
+  return tag;
+}
+
 export async function ensureHelperImage(): Promise<void> {
   const image = HELPER_IMAGE();
   const have = await run(CONTAINER_RUNTIME_BIN, ['image', 'inspect', image], { env: dockerEnv() }).then(
@@ -166,7 +290,7 @@ export async function backupWorkload(w: Workload, now = new Date()): Promise<Bac
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const free = fs.statfsSync(root);
   if (free.bavail * free.bsize < MIN_FREE_BYTES) throw new Error('not enough free disk on this host for a backup');
-  await ensureHelperImage();
+  await helperOn(w.node);
   const dir = path.join(root, stampOf(now));
   fs.mkdirSync(dir, { mode: 0o700 });
   const paused =
@@ -177,9 +301,10 @@ export async function backupWorkload(w: Workload, now = new Date()): Promise<Bac
     ));
   try {
     for (const [short, name] of Object.entries(vols)) {
-      await helper(['-v', `${name}:/v:ro`, HELPER_IMAGE(), 'tar', 'czf', '-', '-C', '/v', '.'], {
-        toFile: path.join(dir, `${short}.tar.gz`),
-      });
+      const file = path.join(dir, `${short}.tar.gz`);
+      if (w.node === LOCAL_NODE)
+        await helper(['-v', `${name}:/v:ro`, HELPER_IMAGE(), 'tar', 'czf', '-', '-C', '/v', '.'], { toFile: file });
+      else await workerVolume(w, name, { toFile: file });
     }
   } catch (err) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -200,14 +325,17 @@ export async function restoreVolumes(w: Workload, stamp: string): Promise<string
   const b = listBackups(w.id).find((x) => x.stamp === stamp);
   if (!b) throw new Error(`no backup ${stamp}: see ncl workloads backups`);
   const vols = await stackVolumes(w);
-  await ensureHelperImage();
+  await helperOn(w.node);
   const done: string[] = [];
   for (const { volume } of b.volumes) {
     const name = vols[volume];
     if (!name) continue;
-    await helper(['-v', `${name}:/v`, HELPER_IMAGE(), 'sh', '-c', 'find /v -mindepth 1 -delete && tar xzf - -C /v'], {
-      fromFile: path.join(backupRoot(w.id), stamp, `${volume}.tar.gz`),
-    });
+    const file = path.join(backupRoot(w.id), stamp, `${volume}.tar.gz`);
+    if (w.node === LOCAL_NODE)
+      await helper(['-v', `${name}:/v`, HELPER_IMAGE(), 'sh', '-c', 'find /v -mindepth 1 -delete && tar xzf - -C /v'], {
+        fromFile: file,
+      });
+    else await workerVolume(w, name, { fromFile: file });
     done.push(volume);
   }
   return done;

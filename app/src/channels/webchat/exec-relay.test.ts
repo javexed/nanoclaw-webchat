@@ -14,6 +14,7 @@ import {
   registerRelayedContainer,
   relayReady,
   type RelayRuntime,
+  frameLines,
 } from './exec-relay.js';
 
 /** Plays the daemon's side of the pipe: what it would send, and what it received. */
@@ -382,4 +383,32 @@ describe.skipIf(!docker)('on a real engine', () => {
       server.close();
     }
   }, 60_000);
+});
+
+describe('frame lines from the container', () => {
+  it('splits lines across chunks', () => {
+    const got: string[] = [];
+    const feed = frameLines(
+      (l) => got.push(l),
+      () => got.push('OVERFLOW'),
+      64,
+    );
+    feed(Buffer.from('{"t":"a"}\n{"t":'));
+    feed(Buffer.from('"b"}\n'));
+    expect(got).toEqual(['{"t":"a"}', '{"t":"b"}']);
+  });
+
+  it('gives up once on a line past the limit, and reads nothing after', () => {
+    const got: string[] = [];
+    let overflows = 0;
+    const feed = frameLines(
+      (l) => got.push(l),
+      () => overflows++,
+      64,
+    );
+    feed(Buffer.from('x'.repeat(65)));
+    feed(Buffer.from('\n{"t":"a"}\n'));
+    expect(overflows).toBe(1);
+    expect(got).toEqual([]);
+  });
 });

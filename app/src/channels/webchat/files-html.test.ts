@@ -23,6 +23,9 @@ vi.mock('../../config.js', async () => {
 
 import { HTML_FRAME_CSP, HTML_FRAME_MAX, handleFileServe, handleHtmlFrame, uploadsDir } from './files.js';
 import { guessMime } from './agent-delivery.js';
+import { closeDb, getDb, initTestDb } from '../../db/connection.js';
+import { runMigrations } from '../../db/migrations/index.js';
+import { isAgentFileInRoom, storeWebchatFileMessage } from './db.js';
 
 const ROOM = 'html-room';
 const PAGE = '6f9619ff-8b86-d011-b42d-00cf4fc964ff.html';
@@ -73,9 +76,15 @@ function capture(): { res: ServerResponse; out: Captured; done: Promise<void> } 
   return { res, out, done };
 }
 
-async function frame(file: string, dest: string | undefined): Promise<Captured> {
+const agentsOnly = async () => true;
+
+async function frame(
+  file: string,
+  dest: string | undefined,
+  sentByAgent: (roomId: string, url: string) => Promise<boolean> = agentsOnly,
+): Promise<Captured> {
   const { res, out, done } = capture();
-  handleHtmlFrame(res, ROOM, file, dest);
+  await handleHtmlFrame(res, ROOM, file, dest, sentByAgent);
   await done;
   return out;
 }
@@ -105,15 +114,62 @@ describe('handleHtmlFrame', () => {
 
   it('refuses path traversal', async () => {
     const { res, out } = capture();
-    handleHtmlFrame(res, ROOM, '../../etc/passwd.html', 'iframe');
+    await handleHtmlFrame(res, ROOM, '../../etc/passwd.html', 'iframe', agentsOnly);
     expect(out.status).toBe(403);
     const second = capture();
-    handleHtmlFrame(second.res, '..', PAGE, 'iframe');
+    await handleHtmlFrame(second.res, '..', PAGE, 'iframe', agentsOnly);
     expect(second.out.status).toBe(403);
   });
 
   it('refuses a page past the size cap', async () => {
     expect((await frame(BIG, 'iframe')).status).toBe(413);
+  });
+});
+
+describe('handleHtmlFrame — agent files only', () => {
+  const MEMBER_PAGE = '9f9619ff-8b86-d011-b42d-00cf4fc964ff.html';
+  const ORPHAN = 'af9619ff-8b86-d011-b42d-00cf4fc964ff.html';
+  const url = (f: string) => `/api/files/${ROOM}/${f}`;
+  const meta = (f: string) => ({ url: url(f), filename: 'page.html', mime: 'text/html', size: HTML.length });
+
+  beforeAll(async () => {
+    await initTestDb();
+    await runMigrations(getDb());
+    fs.writeFileSync(path.join(uploadsDir(ROOM), MEMBER_PAGE), HTML);
+    fs.writeFileSync(path.join(uploadsDir(ROOM), ORPHAN), HTML);
+    await storeWebchatFileMessage(ROOM, 'bot', 'agent', '', meta(PAGE));
+    await storeWebchatFileMessage(ROOM, 'alice', 'user', '', meta(MEMBER_PAGE));
+  });
+  afterAll(async () => {
+    await closeDb();
+  });
+
+  it('knows who sent each file', async () => {
+    expect(await isAgentFileInRoom(ROOM, url(PAGE))).toBe(true);
+    expect(await isAgentFileInRoom(ROOM, url(MEMBER_PAGE))).toBe(false);
+    expect(await isAgentFileInRoom(ROOM, url(ORPHAN))).toBe(false);
+    expect(await isAgentFileInRoom('other-room', url(PAGE))).toBe(false);
+  });
+
+  it("renders an agent's page", async () => {
+    const out = await frame(PAGE, 'iframe', isAgentFileInRoom);
+    expect(out.status).toBe(200);
+    expect(out.body).toBe(HTML);
+  });
+
+  it("refuses a member's page, and a file no message carries", async () => {
+    for (const f of [MEMBER_PAGE, ORPHAN]) {
+      const out = await frame(f, 'iframe', isAgentFileInRoom);
+      expect(out.status).toBe(403);
+      expect(out.body).not.toContain('<script>');
+    }
+  });
+
+  it('refuses when the lookup fails', async () => {
+    const out = await frame(PAGE, 'iframe', async () => {
+      throw new Error('db down');
+    });
+    expect(out.status).toBe(500);
   });
 });
 
@@ -159,6 +215,15 @@ describe('opening an HTML file as a file', () => {
     handleFileServe(res, ROOM, PDF);
     await done;
     expect(String(out.headers['Content-Disposition'])).toMatch(/^inline;/);
+  });
+
+  it('serves a PDF unsandboxed (Chromium refuses its viewer otherwise), typed and nosniff', async () => {
+    const { res, out, done } = capture();
+    handleFileServe(res, ROOM, PDF);
+    await done;
+    expect(out.headers['Content-Type']).toBe('application/pdf');
+    expect(out.headers['X-Content-Type-Options']).toBe('nosniff');
+    expect(out.headers['Content-Security-Policy']).toBe("frame-ancestors 'self'");
   });
 
   it("types an agent's .html file as text/html", () => {

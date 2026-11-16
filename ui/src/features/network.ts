@@ -8,7 +8,22 @@ import { $, esc } from '../core/dom.js';
 import { toastError } from '../core/toast.js';
 import { hostListEditor, type HostListEditor } from './hostlist.js';
 import { showConfirmModal } from './modals.js';
-import { ago, loadAgents, type Agent } from './runners.js';
+
+interface Agent { id: string; name?: string }
+const ago = (t: number) => {
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
+};
+
+/** Agent names for display; an empty list when they cannot be read. */
+async function loadAgents(): Promise<Agent[]> {
+  try {
+    const a = await apiJson('/api/agents');
+    return Array.isArray(a) ? a : Array.isArray(a?.agents) ? a.agents : [];
+  } catch {
+    return [];
+  }
+}
 
 interface BlockedHost { host: string; port: number; count: number; firstAt: number; lastAt: number; agentGroupIds: string[] }
 interface Egress { allowlist: string[]; defaults: string[]; always: string[]; blocked: BlockedHost[] }

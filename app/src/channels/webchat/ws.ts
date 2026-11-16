@@ -39,7 +39,7 @@ import {
 } from './db.js';
 import { hostAllowed, originAllowed } from './request-guard.js';
 import { canAccessRoom, canArchiveRoom } from './access.js';
-import { redactSensitiveData } from './redact.js';
+import { redactMessageContent } from './redact.js';
 import { withTraceFlags } from './turn-traces.js';
 import { withLimitRetries } from './limit-retry.js';
 import { getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
@@ -379,7 +379,7 @@ export function setupWebSocket(
             await withLimitRetries(await withTraceFlags(await getWebchatMessages(room.id, 50, joinThread)))
           ).map((m) => ({
             ...m,
-            content: redactSensitiveData(m.content),
+            content: redactMessageContent(m.content),
           })),
         });
         await broadcast(room.id, { type: 'system', room_id: room.id, message: `${client.identity} joined` }, clientId);
@@ -506,7 +506,7 @@ export function setupWebSocket(
           threadToSessionKey(storeThread),
         );
 
-        send({ ...outgoing, content: redactSensitiveData(stored.content) });
+        send({ ...outgoing, content: redactMessageContent(stored.content) });
         return;
       }
 

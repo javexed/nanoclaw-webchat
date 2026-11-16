@@ -10,6 +10,7 @@
 // elsewhere: the token travels only in the Authorization header on same-origin
 // relative URLs and in the WS subprotocol — never in a URL.
 import { noteAuthHint } from './platform-token.js';
+import { checkSessionExpired, sessionExpiredShown } from './session-expiry.js';
 
 let authToken: string = sessionStorage.getItem('nanoclaw-token') || '';
 
@@ -40,11 +41,37 @@ export function authFetch(url: string, opts: RequestInit = {}): Promise<Response
   // CSRF guard — server requires this on multipart/chunked upload endpoints so
   // cross-origin form-POSTs can't auto-attach credentials.
   headers['X-Webchat-CSRF'] = '1';
-  return fetch(url, { ...opts, headers }).then((res) => {
-    // Every authenticated response may carry the platform-token hint.
-    noteAuthHint(res);
-    return res;
+  // Signed out at the front door: hold every request until the reload rather
+  // than letting each poll fail into the console.
+  if (sessionExpiredShown()) return PAUSED();
+  return fetch(url, { ...opts, headers }).then(
+    (res) => {
+      // Every authenticated response may carry the platform-token hint.
+      noteAuthHint(res);
+      return res;
+    },
+    async (err: unknown) => {
+      // A network-level failure on our own origin is what an expired front-door
+      // session looks like to fetch (the redirect to the sign-in page is
+      // blocked): the WebSocket stays up through it, so this is often the only
+      // place it shows. Ask once; when it is, the banner takes over.
+      if (url.startsWith('/') && !url.startsWith('//') && (await expiredOnce())) return PAUSED();
+      throw err;
+    },
+  );
+}
+
+/** A request that never settles: callers stay quiet while the banner is up. */
+const PAUSED = (): Promise<Response> => new Promise<Response>(() => {});
+
+/** One check at a time: a burst of failed polls shares it. */
+let checking: Promise<boolean> | null = null;
+function expiredOnce(): Promise<boolean> {
+  if (sessionExpiredShown()) return Promise.resolve(true);
+  checking ??= checkSessionExpired().finally(() => {
+    checking = null;
   });
+  return checking;
 }
 
 export interface ApiError extends Error {

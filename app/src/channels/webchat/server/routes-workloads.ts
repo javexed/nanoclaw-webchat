@@ -2,26 +2,32 @@
 // Agent → Apps (/api/agents/:id/apps, /api/agents/:id/workloads/:name/…): an
 // agent's apps for the people who administer it (owners, global admins and
 // its scoped admins; members get 403, and the tab hides). Narrowing applies
-// at once; widening raises an approval card (modules/workloads/gui.ts).
+// at once; widening raises an approval card (modules/workloads/gui.ts). The
+// same for "Allow Docker Hub for builds" (…/apps/build-registries): on is a
+// card, off applies. Extend and Redeploy keep what was approved: direct.
 //
-// Admin → Publishing (/api/publishing…): owner only. The routes' switches and
-// settings are their .env keys; Connect hands a credential to the OneCLI vault
-// and never returns it (modules/workloads/publishing-settings.ts).
+// Admin → Publishing (/api/publishing…): owner only. The Workloads and
+// Confined builds switches and the routes' switches and settings are their
+// .env keys; Connect hands a credential to the OneCLI vault and never returns
+// it (modules/workloads/publishing-settings.ts).
 //
 // Writes carry the CSRF header (the 'csrf' guard in server.ts).
 import { log } from '../../../log.js';
 import {
   backupsOf,
   deleteWorkload,
+  extendWorkload,
   logsWorkload,
+  redeployApproved,
   restoreWorkload,
   startWorkload,
   stopWorkload,
 } from '../../../modules/workloads/control.js';
-import { appsOf, ChangeRefused, changeApp, setPublishDeps } from '../../../modules/workloads/gui.js';
+import { appsOf, ChangeRefused, changeApp, setDockerHub, setPublishDeps } from '../../../modules/workloads/gui.js';
 import {
   applyCloudflare,
   applyTailnet,
+  applyWorkloads,
   connectCloudflare,
   connectTailnet,
   publishingView,
@@ -35,9 +41,10 @@ import { requireAgentAdmin } from './route-guards.js';
 setPublishDeps({ isAdmin: hasAdminPrivilege });
 
 export const RE_AGENT_APPS = /^\/api\/agents\/([^/]+)\/apps$/;
+export const RE_AGENT_BUILD_REGISTRIES = /^\/api\/agents\/([^/]+)\/apps\/build-registries$/;
 export const RE_AGENT_WORKLOAD = /^\/api\/agents\/([^/]+)\/workloads\/([a-z][a-z0-9-]{0,29})$/;
 export const RE_AGENT_WORKLOAD_ACTION =
-  /^\/api\/agents\/([^/]+)\/workloads\/([a-z][a-z0-9-]{0,29})\/(start|stop|logs|backups|restore)$/;
+  /^\/api\/agents\/([^/]+)\/workloads\/([a-z][a-z0-9-]{0,29})\/(start|stop|redeploy|extend|logs|backups|restore)$/;
 
 /**
  * A refusal from the workloads modules. They throw sentences meant for the
@@ -82,6 +89,20 @@ export async function rAgentAppsPut(ctx: RouteCtx, m: RegExpMatchArray): Promise
   }
 }
 
+/** "Allow Docker Hub for builds". Body: { on }. On raises a card (202); off applies (200). */
+export async function rAgentBuildRegistriesPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
+  const body = await readJsonObject<{ on?: unknown }>(ctx.req, ctx.res);
+  if (body === undefined) return;
+  try {
+    const r = await setDockerHub(group.id, ctx.userId, body.on);
+    return json(ctx.res, r.pending ? 202 : 200, r);
+  } catch (err) {
+    return fail(ctx, err);
+  }
+}
+
 export async function rAgentWorkloadDelete(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const group = await requireAgentAdmin(ctx, m);
   if (!group) return;
@@ -108,6 +129,13 @@ export async function rAgentWorkloadAction(ctx: RouteCtx, m: RegExpMatchArray): 
     if (verb === 'backups') return json(ctx.res, 200, { backups: await backupsOf(group.id, name) });
     if (verb === 'start') return json(ctx.res, 200, { state: (await startWorkload(group.id, name)).state });
     if (verb === 'stop') return json(ctx.res, 200, { state: (await stopWorkload(group.id, name)).state });
+    if (verb === 'redeploy') {
+      const w = await redeployApproved(group.id, name);
+      // A deploy that ran and failed is recorded, not thrown: the row shows why (the tail, where the error is).
+      return json(ctx.res, 200, { state: w.state, error: w.lastError ? w.lastError.slice(-300) : null });
+    }
+    if (verb === 'extend')
+      return json(ctx.res, 200, { expiresAt: (await extendWorkload(group.id, name, `human:${ctx.userId}`)).expiresAt });
     const body = await readJsonObject<{ backup?: unknown }>(ctx.req, ctx.res);
     if (body === undefined) return;
     if (typeof body.backup !== 'string' || !body.backup) return json(ctx.res, 400, { error: 'Pick a backup' });
@@ -127,7 +155,19 @@ function settingFail(ctx: RouteCtx, err: unknown): void {
 }
 
 export async function rPublishingGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  return json(ctx.res, 200, publishingView());
+  return json(ctx.res, 200, await publishingView());
+}
+
+/** The Workloads and Confined builds switches. Body: { on?, confinedBuilds? }. */
+export async function rPublishingWorkloadsPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const body = await readJsonObject<{ on?: unknown; confinedBuilds?: unknown }>(ctx.req, ctx.res);
+  if (body === undefined) return;
+  try {
+    await applyWorkloads(process.cwd(), { on: body.on, confinedBuilds: body.confinedBuilds });
+    return json(ctx.res, 200, await publishingView());
+  } catch (err) {
+    return settingFail(ctx, err);
+  }
 }
 
 export async function rPublishingTailnetPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
@@ -135,7 +175,7 @@ export async function rPublishingTailnetPut(ctx: RouteCtx, _m: RegExpMatchArray)
   if (body === undefined) return;
   try {
     await applyTailnet(process.cwd(), { on: body.on, domain: body.domain });
-    return json(ctx.res, 200, publishingView());
+    return json(ctx.res, 200, await publishingView());
   } catch (err) {
     return settingFail(ctx, err);
   }
@@ -152,7 +192,7 @@ export async function rPublishingCloudflarePut(ctx: RouteCtx, _m: RegExpMatchArr
       zoneId: body.zoneId,
       teamDomain: body.teamDomain,
     });
-    return json(ctx.res, 200, publishingView());
+    return json(ctx.res, 200, await publishingView());
   } catch (err) {
     return settingFail(ctx, err);
   }
@@ -163,7 +203,7 @@ export async function rPublishingTailnetConnect(ctx: RouteCtx, _m: RegExpMatchAr
   if (body === undefined) return;
   try {
     await connectTailnet({ clientId: body.clientId, clientSecret: body.clientSecret });
-    return json(ctx.res, 200, publishingView());
+    return json(ctx.res, 200, await publishingView());
   } catch (err) {
     return settingFail(ctx, err);
   }
@@ -174,7 +214,7 @@ export async function rPublishingCloudflareConnect(ctx: RouteCtx, _m: RegExpMatc
   if (body === undefined) return;
   try {
     await connectCloudflare({ token: body.token });
-    return json(ctx.res, 200, publishingView());
+    return json(ctx.res, 200, await publishingView());
   } catch (err) {
     return settingFail(ctx, err);
   }

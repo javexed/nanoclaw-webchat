@@ -33,11 +33,8 @@ import { stagedEnv } from './staged-env.js';
 import { registerChannelAdapter } from '../channel-registry.js';
 import type { ChannelAdapter, ChannelSetup, InboundMessage, OutboundMessage } from '../adapter.js';
 import type { AgentActivityStatus } from '../../seam/index.js';
-import { runChannelStart } from './extensions.js';
 import { isOllamaLenient, primeOllamaLenient, refreshOllamaLenient } from './ollama-lenient.js';
 import { ensureRouterNetwork, syncRouterSecretHold } from './cloud-models.js';
-// Registers every installed extension before the server starts.
-import './extensions-installed.js';
 import { pruneSigninSessions } from './signins.js';
 import { pruneAuditFiles } from '../../audit.js';
 import { redactSensitiveData } from './redact.js';
@@ -75,6 +72,18 @@ import {
   surfaceA2aMessage,
 } from './state.js';
 import { registerApprovalResolvedHandler } from '../../modules/approvals/primitive.js';
+import { EXPIRY_USER, registerResendSurface } from '../../modules/approvals/expiry.js';
+import { registerApprovalVenue } from '../../modules/approvals/words.js';
+import { registerModuleSweep } from '../../module-sweep.js';
+import {
+  approversInRoom,
+  cardAudience,
+  expiredNotice,
+  patchApprovalCard,
+  resolvedPatch,
+  storeApprovalNotice,
+  sweepApprovalReminders,
+} from './inroom-approvals.js';
 import { registerReplyPreviewSink } from '../../modules/agent-status/observers.js';
 import { registerApprovalIntercept, registerApprovalRequestedListener } from '../../seam/index.js';
 import { buildApprovalTriageView, maybePrejudgeApproval } from '../../modules/approvals/prejudge.js';
@@ -144,7 +153,10 @@ function createAdapter(): ChannelAdapter {
       server = await startWebchatServer({
         onInbound,
         onAction: (questionId, selectedOption, userId) => {
-          config.onAction(questionId, selectedOption, userId);
+          // The host now resolves with what it did; the webchat route answers the clicker itself.
+          Promise.resolve(config.onAction(questionId, selectedOption, userId)).catch((err: unknown) =>
+            log.error('Webchat card action failed', { questionId, err }),
+          );
         },
       });
       log.info('Webchat channel listening', { host: server.host, port: server.port, tls: server.tls });
@@ -179,8 +191,6 @@ function createAdapter(): ChannelAdapter {
       void startMcpRelayIfAssigned();
       // Before any spawn reads it: which groups run on a local Ollama model.
       primeOllamaLenient().catch((err) => log.warn('Ollama lenient-mode prime failed', { err }));
-      // Installed extensions' own background services (./extensions.ts).
-      runChannelStart();
       // Which model hosts answer: failover at spawn, the classifier's host, the router's host list.
       startModelHostSweep();
       // A GitHub Copilot sign-in killed with the last host leaves a 0600 token
@@ -507,9 +517,19 @@ registerApprovalResolvedHandler(async (event) => {
       // An approver inbox — clear the card from that admin's inbox.
       pushApprovalResolvedToUser(userId, approvalId, resolvedByUserId);
     } else {
-      // The agent's room — flip the in-room card to resolved + clear live.
+      // The agent's room: the card turns into its outcome (who, which way, the
+      // result's summary), re-broadcast so open clients replace it in place.
       await markRoomApprovalResolved(approvalId, resolvedByUserId);
-      await broadcast(platformId, { type: 'approval_resolved', approvalId, resolvedBy: resolvedByUserId });
+      const card = await patchApprovalCard(approvalId, await resolvedPatch(event), 'approval_resolved');
+      if (card) {
+        await broadcast(platformId, { type: 'message', ...card });
+        // An expiry also says so at the bottom of the room, with "Send again".
+        if (event.userId === EXPIRY_USER) {
+          const title = event.approval.title || 'Approval';
+          const notice = await storeApprovalNotice(card, expiredNotice(approvalId, title));
+          if (notice) await broadcast(platformId, { type: 'message', ...notice });
+        }
+      }
     }
   }
   if (indexed.length > 0) await deleteWebchatApprovalIndex(approvalId);
@@ -534,19 +554,43 @@ registerApprovalRequestedListener(
     // The pre-judge's reasoning for the card. No stored row renders as
     // `unscreened`, never as "screened, nothing found".
     const approvalRow = await getPendingApproval(e.approvalId);
-    const card = await storeWebchatApprovalCard(roomId, e.agentName ?? 'agent', {
-      questionId: e.approvalId,
-      title: e.title,
-      question: e.question,
-      options: e.options,
-      action: e.action,
-      approvers: e.approvers,
-      triage: await buildApprovalTriageView(e.approvalId, e.action, approvalRow?.payload ?? ''),
-    });
+    const createdAt = approvalRow ? Date.parse(approvalRow.created_at) : Date.now();
+    const card = await storeWebchatApprovalCard(
+      roomId,
+      e.agentName ?? 'agent',
+      {
+        questionId: e.approvalId,
+        title: e.title,
+        question: e.question,
+        options: e.options,
+        action: e.action,
+        approvers: e.approvers,
+        triage: await buildApprovalTriageView(e.approvalId, e.action, approvalRow?.payload ?? ''),
+        // Names for "Waiting for …", and when it expires.
+        ...(await cardAudience(e.approvers, Number.isFinite(createdAt) ? createdAt : Date.now())),
+      },
+      // The thread the request came from, as the reply path maps it.
+      await sessionKeyToThread(e.session.thread_id, roomId),
+    );
     await recordWebchatApproval(e.approvalId, roomId);
     await broadcast(roomId, { type: 'message', ...(await card) });
   }),
 );
+
+// The agent is told whether the people who can approve its request are in its
+// room (the card is right there) or must find it in Admin → Approvals.
+registerApprovalVenue(approversInRoom);
+// An expired request in a webchat room can be sent again from its notice.
+registerResendSurface(async (session) => {
+  const mg = session.messaging_group_id ? await getMessagingGroup(session.messaging_group_id) : null;
+  return mg?.channel_type === 'webchat';
+});
+// About an hour before a card expires, its room is reminded once.
+registerModuleSweep('approval-reminders', async () => {
+  for (const notice of await sweepApprovalReminders()) {
+    await broadcast(notice.room_id, { type: 'message', ...notice });
+  }
+});
 
 // Learning loop: when an agent proposes a skill, drop an actionable card into
 // ITS OWN room — that's where the work happened, so that's where the operator

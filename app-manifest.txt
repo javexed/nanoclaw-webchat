@@ -125,7 +125,6 @@ container/agent-runner/src/providers/claude.learning-review.test.ts
 src/no-follow-fs.ts
 src/no-follow-fs.test.ts
 src/modules/approvals/expiry.test.ts
-.claude/skills/add-vscode-runner
 src/channels/webchat/gateway-connect.test.ts
 src/db/add-column-if-missing.ts
 src/module-sweep.test.ts
@@ -134,9 +133,10 @@ src/api-access-note.test.ts
 container/agent-runner/src/runner-log.test.ts
 src/container-restart-idle.ts
 src/container-restart-idle.test.ts
+src/agent-image-freshness.ts
+src/agent-image-freshness.test.ts
 src/container-runner.stop-once.test.ts
 src/reconcile-session.ceiling.test.ts
-src/drivers/docker-driver.removal.test.ts
 deploy/onecli-private-ports.sh
 scripts/onecli-private-ports.test.ts
 src/channels/webchat/ws-room-access.test.ts
@@ -164,6 +164,8 @@ src/modules/task-health
 src/db/migrations/module-task-health.ts
 container/agent-runner/src/task-run-marks.ts
 container/agent-runner/src/task-run-marks.test.ts
+container/agent-runner/src/instruction-guard.ts
+container/agent-runner/src/instruction-guard.test.ts
 src/reconcile-session.task-policy.test.ts
 container/agent-runner/src/served-model.ts
 container/agent-runner/src/served-model.test.ts
@@ -173,3 +175,11 @@ container/agent-runner/src/providers/claude.served-model.test.ts
 container/agent-runner/src/providers/claude.tool-result-guard.test.ts
 src/modules/workloads
 container/skills/workloads
+src/modules/approvals/words.ts
+src/modules/approvals/words.test.ts
+src/modules/approvals/resend.ts
+src/modules/approvals/resend.test.ts
+container/agent-runner/src/learning-loop.test.ts
+container/skills/deploy-keys
+container/agent-runner/src/ssh-proxy.ts
+src/modules/machines

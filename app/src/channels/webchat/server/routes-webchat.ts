@@ -49,7 +49,6 @@ import { currentServeListenerPort } from '../auth.js';
 import { enableTailscaleServe, getTailscaleServeState } from '../tailscale-serve.js';
 import { computeUsageRollup } from '../usage.js';
 import type { RouteCtx } from '../server.js';
-import { installedFeatures } from '../extensions.js';
 
 // ── UserCreds: workspace credentials policy — accepted TYPES + default room mode ──
 // Read by anyone (the room UIs need it); only the owner can change it.
@@ -138,8 +137,6 @@ export async function rWebchatFeatures(ctx: RouteCtx, _m: RegExpMatchArray): Pro
       marketplaceEnabled: !(await getMarketplaceDisabled()),
       credentialIsolation: await getCredentialIsolation(),
       credentialIsolationEffective: await fleetIsolationEnabled(),
-      // Installed extensions (./extensions.ts); the UI shows their screens only when listed.
-      extensions: installedFeatures(),
       canEdit,
     });
   }

@@ -9,7 +9,7 @@ import { attachPickerCfg, pendingFiles } from './features/attach-picker-state.js
 import { viewStack } from './features/views-state.js';
 import './features/model-list-state.js';
 import { routingCurrentRouter } from './features/routing-state.js';
-import { roomSortAz, selectedRoomId } from './features/room-list-state.js';
+import { openMenuRoomId, openThreadMenuId, roomSortAz, selectedRoomId } from './features/room-list-state.js';
 import { selectedAgentId } from './features/agent-list-state.js';
 import { membersFilter, usersSortAz } from './features/members-list-state.js';
 import '/dompurify.min.js';
@@ -69,7 +69,15 @@ import {
   wirePermsCreate,
   wirePermsNew,
 } from './features/perms.js';
-import { permsCreateChannelTouched, permsSelectedUserId, permsUserFilter } from './features/perms-list-state.js';
+import {
+  permsCreateChannelTouched,
+  permsGroupFilter,
+  permsSelectedUserId,
+  permsUserFilter,
+} from './features/perms-list-state.js';
+import { wireListSearch } from './core/list-filter.js';
+import { addAgentQuery, createAgentQuery } from './features/agent-lists-state.js';
+import { agentSkillsQuery } from './features/agent-skills-state.js';
 
 import {
   closeAttachPicker,
@@ -366,7 +374,6 @@ $('#overflow-menu')?.addEventListener('click', (e) => {
   else if (action === 'models') openManage('models');
   else if (action === 'mcp') openManage('mcp');
   else if (action === 'skills') openManage('skills');
-  else if (action === 'runners') openManage('runners');
   else if (action === 'network') openManage('network');
   else if (action === 'routing') openManage('routing');
   else if (action === 'journey') toggleJourney();
@@ -384,8 +391,20 @@ document.addEventListener('click', (e) => {
   if (menu && !menu.hidden && !menu.contains(e.target as Element) && (e.target as Element) !== $('#overflow-btn'))
     closeOverflowMenu();
 });
+// Sidebar room/thread kebab menus: any click outside the open menu, or Esc,
+// closes it (their own buttons stop propagation, so they never reach here).
+const closeRowMenus = () => {
+  openMenuRoomId.value = null;
+  openThreadMenuId.value = null;
+};
+document.addEventListener('click', (e) => {
+  if (!(e.target as Element)?.closest?.('.room-menu, .thread-menu')) closeRowMenus();
+});
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeOverflowMenu();
+  if (e.key === 'Escape') {
+    closeOverflowMenu();
+    closeRowMenus();
+  }
 });
 $('#settings-close')!.addEventListener('click', closeSettings);
 wireSettingsPanel1();
@@ -539,6 +558,10 @@ $('#perms-user-search')?.addEventListener('input', (e) => {
   permsUserFilter.value = (e.target as HTMLInputElement).value.trim().toLowerCase();
   renderPermsUserList();
 });
+wireListSearch('#perms-group-search', permsGroupFilter);
+wireListSearch('#room-add-agent-search', addAgentQuery);
+wireListSearch('#room-create-agent-search', createAgentQuery);
+wireListSearch('#agent-skills-search', agentSkillsQuery);
 
 // Permissions / admin / sign-in view chrome.
 $('#perms-exit')!.addEventListener('click', togglePermissions);
@@ -809,7 +832,7 @@ document.addEventListener('paste', (e) => {
   }
 });
 
-wireComposerPaste();
+wireComposerPaste((file) => stageFiles([file]));
 
 wireFileControls3();
 

@@ -32,7 +32,7 @@ import {
   sessionKeyToThread,
 } from './db.js';
 import { sendPushForMessage } from './push.js';
-import { redactSensitiveData } from './redact.js';
+import { redactMessageContent, redactSensitiveData } from './redact.js';
 
 export interface WSClient {
   id: string;
@@ -148,43 +148,6 @@ export function getActiveTurns(roomId: string): string[] {
   return [...(activeTurns.get(roomId) ?? [])];
 }
 
-/** Anything that mirrors a room outside the PWA socket (a laptop's chat view over the runner link). Gets the REDACTED message. */
-const roomMessageSubscribers = new Set<(roomId: string, msg: Record<string, unknown>) => void>();
-export function onRoomMessage(cb: (roomId: string, msg: Record<string, unknown>) => void): () => void {
-  roomMessageSubscribers.add(cb);
-  return () => roomMessageSubscribers.delete(cb);
-}
-/** Hand an already-redacted room message to the mirrors. `broadcast` calls this; tests may too. */
-export function notifyRoomMessage(roomId: string, msg: Record<string, unknown>): void {
-  for (const cb of roomMessageSubscribers) {
-    try {
-      cb(roomId, msg);
-    } catch (err) {
-      log.warn('Webchat: room message subscriber threw', { roomId, err });
-    }
-  }
-}
-
-/**
- * Agent activity (`status` frames: start / tool / progress / reasoning / done /
- * stalled) for mirrors that are not websocket clients — the VS Code chat view.
- * The frames are already redacted by the adapter that emits them.
- */
-const roomStatusSubscribers = new Set<(roomId: string, msg: Record<string, unknown>) => void>();
-export function onRoomStatus(cb: (roomId: string, msg: Record<string, unknown>) => void): () => void {
-  roomStatusSubscribers.add(cb);
-  return () => roomStatusSubscribers.delete(cb);
-}
-export function notifyRoomStatus(roomId: string, msg: Record<string, unknown>): void {
-  for (const cb of roomStatusSubscribers) {
-    try {
-      cb(roomId, msg);
-    } catch (err) {
-      log.warn('Webchat: room status subscriber threw', { roomId, err });
-    }
-  }
-}
-
 /**
  * Fan a frame out to the room's clients, and for a message, an `unread` (or
  * `mention`) signal to everyone elsewhere. `senderUserId` names the user who
@@ -194,11 +157,9 @@ export function notifyRoomStatus(roomId: string, msg: Record<string, unknown>): 
  */
 export async function broadcast(roomId: string, msg: object, excludeId?: string, senderUserId?: string): Promise<void> {
   const isMessage = (msg as { type?: string }).type === 'message';
-  if ((msg as { type?: string }).type === 'status') notifyRoomStatus(roomId, msg as Record<string, unknown>);
   const outgoing = isMessage
-    ? { ...msg, content: redactSensitiveData((msg as { content?: string }).content || '') }
+    ? { ...msg, content: redactMessageContent((msg as { content?: string }).content || '') }
     : msg;
-  if (isMessage) notifyRoomMessage(roomId, outgoing as Record<string, unknown>);
   const payload = JSON.stringify(outgoing);
   const notifyPayload = isMessage ? JSON.stringify({ type: 'unread', room_id: roomId }) : '';
 
@@ -240,7 +201,7 @@ export async function broadcast(roomId: string, msg: object, excludeId?: string,
     isMessage &&
     !['a2a', 'approval', 'approval_resolved'].includes((msg as { message_type?: string }).message_type ?? '')
   ) {
-    const m = msg as { sender?: string; content?: string; id?: string };
+    const m = msg as { sender?: string; content?: string; id?: string; message_type?: string };
     const room = await getWebchatRoom(roomId);
     await sendPushForMessage({
       roomId,
@@ -248,10 +209,23 @@ export async function broadcast(roomId: string, msg: object, excludeId?: string,
       sender: m.sender || 'unknown',
       // Subscriptions are keyed by user id; `sender` is a display name.
       senderUserId: senderUserId ?? (excludeId ? clients.get(excludeId)?.userId : undefined),
-      content: redactSensitiveData(m.content || ''),
+      content: redactSensitiveData(pushText(m)),
       messageId: m.id,
     }).catch((err) => log.warn('sendPushForMessage failed', { err: err instanceof Error ? err.message : err }));
   }
+}
+
+/** A message's push text: an approval notice pushes its sentence, not its JSON. */
+export function pushText(m: { content?: string; message_type?: string }): string {
+  if (m.message_type === 'approval_notice') {
+    try {
+      const t = (JSON.parse(m.content || '{}') as { text?: unknown }).text;
+      if (typeof t === 'string') return t;
+    } catch {
+      /* fall through */
+    }
+  }
+  return m.content || '';
 }
 
 /**

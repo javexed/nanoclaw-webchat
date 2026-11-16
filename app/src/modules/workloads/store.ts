@@ -1,4 +1,4 @@
-// Workload, network, quota, build and registry rows. Mapping only: the rules live in control.ts.
+// Workload, network, quota, build, registry and pin rows. Mapping only: the rules live in control.ts.
 import { randomUUID } from 'crypto';
 
 import { getDb, hasTable } from '../../db/connection.js';
@@ -22,8 +22,16 @@ export interface Workload {
   approvedCpus: number;
   /** What an owner approved (shape.ts encodeApproved); null before one was recorded. */
   approvedShape: string | null;
+  /** Why it runs on its node, in one line (placement.ts); null for older rows. */
+  placementReason: string | null;
+  /** Hours without traffic before the stack is put to sleep (sleep.ts); null = the default, 0 = never. */
+  sleepAfterH: number | null;
+  /** Set while the stack is asleep (state 'stopped'); the next request wakes it. */
+  asleepAt: number | null;
   lastError: string | null;
   expiresAt: number | null;
+  /** The expiry its agent was last reminded of (reconcile.ts); a new expiry re-arms the reminder. */
+  expiryNoticeFor: number | null;
   createdBy: string | null;
   createdAt: number;
   updatedAt: number;
@@ -43,8 +51,12 @@ interface Row {
   approved_memory_mb: number;
   approved_cpus: number;
   approved_shape?: string | null;
+  placement_reason?: string | null;
+  sleep_after_h?: number | null;
+  asleep_at?: number | null;
   last_error: string | null;
   expires_at: number | null;
+  expiry_notice_for?: number | null;
   created_by: string | null;
   created_at: number;
   updated_at: number;
@@ -64,8 +76,12 @@ const toWorkload = (r: Row): Workload => ({
   approvedMemoryMb: r.approved_memory_mb,
   approvedCpus: r.approved_cpus,
   approvedShape: r.approved_shape ?? null,
+  placementReason: r.placement_reason ?? null,
+  sleepAfterH: r.sleep_after_h ?? null,
+  asleepAt: r.asleep_at ?? null,
   lastError: r.last_error,
   expiresAt: r.expires_at,
+  expiryNoticeFor: r.expiry_notice_for ?? null,
   createdBy: r.created_by,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
@@ -144,9 +160,14 @@ export async function updateWorkload(
       | 'addresses'
       | 'lastError'
       | 'expiresAt'
+      | 'expiryNoticeFor'
       | 'approvedMemoryMb'
       | 'approvedCpus'
       | 'approvedShape'
+      | 'node'
+      | 'placementReason'
+      | 'sleepAfterH'
+      | 'asleepAt'
     >
   >,
   now = Date.now(),
@@ -167,9 +188,14 @@ export async function updateWorkload(
   if (patch.addresses !== undefined) put('addresses_json', JSON.stringify(patch.addresses));
   if ('lastError' in patch) put('last_error', patch.lastError);
   if ('expiresAt' in patch) put('expires_at', patch.expiresAt);
+  if ('expiryNoticeFor' in patch) put('expiry_notice_for', patch.expiryNoticeFor);
   if (patch.approvedMemoryMb !== undefined) put('approved_memory_mb', patch.approvedMemoryMb);
   if (patch.approvedCpus !== undefined) put('approved_cpus', patch.approvedCpus);
   if (patch.approvedShape !== undefined) put('approved_shape', patch.approvedShape);
+  if (patch.node !== undefined) put('node', patch.node);
+  if ('placementReason' in patch) put('placement_reason', patch.placementReason);
+  if ('sleepAfterH' in patch) put('sleep_after_h', patch.sleepAfterH);
+  if ('asleepAt' in patch) put('asleep_at', patch.asleepAt);
   put('updated_at', now);
   args.push(id);
   await getDb().run(`UPDATE workloads SET ${sets.join(', ')} WHERE id = ?`, ...args);
@@ -181,24 +207,30 @@ export async function updateWorkload(
 export async function networkRow(agentGroupId: string): Promise<{ idx: number; network: string } | null> {
   if (!(await workloadsReady())) return null;
   const r = (await getDb().get(`SELECT idx, network FROM workload_networks WHERE agent_group_id = ?`, agentGroupId)) as
-    | { idx: number; network: string }
-    | undefined;
+    { idx: number; network: string } | undefined;
   return r ?? null;
 }
 
-/** Claim the lowest free network index for an agent. */
+/**
+ * Claim the lowest free network index for an agent, skipping `busy` ones (their
+ * subnet is held by a network that isn't ours, see foreignIndexes). A claim on a
+ * busy index can only be one whose network was never created — Docker would not
+ * have let ours and the other share a subnet — so it is dropped and re-claimed.
+ */
 export async function claimNetwork(
   agentGroupId: string,
   name: (idx: number) => string,
   max: number,
+  busy: ReadonlySet<number> = new Set(),
 ): Promise<{ idx: number; network: string }> {
   const existing = await networkRow(agentGroupId);
-  if (existing) return existing;
+  if (existing && !busy.has(existing.idx)) return existing;
+  if (existing) await getDb().run(`DELETE FROM workload_networks WHERE agent_group_id = ?`, agentGroupId);
   const used = new Set(
     ((await getDb().all(`SELECT idx FROM workload_networks`)) as { idx: number }[]).map((r) => r.idx),
   );
   let idx = 0;
-  while (used.has(idx)) idx++;
+  while (used.has(idx) || busy.has(idx)) idx++;
   if (idx >= max) throw new Error('no workload networks left on this node');
   await getDb().run(
     `INSERT INTO workload_networks (agent_group_id, idx, network, created_at) VALUES (?, ?, ?, ?)`,
@@ -298,5 +330,37 @@ export async function setBuildRegistries(agentGroupId: string, hosts: string[]):
     agentGroupId,
     JSON.stringify(hosts),
     Date.now(),
+  );
+}
+
+// ── placement pins (owners) ─────────────────────────────────────────────────
+
+const pinsReady = async (): Promise<boolean> => hasTable(getDb(), 'workload_pins');
+
+/** The node an owner pinned this agent's workloads to: a machine id or 'local'; null when none. */
+export async function pinFor(agentGroupId: string): Promise<string | null> {
+  if (!(await pinsReady())) return null;
+  const r = (await getDb().get(`SELECT node FROM workload_pins WHERE agent_group_id = ?`, agentGroupId)) as
+    { node: string } | undefined;
+  return r?.node ?? null;
+}
+
+export async function setPin(
+  agentGroupId: string,
+  node: string | null,
+  by: string | null,
+  now = Date.now(),
+): Promise<void> {
+  if (node === null) {
+    await getDb().run(`DELETE FROM workload_pins WHERE agent_group_id = ?`, agentGroupId);
+    return;
+  }
+  await getDb().run(
+    `INSERT INTO workload_pins (agent_group_id, node, set_by, set_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(agent_group_id) DO UPDATE SET node = excluded.node, set_by = excluded.set_by, set_at = excluded.set_at`,
+    agentGroupId,
+    node,
+    by,
+    now,
   );
 }

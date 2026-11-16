@@ -109,6 +109,28 @@ describe('per-group egress', () => {
     expect(resolve(specFor('ag-open'))).toBeNull();
   });
 
+  it('an open group with a stack on a worker stays on its network but uses the filter as its proxy', async () => {
+    const { registerOpenViaFilter } = await import('./index.js');
+    registerOpenViaFilter(async (ag) => ag === 'ag-open-worker');
+    getContainerConfig.mockResolvedValue({ egress: 'open' });
+    await prepare('ag-open-worker', null);
+    await prepare('ag-open-plain', null);
+    // No --network: the default bridge, so its own connections are unchanged; only the proxy host moves.
+    expect(resolve(specFor('ag-open-worker'))).toEqual([
+      '--add-host=host.docker.internal:203.0.113.1',
+      '--label',
+      'nanoclaw-egress-proxy=filter',
+    ]);
+    expect(ensureEgressFilter).toHaveBeenCalledWith('203.0.113.1', 10255, expect.anything(), expect.anything(), []);
+    expect(registerFilteredContainer).toHaveBeenCalledWith('ncl-test-s1', {
+      agentGroupId: 'ag-open-worker',
+      sessionId: 's1',
+    });
+    expect(resolve(specFor('ag-open-plain'))).toBeNull();
+    // Without a proxy URL it stays an ordinary open agent rather than failing.
+    expect(resolve(specFor('ag-open-worker', null))).toBeNull();
+  });
+
   it('under the install-wide lockdown even an open group goes behind the filter (its policy lets it through)', async () => {
     lockdown = true;
     getContainerConfig.mockResolvedValue({ egress: 'open' });
@@ -366,6 +388,8 @@ describe('adopting filtered agents after a restart', () => {
     const ps = run.mock.calls[0]![0];
     expect(ps).toEqual(expect.arrayContaining(['ps', 'label=nanoclaw-role=agent']));
     expect(ps.some((a) => a.startsWith('network='))).toBe(true);
+    // Open agents using the filter as their proxy are adopted too (one name, once).
+    expect(run.mock.calls[1]![0]).toEqual(expect.arrayContaining(['label=nanoclaw-egress-proxy=filter']));
     expect(registerFilteredContainer.mock.calls).toEqual([
       ['ncl-a', { agentGroupId: 'ag-1', sessionId: 's-1' }],
       ['ncl-b', { agentGroupId: 'ag-2', sessionId: '' }],

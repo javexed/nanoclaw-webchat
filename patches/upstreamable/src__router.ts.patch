@@ -1,8 +1,8 @@
 diff --git a/src/router.ts b/src/router.ts
-index 467309d1..5898fc5c 100644
+index 415dc9a1..3b69fcad 100644
 --- a/src/router.ts
 +++ b/src/router.ts
-@@ -384,6 +384,11 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
+@@ -385,6 +385,11 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
      const agentGroup = await getAgentGroup(agent.agent_group_id);
      if (!agentGroup) continue;
  
@@ -14,7 +14,7 @@ index 467309d1..5898fc5c 100644
      // Effective thread id for THIS wiring: the event-derived address is
      // policy-stripped when the wiring (or its channel declaration) opts out
      // of threads. event.replyTo is operator intent from the CLI admin
-@@ -425,6 +430,13 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
+@@ -426,6 +431,13 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
        continue;
      }
  
@@ -29,8 +29,8 @@ index 467309d1..5898fc5c 100644
  
      const accessOk = engages && (!accessGate || (await accessGate(event, userId, mg, agent.agent_group_id)).allowed);
 @@ -509,6 +521,26 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
-  *                      a thread has engaged us once, follow-ups arrive
-  *                      with no mention and should still fire.
+  *                      thread). A session that holds only accumulated
+  *                      chatter does not count.
   */
 +/**
 + * Strip markdown code regions (triple-backtick fences + single-backtick inline)
@@ -69,7 +69,7 @@ index 467309d1..5898fc5c 100644
        } catch {
          // Bad regex: fail open so admin sees the agent responding + can fix.
          return true;
-@@ -696,6 +733,7 @@ async function deliverToAgent(
+@@ -713,6 +750,7 @@ async function deliverToAgent(
      startTypingRefresh(
        session.id,
        session.agent_group_id,

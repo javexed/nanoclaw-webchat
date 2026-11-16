@@ -175,6 +175,12 @@ jobs:
           echo "Manifest integrity (migrations register; dev tree matches)" > "$RUNNER_TEMP/ci-step"
           bash scripts/check-manifest.sh
 
+      - name: Failure-comment redaction self-test (proves it still masks tokens)
+        if: steps.scope.outputs.guards == 'true'
+        run: |
+          echo "Failure-comment redaction self-test (proves it still masks tokens)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/ci-redact.selftest.sh
+
       - name: Patch header self-test (proves it still detects faults)
         if: steps.scope.outputs.guards == 'true'
         # Throwaway fixture patches, never the repo's own. A guard only ever seen
@@ -386,14 +392,11 @@ jobs:
       - name: Say what this run skipped
         # A green run that silently did less is the kind of silence that gets
         # mistaken for coverage later. Name it.
-        if: steps.scope.outputs.guards != 'true' || steps.scope.outputs.runner != 'true'
+        if: steps.scope.outputs.guards != 'true'
         run: |
           echo "Say what this run skipped" > "$RUNNER_TEMP/ci-step"
           if [ "${{ steps.scope.outputs.guards }}" != "true" ]; then
             echo "::notice::Guard SELF-TESTS skipped — this change touches no guard, probe, fixture, baseline or workflow. Every guard itself ran; the proofs that they still catch their faults run when a guard changes and on every push to main."
-          fi
-          if [ "${{ steps.scope.outputs.runner }}" != "true" ]; then
-            echo "::notice::VS Code runner skill check skipped — this change touches neither the skill, the webchat server it plugs into, nor how the tree is composed."
           fi
 
       - name: Pack composed tarball
@@ -478,32 +481,6 @@ jobs:
       # died. `uses:` steps (the setup and cache actions) are not instrumented,
       # so a failure inside one of those reports the previous run step; the
       # wording below says "at or after" rather than pretending otherwise.
-      - name: VS Code runner skill (applies, builds, its tests pass)
-        if: steps.scope.outputs.runner == 'true'
-        # The runner ships as a skill (app/.claude/skills/add-vscode-runner), so
-        # the host tests above ran without it. Install it the way an operator
-        # would and run its own validation. After the tarball is packed: the
-        # shipped tree stays without it.
-        working-directory: ${{ runner.temp }}/composed
-        run: |
-          echo "VS Code runner skill (applies, builds, its tests pass)" > "$RUNNER_TEMP/ci-step"
-          pnpm exec tsx - <<'TS'
-          import { applySkill, fullyApplied } from './scripts/skill-apply.js';
-          import { execSync } from 'node:child_process';
-          const res = await applySkill('.claude/skills/add-vscode-runner', process.cwd(), {
-            exec: (c) => execSync(c, { stdio: 'inherit' }),
-            emit: () => {},
-          });
-          if (!fullyApplied(res)) {
-            console.error('add-vscode-runner did not fully apply', res);
-            process.exit(1);
-          }
-          TS
-          # Its code is ours: hold it to the same no-dropped-Promise gate, now
-          # that it sits at its installed paths.
-          bash "$GITHUB_WORKSPACE/scripts/check-async.sh" "$RUNNER_TEMP/composed"
-          bash "$GITHUB_WORKSPACE/scripts/check-unused.sh" "$RUNNER_TEMP/composed"
-
       - name: Name the failing step in a PR comment
         if: failure() && github.event_name == 'pull_request'
         # Never let the reporter change the build's verdict: the job has already

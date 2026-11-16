@@ -81,11 +81,11 @@ function showSignInAgain(): void {
   shown = true;
   const banner = $('#connection-banner');
   if (banner) {
-    banner.replaceChildren(document.createTextNode('Your sign-in expired.'));
+    banner.replaceChildren(document.createTextNode('Signed out'));
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'banner-action';
-    btn.textContent = 'Sign in again';
+    btn.textContent = 'Reload';
     btn.addEventListener('click', () => signInAgain());
     banner.appendChild(btn);
     banner.classList.add('visible');

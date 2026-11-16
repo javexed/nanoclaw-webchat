@@ -44,7 +44,7 @@ from its env var:
 | Tailscale | `WEBCHAT_TAILSCALE=true` | your devices over your tailnet |
 | Bearer token | `WEBCHAT_TOKEN=…` (≥24 chars) | a shared secret |
 | SSO / proxy | `WEBCHAT_TRUSTED_PROXY_IPS=…` | Entra ID, Cloudflare Access… |
-| Entra ID tokens | `WEBCHAT_OIDC_ISSUER=…` + `WEBCHAT_OIDC_AUDIENCE=…` | verified sign-in, App Service or the VS Code extension |
+| Entra ID tokens | `WEBCHAT_OIDC_ISSUER=…` + `WEBCHAT_OIDC_AUDIENCE=…` | verified sign-in, App Service or a script presenting a token |
 
 Localhost auto-owner switches off the moment any explicit method is configured.
 

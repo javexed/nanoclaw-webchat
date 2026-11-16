@@ -1,16 +1,28 @@
 <script setup lang="ts">
 /**
  * Admin → Publishing, mounted into <div id="publishing-panel"> (publishing.ts).
- * Per route: a switch, its settings (only while on), Connect and a status line
- * that reads Connected or names the one thing missing. Secrets typed here are
- * sent once and cleared; nothing reads them back.
+ * First Workloads (and, while on, Confined builds): a switch, a status line that
+ * reads Ready or names the one thing missing on this host, and the command that
+ * fixes it with a copy button. Then per route: a switch, its settings (only
+ * while on), Connect and a status line that reads Connected or names the one
+ * thing missing. Secrets typed here are sent once and cleared; nothing reads
+ * them back.
  */
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, onUnmounted, reactive, ref, watch } from 'vue';
 import { showToast } from '../core/toast.js';
-import { connectRoute, saveRoute } from './publishing-actions.js';
-import { changedFields, connectLabel, errorField, publishingView } from './publishing-state.js';
+import { connectRoute, refreshPublishing, saveRoute, saveWorkloads } from './publishing-actions.js';
+import {
+  anyChecking,
+  changedFields,
+  connectLabel,
+  errorField,
+  publishingView,
+  RECHECK_MS,
+  RECHECK_TRIES,
+} from './publishing-state.js';
 import { showConfirmModal } from './modals.js';
 import BusyLabel from './BusyLabel.vue';
+import CopyIconButton from './CopyIconButton.vue';
 
 const view = computed(() => publishingView.value);
 
@@ -79,6 +91,40 @@ async function toggle(kind: 'tailnet' | 'cloudflare', e: Event): Promise<void> {
   await run(`${kind}-switch`, `${kind}.`, () => saveRoute(kind, { on }));
 }
 
+async function toggleHost(kind: 'workloads' | 'builds', e: Event): Promise<void> {
+  const el = e.target as HTMLInputElement;
+  const on = el.checked;
+  el.checked = !on; // shows what is saved until the server answers
+  if (kind === 'workloads' && !on) {
+    const ok = await showConfirmModal({
+      title: 'Turn off workloads?',
+      body: 'Published apps stop opening, and agents can’t start apps.',
+      confirmLabel: 'Turn off',
+      destructive: true,
+    });
+    if (!ok) return;
+  }
+  await run(`${kind}-switch`, `${kind}.`, () => saveWorkloads(kind === 'workloads' ? { on } : { confinedBuilds: on }));
+}
+
+// While a host status reads Checking…, ask again every few seconds (a bounded number of times).
+let recheck: ReturnType<typeof setTimeout> | undefined;
+let tries = 0;
+watch(
+  view,
+  (v) => {
+    clearTimeout(recheck);
+    if (!anyChecking(v)) {
+      tries = 0;
+      return;
+    }
+    if (tries++ >= RECHECK_TRIES) return;
+    recheck = setTimeout(() => void refreshPublishing().catch(() => undefined), RECHECK_MS);
+  },
+  { immediate: true },
+);
+onUnmounted(() => clearTimeout(recheck));
+
 const tsDirty = computed(() => !!view.value && tsDomain.value.trim() !== view.value.tailnet.domain);
 const cfChanged = computed(() => (view.value ? changedFields(view.value.cloudflare, cf) : {}));
 const cfDirty = computed(() => Object.keys(cfChanged.value).length > 0);
@@ -118,6 +164,64 @@ async function connect(kind: 'tailnet' | 'cloudflare'): Promise<void> {
 
 <template>
   <div v-if="view" class="publishing">
+    <div id="publishing-workloads" class="publishing-route">
+      <div class="setting-group install-row">
+        <span class="setting-label">Workloads</span>
+        <label class="setting-toggle"
+          ><input
+            type="checkbox"
+            aria-label="Workloads"
+            :checked="view.workloads.on"
+            :disabled="busy === 'workloads-switch' || undefined"
+            @change="toggleHost('workloads', $event)"
+        /></label>
+      </div>
+      <p v-if="errors['workloads.on'] || errors['workloads.form']" class="cred-hint err">
+        {{ errors['workloads.on'] || errors['workloads.form'] }}
+      </p>
+      <template v-if="view.workloads.on">
+        <p
+          class="publishing-status"
+          :class="{ ok: view.workloads.status.ok }"
+          :title="view.workloads.status.detail || undefined"
+        >
+          <span v-if="view.workloads.status.checking" class="btn-spinner" aria-hidden="true"></span
+          ><span v-else class="publishing-dot" aria-hidden="true"></span>{{ view.workloads.status.text }}
+        </p>
+        <p v-if="view.workloads.status.fix" class="publishing-fix">
+          <code>{{ view.workloads.status.fix }}</code
+          ><CopyIconButton :text="view.workloads.status.fix" label="Copy command" />
+        </p>
+        <div id="publishing-confined-builds" class="setting-group install-row">
+          <span class="setting-label">Confined builds</span>
+          <label class="setting-toggle"
+            ><input
+              type="checkbox"
+              aria-label="Confined builds"
+              :checked="view.builds.on"
+              :disabled="busy === 'builds-switch' || undefined"
+              @change="toggleHost('builds', $event)"
+          /></label>
+        </div>
+        <p v-if="errors['builds.confinedBuilds'] || errors['builds.form']" class="cred-hint err">
+          {{ errors['builds.confinedBuilds'] || errors['builds.form'] }}
+        </p>
+        <template v-if="view.builds.on">
+          <p
+            class="publishing-status"
+            :class="{ ok: view.builds.status.ok }"
+            :title="view.builds.status.detail || undefined"
+          >
+            <span class="publishing-dot" aria-hidden="true"></span>{{ view.builds.status.text }}
+          </p>
+          <p v-if="view.builds.status.fix" class="publishing-fix">
+            <code>{{ view.builds.status.fix }}</code
+            ><CopyIconButton :text="view.builds.status.fix" label="Copy command" />
+          </p>
+        </template>
+      </template>
+    </div>
+
     <p v-if="view.gate" class="cred-hint err publishing-gate" :title="view.gate.detail || undefined">
       {{ view.gate.text }}
     </p>

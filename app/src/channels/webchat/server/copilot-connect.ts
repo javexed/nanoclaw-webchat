@@ -53,6 +53,10 @@ type LoginEvent =
 
 export interface CopilotLoginProgress {
   running: boolean;
+  /** Display name of who started the flow; the code goes to them only. */
+  startedBy: string | null;
+  /** The viewer started this flow (always true for an internal read). */
+  mine: boolean;
   outcome: CopilotLoginOutcome | null;
   verificationUrl: string | null;
   userCode: string | null;
@@ -65,13 +69,21 @@ export interface CopilotLoginProgress {
   expiresInMs: number | null;
 }
 
-interface LoginState extends Omit<CopilotLoginProgress, 'expiresInMs'> {
+interface LoginState extends Omit<CopilotLoginProgress, 'expiresInMs' | 'startedBy' | 'mine'> {
   proc: ChildProcess | null;
   timer: ReturnType<typeof setTimeout> | null;
+  starter: CopilotLoginStarter | null;
+}
+
+/** Who started a sign-in. */
+export interface CopilotLoginStarter {
+  id: string;
+  name: string;
 }
 
 const idle = (): LoginState => ({
   running: false,
+  starter: null,
   outcome: null,
   verificationUrl: null,
   userCode: null,
@@ -84,11 +96,29 @@ const idle = (): LoginState => ({
 });
 
 let state: LoginState = idle();
+/**
+ * A cancelled or expired script still shutting down: it may be mid-save, so
+ * Disconnect waits for it (see copilotLoginBusy).
+ */
+let dying: ChildProcess | null = null;
 
-export function getCopilotLoginProgress(): CopilotLoginProgress {
-  const { proc: _proc, timer: _timer, ...visible } = state;
+/** A sign-in is running, or a stopped one has not exited yet. */
+export function copilotLoginBusy(): boolean {
+  return state.running || dying !== null;
+}
+
+/**
+ * Progress as `viewerId` may see it: the device code and link only go to the
+ * admin who started the flow. No viewer = an internal read, everything.
+ */
+export function getCopilotLoginProgress(viewerId?: string): CopilotLoginProgress {
+  const { proc: _proc, timer: _timer, starter, ...visible } = state;
+  const mine = viewerId === undefined || !starter || starter.id === viewerId;
   return {
     ...visible,
+    ...(mine ? {} : { verificationUrl: null, userCode: null }),
+    startedBy: starter?.name ?? null,
+    mine,
     expiresInMs:
       state.running && state.startedAt !== null ? Math.max(0, state.startedAt + LOGIN_TIMEOUT_MS - Date.now()) : null,
   };
@@ -227,12 +257,12 @@ export interface StartResult {
   error?: 'already-running' | 'not-installed';
 }
 
-export function startCopilotLogin(root = process.cwd()): StartResult {
+export function startCopilotLogin(root = process.cwd(), starter: CopilotLoginStarter | null = null): StartResult {
   if (state.running) return { started: false, error: 'already-running' };
   if (!copilotAvailable()) return { started: false, error: 'not-installed' };
   sweepOrphanedCopilotLoginDirs();
 
-  state = { ...idle(), running: true, outcome: 'pending', startedAt: Date.now() };
+  state = { ...idle(), running: true, outcome: 'pending', startedAt: Date.now(), starter };
   const proc = spawner(root);
   state.proc = proc;
 
@@ -246,37 +276,49 @@ export function startCopilotLogin(root = process.cwd()): StartResult {
       const line = buffered.slice(0, nl).trim();
       buffered = buffered.slice(nl + 1);
       const e = parseLoginEvent(line);
-      if (!e || state.proc !== proc) continue;
+      if (!e) continue;
+      // Outcome flags are kept even after a cancel: a stopped script that
+      // saved anyway is rolled back on exit.
+      if (e.event === 'connected') connected = true;
+      else if (e.event === 'error') failure = { code: e.code, message: e.message };
+      if (state.proc !== proc) continue;
       if (e.event === 'device') {
         state.verificationUrl = e.verificationUrl;
         state.userCode = e.userCode;
       } else if (e.event === 'status') state.message = e.message;
-      else if (e.event === 'connected') connected = true;
-      else if (e.event === 'error') failure = { code: e.code, message: e.message };
     }
   });
   // stderr is drained, never logged: it is the script's and the CLI's prose.
   proc.stderr?.on('data', () => {});
 
   proc.on('error', (err) => {
+    if (dying === proc) dying = null;
     if (state.proc !== proc) return;
     finish('failed', `Could not start the sign-in: ${err.message}`);
   });
   proc.on('exit', (code) => {
+    if (dying === proc) dying = null;
+    const why = failure as { code: string; message: string } | null;
+    // Stored in the gateway, but the flow did not complete for this side.
+    const saved = connected || why?.code === 'saved-cancelled';
     // Identity check: a cancel-then-restart leaves this one dying while a new
     // flow already owns the state.
-    if (state.proc !== proc || !state.running) return;
+    if (state.proc !== proc || !state.running) {
+      if (saved) rollBackCancelledLogin(root);
+      return;
+    }
     if (code === 0 && connected) {
       finish('complete');
       void restartCopilotGroups('GitHub Copilot connected');
       return;
     }
-    const why = failure as { code: string; message: string } | null;
     finish(why?.code === 'expired' ? 'expired' : 'failed', why?.message ?? `The sign-in exited with code ${code}.`);
+    if (saved) rollBackCancelledLogin(root);
   });
 
   state.timer = setTimeout(() => {
     if (!state.running || state.proc !== proc) return;
+    dying = proc;
     proc.kill('SIGTERM');
     finish('expired', 'The device code expired before it was confirmed. Start again.');
   }, LOGIN_TIMEOUT_MS);
@@ -288,15 +330,33 @@ export function cancelCopilotLogin(): { cancelled: boolean } {
   if (!state.running) return { cancelled: false };
   // SIGTERM, not SIGKILL: the script handles it by removing its login
   // container and shredding its temp dir.
+  dying = state.proc;
   state.proc?.kill('SIGTERM');
   finish('failed', 'Cancelled.');
   return { cancelled: true };
+}
+
+/**
+ * A stopped sign-in that stored its credential anyway (the cancel landed
+ * during the save): remove it, so a cancel never leaves a live token behind.
+ * Skipped while a new sign-in runs — its save replaces the same entries.
+ */
+function rollBackCancelledLogin(root: string): void {
+  if (state.running) {
+    log.warn('Copilot: a cancelled sign-in stored a credential; the running sign-in replaces it');
+    return;
+  }
+  disconnectCopilot(root, disconnectDeps).then(
+    () => log.info('Copilot: removed the credential a cancelled sign-in stored'),
+    (err) => log.warn("Copilot: could not remove a cancelled sign-in's credential", { err: String(err) }),
+  );
 }
 
 /** Test seam: drop all state between cases. */
 export function __resetCopilotLoginState(): void {
   if (state.timer) clearTimeout(state.timer);
   state = idle();
+  dying = null;
 }
 
 // ── Status ──────────────────────────────────────────────────────────────────
@@ -393,6 +453,23 @@ export interface DisconnectDeps {
   updateRecord: RecordUpdater | null;
 }
 
+let disconnectDeps: DisconnectDeps | undefined;
+
+/** Test seam: the deps a cancelled sign-in's rollback disconnects with. */
+export function __setCopilotDisconnectDeps(deps: DisconnectDeps | null): void {
+  disconnectDeps = deps ?? undefined;
+}
+
+/** A disconnect that could not confirm the gateway secrets are gone. Its message is shown as is. */
+export class CopilotDisconnectError extends Error {
+  constructor(
+    readonly code: 'gateway' | 'unrecorded',
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 /**
  * Remove what a sign-in stored: the two gateway secrets, their recorded ids,
  * the status file and COPILOT_API_URL.
@@ -400,17 +477,39 @@ export interface DisconnectDeps {
  * Only secrets that are BOTH recorded for copilot AND carry one of the names
  * the sign-in uses are deleted — on a gateway shared with other installs a
  * name alone could be someone else's entry.
+ *
+ * Never reports success while it cannot vouch for the gateway: with nothing
+ * recorded, secrets carrying the sign-in names (or a gateway it cannot list)
+ * may still inject the token, so it clears this install's state and throws a
+ * CopilotDisconnectError telling the admin to remove them in OneCLI. A failed
+ * delete throws too, leaving everything in place for a retry.
  */
 export async function disconnectCopilot(root = process.cwd(), deps?: DisconnectDeps): Promise<{ deleted: number }> {
   const d = deps ?? { admin: realOnecliAdmin, updateRecord: await loadRecordUpdater() };
   const recorded = new Set(recordedCopilotIds(root) ?? []);
+  let secrets: Awaited<ReturnType<DisconnectDeps['admin']['listAllSecrets']>> | null;
+  try {
+    secrets = await d.admin.listAllSecrets();
+  } catch {
+    secrets = null;
+  }
+  if (secrets === null && recorded.size > 0) {
+    throw new CopilotDisconnectError('gateway', 'Could not reach OneCLI. Nothing was removed.');
+  }
   let deleted = 0;
-  if (recorded.size > 0) {
-    const secrets = await d.admin.listAllSecrets();
-    for (const s of secrets) {
-      if (!recorded.has(s.id) || !COPILOT_SECRET_NAMES.has(s.name ?? '')) continue;
-      await d.admin.deleteSecret(s.id);
-      deleted += 1;
+  if (secrets && recorded.size > 0) {
+    try {
+      for (const s of secrets) {
+        if (!recorded.has(s.id) || !COPILOT_SECRET_NAMES.has(s.name ?? '')) continue;
+        await d.admin.deleteSecret(s.id);
+        deleted += 1;
+      }
+    } catch {
+      // The gateway's own errors can quote request details; never relay them.
+      throw new CopilotDisconnectError(
+        'gateway',
+        'Could not delete the Copilot secrets. Retry, or remove them in OneCLI.',
+      );
     }
     if (d.updateRecord) {
       await d.updateRecord(path.join(root, 'data'), (r) => {
@@ -418,9 +517,19 @@ export async function disconnectCopilot(root = process.cwd(), deps?: DisconnectD
       });
     }
   }
+  const unrecorded =
+    recorded.size === 0 && (secrets === null || secrets.some((s) => COPILOT_SECRET_NAMES.has(s.name ?? '')));
   fs.rmSync(accountFile(root), { force: true });
   removeEnv(root, 'COPILOT_API_URL');
-  log.info('GitHub Copilot disconnected', { deleted });
+  log.info('GitHub Copilot disconnected', { deleted, unrecorded });
+  if (unrecorded) {
+    throw new CopilotDisconnectError(
+      'unrecorded',
+      secrets === null
+        ? 'Could not check the gateway. Remove the Copilot secrets in OneCLI.'
+        : 'Copilot secrets not removed. Delete "Copilot GitHub" and "Copilot API" in OneCLI.',
+    );
+  }
   return { deleted };
 }
 

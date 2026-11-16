@@ -14,10 +14,7 @@ export const GENERIC_FAILURE = 'The agent run failed. Check the logs for details
  * Anthropic APIs alike) "model 'x' not found"; the LiteLLM router "Invalid
  * model name passed in model=x".
  */
-const MODEL_GONE = [
-  /model ['"\\]*([^'"\\\s]+)['"\\]* not found/i,
-  /invalid model name passed in model=([^\s'"\\,]+)/i,
-];
+const MODEL_GONE = [/model ['"\\]*([^'"\\\s]+)['"\\]* not found/i, /invalid model name passed in model=([^\s'"\\,]+)/i];
 
 /** A specific notice for this failure, or null when the generic one applies. */
 export function failureNotice(detail: string | undefined | null): string | null {
@@ -25,7 +22,7 @@ export function failureNotice(detail: string | undefined | null): string | null 
   for (const re of MODEL_GONE) {
     const m = re.exec(detail);
     // Ids hold dots (qwen3:8b, llama3.1); only the sentence's own trailing punctuation goes.
-    if (m) return `The model “${m[1].replace(/[.,;]+$/, '')}” is no longer available. Pick another model for this agent, or reinstall it.`;
+    if (m) return `Model “${m[1].replace(/[.,;]+$/, '')}” is gone. Pick another or reinstall it.`;
   }
   return null;
 }

@@ -33,8 +33,7 @@ async function addUser(id: string): Promise<void> {
 
 async function grantorOf(userId: string): Promise<string | null> {
   const row = (await getDb().get(`SELECT granted_by FROM user_roles WHERE user_id = ? AND role = 'owner'`, userId)) as
-    | { granted_by: string | null }
-    | undefined;
+    { granted_by: string | null } | undefined;
   return row?.granted_by ?? null;
 }
 

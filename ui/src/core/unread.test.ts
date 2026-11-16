@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { bumpUnread, firstUnreadIndex, formatUnreadCount, seedUnread } from './unread.js';
+import { bumpUnread, firstUnreadIndex, formatUnreadCount, seedUnread, syncUnread } from './unread.js';
 
 describe('the count badge', () => {
   it('says nothing at zero and caps at 99+', () => {
@@ -36,6 +36,28 @@ describe('counting', () => {
     seedUnread(m, 'ops', 0);
     expect(m.get('eng')).toBe(1);
     expect(m.get('ops')).toBe(1);
+  });
+});
+
+describe('a server payload (reconnect, thread list)', () => {
+  it('clears a room the server now calls read', () => {
+    const m = new Map([['eng', 4]]);
+    syncUnread(m, 'eng', false, 0, false);
+    expect(m.has('eng')).toBe(false);
+    syncUnread(m, 'ops', undefined, undefined, false);
+    expect(m.has('ops')).toBe(false);
+  });
+
+  it('takes the count for one still unread', () => {
+    const m = new Map([['eng', 9]]);
+    syncUnread(m, 'eng', true, 2, false);
+    expect(m.get('eng')).toBe(2);
+  });
+
+  it('never counts the open one', () => {
+    const m = new Map([['eng', 3]]);
+    syncUnread(m, 'eng', true, 5, true);
+    expect(m.has('eng')).toBe(false);
   });
 });
 

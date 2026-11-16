@@ -5,15 +5,21 @@
 import net from 'net';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { __resetWorkloadTunnelsForTest, registerWorkloadTunnel } from './workload-tunnel.js';
 
 import {
+  __setOllamaTargetsForTest,
+  __setResolverForTest,
   BUILD_SESSION,
   inOwnNetwork,
+  isOllamaTarget,
+  ollamaPin,
   parseProxyHead,
   serveModelPort,
   serveProxyClient,
   type EgressFilterDeps,
 } from './egress-filter.js';
+import { keyTargetFor, registerKeyTargets } from './egress-key-targets.js';
 import { __resetRunnerEgressForTest, __setRunnerEgressForTest, allowlistFor, listBlocked } from './egress-policy.js';
 
 let gateway: net.Server;
@@ -61,6 +67,8 @@ afterEach(() => {
   filter.close();
   gateway.close();
   __resetRunnerEgressForTest();
+  __setOllamaTargetsForTest([]);
+  __setResolverForTest(null);
 });
 
 const cred = `Proxy-Authorization: Basic ${Buffer.from('x:aoc_tok').toString('base64')}`;
@@ -256,11 +264,114 @@ describe('egress filter', () => {
     expect(parseProxyHead('GET /local HTTP/1.1')).toMatchObject({ status: '501 Not Implemented' });
   });
 
+  it('refuses a body whose length is stated twice, badly, or two ways', () => {
+    const h = (extra: string) =>
+      parseProxyHead(`POST http://registry.npmjs.org/x HTTP/1.1\r\nProxy-Authorization: Basic eDp5\r\n${extra}`);
+    for (const extra of [
+      'Content-Length: 5\r\nContent-Length: 50',
+      'Content-Length: 5\r\nTransfer-Encoding: chunked',
+      'Transfer-Encoding: chunked\r\nTransfer-Encoding: identity',
+      'Content-Length: 5x',
+    ]) {
+      expect(h(extra)).toMatchObject({ error: 'ambiguous body length', status: '400 Bad Request' });
+    }
+    expect(h('Content-Length: 5')).toMatchObject({ kind: 'absolute', bodyLength: 5 });
+    expect(h('Transfer-Encoding: chunked')).toMatchObject({ kind: 'absolute', bodyLength: null });
+  });
+
+  it('accepts chunked as the only transfer coding, and nothing else', () => {
+    const h = (extra: string) =>
+      parseProxyHead(`POST http://registry.npmjs.org/x HTTP/1.1\r\nProxy-Authorization: Basic eDp5\r\n${extra}`);
+    for (const te of ['gzip', 'gzip, chunked', 'chunked, gzip', 'identity', 'xchunked', 'chunked;q=1', '']) {
+      expect(h(`Transfer-Encoding: ${te}`)).toMatchObject({
+        error: 'ambiguous body length',
+        status: '400 Bad Request',
+      });
+    }
+    expect(h('transfer-encoding:  CHUNKED ')).toMatchObject({ kind: 'absolute', bodyLength: null });
+  });
+
+  it('refuses a folded header or one with space before its colon', () => {
+    const h = (extra: string) =>
+      parseProxyHead(`POST http://registry.npmjs.org/x HTTP/1.1\r\nProxy-Authorization: Basic eDp5\r\n${extra}`);
+    for (const extra of [
+      'Transfer-Encoding : chunked',
+      'Transfer-Encoding\t: chunked',
+      'X-A: b\r\n Transfer-Encoding: chunked',
+      'Content-Length: 5\r\n\tx',
+    ]) {
+      expect(h(extra)).toMatchObject({ error: 'malformed request head', status: '400 Bad Request' });
+    }
+    expect(h('User-Agent: a :b')).toMatchObject({ kind: 'absolute' });
+  });
+
   it('refuses a destination that would smuggle a second line into the gateway request', () => {
     const smuggled = 'CONNECT [10.0.0.5:22 HTTP/1.1\nX: a.githubusercontent.com]:443 HTTP/1.1';
     expect(parseProxyHead(smuggled)).toHaveProperty('error');
     expect(parseProxyHead(smuggled)).not.toHaveProperty('kind');
     expect(parseProxyHead('GET http://a_b!c/ HTTP/1.1')).toMatchObject({ status: '400 Bad Request' });
+  });
+});
+
+// Registered once for the file: ag-1 holds a key for ssh.example.test:22.
+const keyTargets = new Map<string, Array<{ host: string; port: number; allowPrivate: boolean }>>();
+registerKeyTargets(async (agentGroupId) => keyTargets.get(agentGroupId) ?? []);
+
+describe('a deploy key’s target', () => {
+  afterEach(() => keyTargets.clear());
+
+  it('matches the agent’s own targets by host and port only', async () => {
+    keyTargets.set('ag-1', [{ host: 'ssh.example.test', port: 22, allowPrivate: false }]);
+    expect(await keyTargetFor('ag-1', 'SSH.example.test.', 22)).not.toBeNull();
+    expect(await keyTargetFor('ag-1', 'ssh.example.test', 2222)).toBeNull();
+    expect(await keyTargetFor('ag-2', 'ssh.example.test', 22)).toBeNull();
+  });
+
+  it('when several keys name a host, an install admin’s target decides', async () => {
+    keyTargets.set('ag-1', [
+      { host: 'a.example.test', port: 22, allowPrivate: false },
+      { host: 'b.example.test', port: 22, allowPrivate: false },
+      { host: 'a.example.test', port: 22, allowPrivate: true },
+    ]);
+    expect(await keyTargetFor('ag-1', 'a.example.test', 22)).toMatchObject({ allowPrivate: true });
+    expect(await keyTargetFor('ag-1', 'b.example.test', 22)).toMatchObject({ allowPrivate: false });
+  });
+
+  it('opens a direct tunnel for the agent holding the key, in Allowlist mode, never via the gateway', async () => {
+    const dialled: string[] = [];
+    const upstream = net.createServer((sock) =>
+      sock.on('data', (d) => sock.write(Buffer.concat([Buffer.from('echo:'), d]))),
+    );
+    const port = await new Promise<number>((r) =>
+      upstream.listen(0, '127.0.0.1', () => r((upstream.address() as net.AddressInfo).port)),
+    );
+    deps.direct = async (host, p) => {
+      dialled.push(`${host}:${p}`);
+      return net.connect(port, '127.0.0.1');
+    };
+    keyTargets.set('ag-1', [{ host: 'ssh.example.test', port: 22, allowPrivate: false }]);
+    const got = await ask(`CONNECT ssh.example.test:22 HTTP/1.1\r\n${cred}\r\n\r\n`, 'SSH-2.0-test\r\n');
+    expect(got).toContain('200 Connection Established');
+    expect(got).toContain('echo:SSH-2.0-test');
+    expect(dialled).toEqual(['ssh.example.test:22']);
+    expect(seen).toEqual([]);
+    upstream.close();
+  });
+
+  it('is refused to another agent, and in Model only', async () => {
+    keyTargets.set('ag-2', [{ host: 'ssh.example.test', port: 22, allowPrivate: false }]);
+    expect(await ask(`CONNECT ssh.example.test:22 HTTP/1.1\r\n${cred}\r\n\r\n`)).toContain('403');
+    keyTargets.set('ag-1', [{ host: 'ssh.example.test', port: 22, allowPrivate: false }]);
+    deps.mode = async () => 'none';
+    expect(await ask(`CONNECT ssh.example.test:22 HTTP/1.1\r\n${cred}\r\n\r\n`)).toContain('403');
+    expect(seen).toEqual([]);
+  });
+
+  it('a scoped admin’s target may not reach a private address, even named literally', async () => {
+    keyTargets.set('ag-1', [{ host: '10.0.0.5', port: 22, allowPrivate: false }]);
+    const got = await ask(`CONNECT 10.0.0.5:22 HTTP/1.1\r\n${cred}\r\n\r\n`);
+    expect(got).toContain('502');
+    expect(got).toContain('not allowed directly');
   });
 });
 
@@ -308,7 +419,10 @@ describe('an agent’s workload builds', () => {
   it('reach no registry unless an owner opted this agent in: there is no install-wide list', async () => {
     deps.buildRegistries = async () => [];
     expect(await ask(`CONNECT ghcr.io:443 HTTP/1.1\r\n${cred}\r\n\r\n`)).toContain('403');
-    expect(await ask(`CONNECT registry-1.docker.io:443 HTTP/1.1\r\n${cred}\r\n\r\n`)).toContain('403');
+    const refused = await ask(`CONNECT registry-1.docker.io:443 HTTP/1.1\r\n${cred}\r\n\r\n`);
+    expect(refused).toContain('403');
+    // Says where a person turns it on, not a host command.
+    expect(refused).toContain('an admin can allow Docker Hub for builds in Agent → Apps');
     expect(seen).toEqual([]);
   });
 
@@ -334,6 +448,31 @@ describe('an agent’s workload builds', () => {
     deps.identify = async () => ({ agentGroupId: 'ag-1', sessionId: 's1' });
     expect(await ask(`CONNECT registry.example:443 HTTP/1.1\r\n${cred}\r\n\r\n`)).toContain('403');
     upstream.close();
+  });
+});
+
+describe('the agent\u2019s own stack on a worker', () => {
+  afterEach(() => __resetWorkloadTunnelsForTest());
+
+  it('is reached through the worker link, not a connection from this host', async () => {
+    const svc = net.createServer((sock) =>
+      sock.once('data', (d) => sock.end(`HTTP/1.1 200 OK\r\n\r\nremote:${d.toString().split('\r\n')[0]}`)),
+    );
+    const port = await new Promise<number>((r) =>
+      svc.listen(0, '127.0.0.1', () => r((svc.address() as net.AddressInfo).port)),
+    );
+    const asked: string[] = [];
+    // The stack's address (198.18.1.10) exists on the worker only; the "link" here is a TCP connection to svc.
+    registerWorkloadTunnel(async (host, p) =>
+      host === '198.18.1.10' ? () => (asked.push(`${host}:${p}`), net.connect(port, '127.0.0.1')) : null,
+    );
+    deps.mode = async () => 'none';
+    deps.ownNetworks = async () => ['198.18.1.10/32'];
+    const got = await ask(`GET http://198.18.1.10:8080/health HTTP/1.1\r\nHost: 198.18.1.10:8080\r\n${cred}\r\n\r\n`);
+    expect(got).toContain('remote:GET /health HTTP/1.1');
+    expect(asked).toEqual(['198.18.1.10:8080']);
+    expect(seen).toEqual([]);
+    svc.close();
   });
 });
 
@@ -567,5 +706,151 @@ describe('which addresses a direct tunnel may reach', () => {
     expect(directTunnel('host-only', '172.17.0.1', 5432, ['172.17.0.1:5432'])).toBe(false);
     expect(directTunnel('host-only', '10.0.0.5', 22, ['10.0.0.5:22'])).toBe(true);
     expect(directTunnel('none', 'git.example', 22, ['git.example:22'])).toBe(false);
+  });
+});
+
+describe('a plain-HTTP body that arrives while the filter is still checking the caller', () => {
+  it('reaches the gateway whole', async () => {
+    const BODY = 512 * 1024;
+    let got = 0;
+    let headSeen = false;
+    const gw = net.createServer((sock) => {
+      let buf = Buffer.alloc(0);
+      sock.on('data', (d: Buffer) => {
+        if (headSeen) return void (got += d.length);
+        buf = Buffer.concat([buf, d]);
+        const end = buf.indexOf('\r\n\r\n');
+        if (end < 0) return;
+        headSeen = true;
+        got += buf.length - end - 4;
+      });
+      sock.on('error', () => {});
+    });
+    const port = await new Promise<number>((r) =>
+      gw.listen(0, '127.0.0.1', () => r((gw.address() as net.AddressInfo).port)),
+    );
+    const identify = deps.identify;
+    deps.gateway = () => ({ host: '127.0.0.1', port });
+    deps.allowlist = async () => ['router.internal:4000'];
+    // Slow checks: the body's later chunks arrive before the gateway is dialled.
+    deps.identify = async (ip) => {
+      await new Promise((r) => setTimeout(r, 150));
+      return identify(ip);
+    };
+    const c = net.connect(filterPort, '127.0.0.1');
+    await new Promise((r) => c.once('connect', r));
+    c.write(
+      `POST http://router.internal:4000/v1/chat/completions HTTP/1.1\r\nHost: router.internal:4000\r\nContent-Length: ${BODY}\r\n${cred}\r\n\r\n`,
+    );
+    for (let i = 0; i < 8; i++) {
+      c.write(Buffer.alloc(BODY / 8, 120));
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    for (let i = 0; i < 50 && got < BODY; i++) await new Promise((r) => setTimeout(r, 20));
+    c.destroy();
+    gw.close();
+    expect(got).toBe(BODY);
+  });
+});
+
+describe('Ollama through the general proxy', () => {
+  const own = new Set(['172.17.0.1', '10.0.0.4']);
+  const local = [{ host: '127.0.0.1', port: 11434 }];
+  const remote = [{ host: '192.0.2.50', port: 11434 }];
+
+  it('names an Ollama server by its address, or as this host for a local one', async () => {
+    expect(await isOllamaTarget('192.0.2.50', 11434, remote, own)).toBe(true);
+    expect(await isOllamaTarget('host.docker.internal', 11434, local, own)).toBe(true);
+    expect(await isOllamaTarget('172.17.0.1', 11434, local, own)).toBe(true);
+    expect(await isOllamaTarget('localhost', 11434, local, own)).toBe(true);
+  });
+
+  it('leaves other ports and other hosts alone', async () => {
+    expect(await isOllamaTarget('192.0.2.50', 443, remote, own)).toBe(false);
+    expect(await isOllamaTarget('192.0.2.51', 11434, remote, own)).toBe(false);
+    expect(await isOllamaTarget('192.0.2.50', 11434, local, own)).toBe(false);
+  });
+
+  it('refuses it even when the agent may reach that host, and never dials the gateway', async () => {
+    __setOllamaTargetsForTest(remote);
+    deps.mode = async () => 'host-only';
+    deps.allowlist = async () => ['192.0.2.50:11434'];
+    const viaConnect = await ask(`CONNECT 192.0.2.50:11434 HTTP/1.1\r\n${cred}\r\n\r\n`);
+    expect(viaConnect).toMatch(/^HTTP\/1.1 403 Forbidden/);
+    expect(viaConnect).toContain('only through its model port');
+    const viaHttp = await ask(
+      `POST http://192.0.2.50:11434/api/pull HTTP/1.1\r\nHost: 192.0.2.50:11434\r\n${cred}\r\nContent-Length: 2\r\n\r\n{}`,
+    );
+    expect(viaHttp).toMatch(/^HTTP\/1.1 403 Forbidden/);
+    expect(seen).toEqual([]);
+  });
+  describe('a name that resolves differently each time (DNS rebinding)', () => {
+    // First answer an ordinary address, then the Ollama server's: the check
+    // and the connection must use the same answer.
+    const rebinding = (answers: string[]) => {
+      const calls: string[] = [];
+      __setResolverForTest(async (host) => {
+        calls.push(host);
+        return [answers[Math.min(calls.length - 1, answers.length - 1)]];
+      });
+      return calls;
+    };
+
+    beforeEach(() => {
+      __setOllamaTargetsForTest(remote);
+      deps.mode = async () => 'host-only';
+      deps.allowlist = async () => ['rebind.example:11434'];
+    });
+
+    it('resolves once and sends the gateway the address it checked, for CONNECT', async () => {
+      const calls = rebinding(['198.51.100.7', '192.0.2.50']);
+      const got = await ask(`CONNECT rebind.example:11434 HTTP/1.1\r\n${cred}\r\n\r\n`, 'hi');
+      expect(got).toContain('200 Connection Established');
+      expect(calls).toEqual(['rebind.example']);
+      expect(seen[0]).toContain('CONNECT 198.51.100.7:11434 HTTP/1.1');
+    });
+
+    it('resolves once and pins plain HTTP too, keeping the name in Host', async () => {
+      rebinding(['198.51.100.7', '192.0.2.50']);
+      await ask(`GET http://rebind.example:11434/api/tags HTTP/1.1\r\nHost: rebind.example:11434\r\n${cred}\r\n\r\n`);
+      expect(seen[0]).toMatch(/^GET http:\/\/198\.51\.100\.7:11434\/api\/tags HTTP\/1\.1\r\n/);
+      expect(seen[0]).toContain('Host: rebind.example:11434');
+    });
+
+    it('refuses when the one answer is the Ollama server', async () => {
+      rebinding(['192.0.2.50', '198.51.100.7']);
+      const got = await ask(`CONNECT rebind.example:11434 HTTP/1.1\r\n${cred}\r\n\r\n`);
+      expect(got).toMatch(/^HTTP\/1.1 403 Forbidden/);
+      expect(seen).toEqual([]);
+    });
+
+    it('refuses a name on an Ollama port that does not resolve', async () => {
+      __setResolverForTest(async () => {
+        throw new Error('ENOTFOUND');
+      });
+      const got = await ask(`CONNECT rebind.example:11434 HTTP/1.1\r\n${cred}\r\n\r\n`);
+      expect(got).toMatch(/^HTTP\/1.1 403 Forbidden/);
+      expect(got).toContain('could not be resolved');
+      expect(seen).toEqual([]);
+    });
+
+    it('hands a direct tunnel the pinned address', async () => {
+      rebinding(['198.51.100.7', '192.0.2.50']);
+      const dialled: Array<[string, number, string | undefined]> = [];
+      deps.installAllowlist = async () => ['rebind.example:11434'];
+      deps.direct = async (host, port, pinned) => {
+        dialled.push([host, port, pinned]);
+        throw new Error('stop here');
+      };
+      await ask(`CONNECT rebind.example:11434 HTTP/1.1\r\n${cred}\r\n\r\n`);
+      expect(dialled).toEqual([['rebind.example', 11434, '198.51.100.7']]);
+    });
+
+    it('pins nothing on other ports, and nothing for a literal address', async () => {
+      const calls = rebinding(['192.0.2.50']);
+      expect(await ollamaPin('rebind.example', 443, remote, own)).toEqual({ pin: null });
+      expect(await ollamaPin('198.51.100.9', 11434, remote, own)).toEqual({ pin: null });
+      expect(calls).toEqual([]);
+    });
   });
 });

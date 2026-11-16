@@ -58,7 +58,7 @@ import {
   type GenericSecretSpec,
   type OnecliAdmin,
 } from '../user-credentials/onecli-admin.js';
-import { listDeployKeys } from '../deploy-keys/index.js';
+import { listDeployKeys } from '../deploy-keys/keys.js';
 import { syncCredentialNote } from './memory-note.js';
 
 /** Sentinel used in a vault name for a workspace-wide (unassigned) secret. */

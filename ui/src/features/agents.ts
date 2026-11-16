@@ -9,7 +9,7 @@ import { userDisplayName } from './perms-user-info.js';
 import { selectedRoomId } from './room-list-state.js';
 import { allModels } from './model-list-state.js';
 import { cloudModelNames, cloudProviderOf } from './cloud-models-state.js';
-import { harnessFields, harnessRuns } from './harness-fit.js';
+import { harnessFields, harnessRuns, type LocalHarnesses } from './harness-fit.js';
 import {
   agentMcpServers,
   allMcpServers,
@@ -35,10 +35,12 @@ import AgentEnvList from './AgentEnvList.vue';
 import AgentKeyList from './AgentKeyList.vue';
 import {
   addAgentCandidates,
+  addAgentQuery,
   agentKeyRows,
   agentSecretRows,
   createAgentAnyExist,
   createAgentCandidates,
+  createAgentQuery,
   agentEnvNames,
   agentEnvDeleting,
 } from './agent-lists-state.js';
@@ -57,6 +59,7 @@ import {
 } from './agent-detail-state.js';
 import { buttonBusy } from '../core/busy.js';
 import { $, esc } from '../core/dom.js';
+import { clearListSearch } from '../core/list-filter.js';
 import { mountIsland } from '../core/island.js';
 import { renderAgentApps } from './apps.js';
 import { closeModelDetail, openModelPicker } from './models.js';
@@ -344,14 +347,31 @@ export function setAgentHarnessControl(provider?: any) {
 /** The harness the open agent is on (as the Harness control shows it). */
 let agentHarness = 'claude';
 
+/** Which local harnesses this install has (credentials-config); null until loaded. */
+let localHarnesses: LocalHarnesses | null = null;
+let localHarnessesLoading = false;
+
+function loadLocalHarnesses(): void {
+  if (localHarnesses || localHarnessesLoading) return;
+  localHarnessesLoading = true;
+  apiJson('/api/webchat/credentials-config')
+    .then((cfg: any) => {
+      localHarnesses = { opencode: !!cfg?.opencodeAvailable, pi: !!cfg?.piAvailable };
+      refreshHarnessOptions();
+    })
+    .catch(() => {})
+    .finally(() => (localHarnessesLoading = false));
+}
+
 /** The Harness control offers what can run the agent's model, and always the one it is on (harness-fit.ts). */
 function refreshHarnessOptions(): void {
+  loadLocalHarnesses();
   const id = $<HTMLInputElement>('#agent-model')?.value || '';
   const m = id ? allModels.value.find((x: any) => x.id === id) : null;
   const model = m ? { kind: String(m.kind), model_id: String(m.model_id) } : null;
   document.querySelectorAll<HTMLElement>('#agent-harness-control .setting-option').forEach((b) => {
     const h = b.dataset.provider || '';
-    b.hidden = h !== agentHarness && !harnessRuns(h, model, cloudModelNames);
+    b.hidden = h !== agentHarness && !harnessRuns(h, model, cloudModelNames, localHarnesses);
   });
 }
 
@@ -369,7 +389,10 @@ function applyHarnessFields(p: string): void {
   if (f.pinSuggestions === null) void deps.populateKnownModelOptions();
   else {
     const list = $('#agent-config-model-options');
-    if (list) list.replaceChildren(...f.pinSuggestions.map((v) => Object.assign(document.createElement('option'), { value: v })));
+    if (list)
+      list.replaceChildren(
+        ...f.pinSuggestions.map((v) => Object.assign(document.createElement('option'), { value: v })),
+      );
   }
 }
 
@@ -854,6 +877,7 @@ async function populateAddAgentSelect() {
   const wiredIds = new Set(roomDetailWiredAgents.value.map((a: any) => a.id));
   // Never offer archived agents for wiring (even if the list toggle is on).
   addAgentCandidates.value = state.allAgents.filter((a: Agent) => !wiredIds.has(a.id) && a.status !== 'archived');
+  clearListSearch('#room-add-agent-search', addAgentQuery);
   mountAddAgentPicker();
   // Once here; the per-checkbox change listener keeps it in step after that.
   updateAddAgentSubmitLabel();
@@ -950,6 +974,7 @@ export function renderRoomCreateAgentChecklist() {
   // (see createAgentAnyExist).
   createAgentAnyExist.value = state.allAgents.length > 0;
   createAgentCandidates.value = state.allAgents.filter((a: Agent) => a.status !== 'archived');
+  clearListSearch('#room-create-agent-search', createAgentQuery);
   mountRoomCreateAgentChecklist();
 }
 
@@ -1280,6 +1305,8 @@ function mountAgentKeyList(): void {
   agentKeysApp ??= mountIsland('#agent-keys-list', () =>
     createApp(AgentKeyList, {
       onRemove: (r: { key: unknown }) => void removeAgentKey(agentKeysGroupId, r.key),
+      onSaveTarget: (name: string, target: string) => saveAgentKeyTarget(agentKeysGroupId, name, target),
+      onRotate: (r: { name: string }) => void rotateAgentKey(agentKeysGroupId, r.name),
     }),
   );
 }
@@ -1299,12 +1326,22 @@ async function renderAgentKeys(agentGroupId?: any) {
   } catch {}
 
   agentKeysGroupId = agentGroupId;
-  agentKeyRows.value = keys.map((k: any) => ({
-    name: k.name,
-    meta: k.target ? `ssh -i ${k.path} ${k.target}` : `${k.path} · no login target set`,
-    publicKey: k.publicKey,
-    key: k,
-  }));
+  agentKeyRows.value = keys.map((k: any) => {
+    // One entry per target; older servers send a single `target`.
+    const targets: any[] = k.targets ?? (k.target ? [{ target: k.target, command: k.command }] : []);
+    return {
+      name: k.name,
+      meta: !targets.length
+        ? 'Target needed'
+        : targets
+            .map((t) => (t.command ? `${t.command} · ${t.target}` : `${t.target} · host key not checked yet`))
+            .join(', '),
+      target: targets.map((t) => t.target).join(', '),
+      publicKey: k.publicKey,
+      exposed: k.exposed === true,
+      key: k,
+    };
+  });
   mountAgentKeyList();
   $('#agent-keys-count')!.textContent = keys.length ? String(keys.length) : '';
 }
@@ -1322,7 +1359,7 @@ async function createAgentKey() {
   try {
     const body = await apiJson(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? '')}`, {
       method: 'POST',
-      // target (user@host) rides in the key's comment: it tells the agent who to log in as.
+      // target: one user@host, or several separated by commas; the server checks each.
       body: target ? { name, target } : { name },
     });
     $<HTMLInputElement>('#agent-key-name')!.value = '';
@@ -1340,6 +1377,52 @@ async function createAgentKey() {
     showToast((err as any)?.body?.error || 'Could not create key', { kind: 'error' });
   } finally {
     btn!.disabled = false;
+  }
+}
+
+/**
+ * Re-point an existing key at new targets (user@host, comma-separated). The
+ * server pins their host keys and refreshes the agent's credential note;
+ * the key material is unchanged, so the far end keeps trusting it. True when
+ * saved.
+ */
+export async function saveAgentKeyTarget(agentGroupId: any, name: string, target: string): Promise<boolean> {
+  try {
+    await apiJson(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? '')}`, {
+      method: 'POST',
+      body: { name, target },
+    });
+    showToast(`Saved ${name}`);
+    await renderAgentKeys(agentGroupId);
+    return true;
+  } catch (err) {
+    showToast((err as any)?.body?.error || 'Could not save', { kind: 'error' });
+    return false;
+  }
+}
+
+/** Replace an exposed key with a new pair; the new public half goes on the server. */
+export async function rotateAgentKey(agentGroupId: any, name: string): Promise<void> {
+  const ok = await deps.showConfirmModal({
+    title: 'Rotate deploy key',
+    body: `Replace “${name}” with a new key? The old one stops working here at once. Put the new public key on the server.`,
+    confirmLabel: 'Rotate',
+  });
+  if (!ok) return;
+  try {
+    const body = await apiJson(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? '')}`, {
+      method: 'POST',
+      body: { name, rotate: true },
+    });
+    try {
+      await navigator.clipboard.writeText(body.key.publicKey);
+      showToast(`Rotated ${name} — new public key copied`);
+    } catch {
+      showToast(`Rotated ${name}`);
+    }
+    await renderAgentKeys(agentGroupId);
+  } catch (err) {
+    showToast((err as any)?.body?.error || 'Could not rotate key', { kind: 'error' });
   }
 }
 

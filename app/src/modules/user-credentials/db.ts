@@ -84,8 +84,7 @@ export async function getUserCredential(
 ): Promise<UserCredsUserCredentialRow | null> {
   return (
     ((await getDb().get(`SELECT * FROM user_credentials WHERE user_id = ? AND provider = ?`, userId, provider)) as
-      | UserCredsUserCredentialRow
-      | undefined) ?? null
+      UserCredsUserCredentialRow | undefined) ?? null
   );
 }
 

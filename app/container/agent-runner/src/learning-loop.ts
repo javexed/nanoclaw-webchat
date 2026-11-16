@@ -629,33 +629,44 @@ export async function runLearningReview(
 
 /**
  * Last-invoked telemetry for the curator. When the SDK loads a skill, stamp
- * `.last-invoked` (+ a monotone `.invocations` counter) in that skill's dir so
- * scoped skills age by use rather than by creation date.
+ * `.last-invoked` (+ a monotone `.invocations` counter) for it in
+ * `~/.claude/skill-usage/<name>/` so scoped skills age by use rather than by
+ * creation date. Not in the skill's own dir: the skills dir is mounted
+ * read-only (the host is its only writer), and a counter carried over from
+ * when it was not is read from there once.
  *
  * Field-name-agnostic on purpose: the Skill tool's input isn't in the SDK's
  * typed schemas, so instead of guessing a field we stamp whichever input string
  * exactly names a real skill dir — it cannot stamp the wrong thing. Pooled
- * skills are symlinks into a read-only mount; the write fails and is skipped,
- * which is correct: the curator only manages scoped skills anyway.
+ * skills are symlinks into a read-only mount and are skipped: the curator only
+ * manages scoped skills anyway.
  */
 const SKILLS_DIR = process.env.CLAUDE_SKILLS_DIR || '/home/node/.claude/skills';
-export function stampSkillInvocation(toolInput: Record<string, unknown> | undefined): void {
+const SKILL_USAGE_DIR = process.env.CLAUDE_SKILL_USAGE_DIR || '/home/node/.claude/skill-usage';
+export function stampSkillInvocation(
+  toolInput: Record<string, unknown> | undefined,
+  dirs: { skills: string; usage: string } = { skills: SKILLS_DIR, usage: SKILL_USAGE_DIR },
+): void {
   if (!toolInput) return;
   for (const v of Object.values(toolInput)) {
     if (typeof v !== 'string' || !v || v.includes('/') || v.includes('..')) continue;
-    const dir = path.join(SKILLS_DIR, v);
+    const dir = path.join(dirs.skills, v);
     try {
-      if (!fs.existsSync(path.join(dir, 'SKILL.md'))) continue;
-      fs.writeFileSync(path.join(dir, '.last-invoked'), new Date().toISOString());
-      let n = 0;
-      try {
-        n = parseInt(fs.readFileSync(path.join(dir, '.invocations'), 'utf8'), 10) || 0;
-      } catch {
-        /* first invocation */
-      }
-      fs.writeFileSync(path.join(dir, '.invocations'), String(n + 1));
+      if (!fs.lstatSync(dir).isDirectory() || !fs.existsSync(path.join(dir, 'SKILL.md'))) continue;
+      const usage = path.join(dirs.usage, v);
+      fs.mkdirSync(usage, { recursive: true });
+      fs.writeFileSync(path.join(usage, '.last-invoked'), new Date().toISOString());
+      const count = (p: string): number => {
+        try {
+          return parseInt(fs.readFileSync(p, 'utf8'), 10) || 0;
+        } catch {
+          return 0;
+        }
+      };
+      const n = count(path.join(usage, '.invocations')) || count(path.join(dir, '.invocations'));
+      fs.writeFileSync(path.join(usage, '.invocations'), String(n + 1));
     } catch {
-      /* read-only pooled skill, or a race — either way not ours to stamp */
+      /* not a skill dir, or a race — either way not ours to stamp */
     }
   }
 }

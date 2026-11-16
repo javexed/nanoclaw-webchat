@@ -27,7 +27,6 @@ interface SigninView {
   };
   proxy: { enabled: boolean; ips: string; auto: boolean; header: string };
   token: { configured: boolean; enabled: boolean };
-  vscode: { appIdUri: string; clientId: string; defaultAppIdUri: string };
 }
 
 const CSRF = { 'X-Webchat-CSRF': '1' };
@@ -91,9 +90,6 @@ function fillOidc(): void {
   input('#si-client').value = same ? v.oidc.clientId : '';
   input('#si-secret').value = '';
   input('#si-secret').placeholder = same && v.oidc.secretSet ? '••••••••' : 'optional';
-  input('#si-appiduri').value = v.vscode.appIdUri;
-  input('#si-appiduri').placeholder = v.vscode.defaultAppIdUri || 'api://<client id>';
-  input('#si-vscode-client').value = v.vscode.clientId;
 }
 
 /** Send a change; on refusal show why and put the page back as it was. */
@@ -125,22 +121,8 @@ async function saveOidc(): Promise<void> {
   };
   const secret = input('#si-secret').value.trim();
   if (secret) body.clientSecret = secret;
-  // Read before the first save: its answer re-renders the form from the server,
-  // which would put the stored (old) VS Code values back first.
-  const appIdUri = input('#si-appiduri').value.trim();
-  const clientId = input('#si-vscode-client').value.trim();
   (document.activeElement as HTMLElement | null)?.blur();
   if (!(await send('oidc', 'PUT', body))) return;
-  if (provider === 'microsoft') {
-    if (appIdUri !== view?.vscode.appIdUri || clientId !== view?.vscode.clientId) {
-      try {
-        await apiJson('/api/runners/client-config', { method: 'PUT', headers: CSRF, body: { appIdUri, clientId } });
-      } catch (err) {
-        toastError(err, 'VS Code settings not saved');
-      }
-      await load();
-    }
-  }
   showToast('Saved', { kind: 'success' });
 }
 

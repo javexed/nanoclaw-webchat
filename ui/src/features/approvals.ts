@@ -82,7 +82,8 @@ let approvalsApp: ReturnType<typeof createApp> | null = null;
 function mountApprovalsList(): void {
   approvalsApp ??= mountIsland('#approval-list', () =>
     createApp(ApprovalsList, {
-      onRespond: (questionId: string, value: string) => respondToApproval(questionId, value, null),
+      onRespond: (questionId: string, value: string, reason?: string) =>
+        respondToApproval(questionId, value, null, reason),
     }),
   );
 }
@@ -141,15 +142,8 @@ export function handleApprovalResolvedEvent(msg: ApprovalMessage): void {
   pendingApprovals = pendingApprovals.filter((a: Approval) => a.questionId !== approvalId);
   renderApprovalsList();
   document.querySelectorAll(`.approval-toast[data-question-id="${approvalId}"]`).forEach((el) => el.remove());
-  // Flip any in-room card to a resolved note.
-  document.querySelectorAll(`.approval-msg[data-question-id="${approvalId}"]`).forEach((el) => {
-    const who = msg.resolvedBy ? ' by ' + (String(msg.resolvedBy).split(':').pop() ?? '').split('@')[0] : '';
-    el.innerHTML = '';
-    const note = document.createElement('div');
-    note.className = 'approval-inroom-note resolved';
-    note.textContent = `🔒 Approval — resolved${who}`;
-    el.appendChild(note);
-  });
+  // An in-room card is not touched here: the server re-broadcasts it resolved,
+  // and the transcript replaces it in place (its DOM is Vue's).
 }
 
 export function handleApprovalEvent(msg: ApprovalMessage & Approval): void {
@@ -170,7 +164,12 @@ export function handleApprovalEvent(msg: ApprovalMessage & Approval): void {
   }
 }
 
-export async function respondToApproval(questionId: string, value: string, cardEl?: HTMLElement | null): Promise<void> {
+export async function respondToApproval(
+  questionId: string,
+  value: string,
+  cardEl?: HTMLElement | null,
+  reason?: string,
+): Promise<void> {
   // Card feedback is state: both the panel and the in-transcript card are
   // ApprovalCard instances, whose DOM Vue owns.
   const setBusy = (on: boolean) => {
@@ -196,7 +195,7 @@ export async function respondToApproval(questionId: string, value: string, cardE
     const r = await authFetch(`/api/approvals/${encodeURIComponent(questionId)}/respond`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
-      body: JSON.stringify({ value }),
+      body: JSON.stringify(reason ? { value, reason } : { value }),
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
@@ -216,6 +215,36 @@ export async function respondToApproval(questionId: string, value: string, cardE
     console.error('Approval respond errored:', err);
     setBusy(false);
     toastEl?.querySelectorAll('button').forEach((b) => (b.disabled = false));
+  }
+}
+
+/**
+ * "Send again" on an expired request's notice. Busy and error state ride the
+ * approval maps under `resend:<id>`; the server re-broadcasts the notice as
+ * sent again, and the new card arrives as its own message.
+ */
+export async function resendApproval(questionId: string): Promise<void> {
+  const key = `resend:${questionId}`;
+  approvalBusy.value = new Set([...approvalBusy.value, key]);
+  const errors = { ...approvalErrors.value };
+  delete errors[key];
+  approvalErrors.value = errors;
+  try {
+    const r = await authFetch(`/api/approvals/${encodeURIComponent(questionId)}/resend`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: '{}',
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      approvalErrors.value = { ...approvalErrors.value, [key]: body.error || `Couldn't send it again (${r.status})` };
+    }
+  } catch {
+    approvalErrors.value = { ...approvalErrors.value, [key]: "Couldn't send it again" };
+  } finally {
+    const next = new Set(approvalBusy.value);
+    next.delete(key);
+    approvalBusy.value = next;
   }
 }
 

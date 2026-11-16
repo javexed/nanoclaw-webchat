@@ -36,14 +36,18 @@ import {
   egressAllowed,
   getRunnerEgressAllowlist,
   groupEgressMode,
+  hostOwnAddresses,
   isSafeEgressHost,
   modelHostsFor,
   ownModelTargetsFor,
   recordBlocked,
   type EgressMode,
 } from './egress-policy.js';
+import { keyTargetFor } from './egress-key-targets.js';
 import { connectThroughGateway, connectToGateway } from './gateway-connect.js';
 import { serveOllamaFiltered } from './ollama-filter.js';
+import { noteBuildRefusal } from './build-refusals.js';
+import { workloadTunnel } from './workload-tunnel.js';
 
 const MAX_HEAD = 64 * 1024;
 const IP_MAP_TTL_MS = 2_000;
@@ -65,7 +69,7 @@ export interface EgressFilterDeps {
   /** This agent's own model on another machine, as host:port; default: none. */
   ownModels?: (agentGroupId: string) => Promise<string[]>;
   /** Open a direct tunnel (directTunnel in egress-policy.ts); default: a TCP connection from here. */
-  direct?: (host: string, port: number) => Promise<net.Socket>;
+  direct?: (host: string, port: number, pinned?: string) => Promise<net.Socket>;
   /** The install allowlist alone, which direct tunnels need (global admins); default: none, so no direct tunnels. */
   installAllowlist?: () => Promise<string[]>;
   /** This agent's own private service addresses as CIDRs (its workload stacks), dialled directly; default: none. */
@@ -111,6 +115,12 @@ async function buildRegistriesFor(agentGroupId: string): Promise<string[]> {
   return out;
 }
 
+/** A build's refusal: where a person turns it on (Agent → Apps), not a host command. */
+function buildBlockedMessage(host: string, port: number): string {
+  const where = port === 443 || port === 80 ? host : `${host}:${port}`;
+  return `blocked by NanoClaw network policy: this build may not reach ${where} — an admin can allow Docker Hub for builds in Agent → Apps, or allow ${where} on this agent's Network list`;
+}
+
 /** Is a literal IPv4 address inside one of these CIDRs? Names never are: no lookup can move them in. */
 export function inOwnNetwork(host: string, cidrs: string[]): boolean {
   if (!net.isIPv4(host) || !cidrs.length) return false;
@@ -128,7 +138,7 @@ export function inOwnNetwork(host: string, cidrs: string[]): boolean {
 }
 
 /** Pipe a client to a socket this filter opened itself (no gateway in between). */
-function spliceDirect(client: ProxyClient, req: ParsedRequest, rest: Buffer, upstream: net.Socket): void {
+function spliceDirect(client: ProxyClient, req: ParsedRequest, rest: Buffer, upstream: Duplex): void {
   upstream.on('error', () => client.destroy());
   client.on('error', () => upstream.destroy());
   if (req.kind === 'connect') client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
@@ -157,10 +167,13 @@ const DIRECT_CONNECT_TIMEOUT_MS = 10_000;
  * point there), and connect to that same address, so a second lookup cannot
  * swap it.
  */
-async function connectDirect(host: string, port: number): Promise<net.Socket> {
+async function connectDirect(host: string, port: number, pinned?: string, privateOk?: boolean): Promise<net.Socket> {
   const bare = host.replace(/^\[|\]$/g, '');
-  const { address } = await dns.lookup(bare);
-  if (!directAddressAllowed(address, net.isIP(bare) !== 0))
+  // Already resolved (ollamaPin): that answer is the one checked, so it is the one dialled.
+  const address = pinned ?? (await dns.lookup(bare)).address;
+  // A private address: allowed when the caller says so (a deploy key's
+  // target), else only when the entry names the address itself.
+  if (!directAddressAllowed(address, privateOk ?? net.isIP(bare) !== 0))
     throw new Error(
       `${host} resolves to ${address}, which is not allowed directly (a private address: list the address itself)`,
     );
@@ -246,6 +259,11 @@ export function parseProxyHead(head: string): ParsedRequest | { error: string; s
     if (/^proxy-(connection|authorization):/i.test(l)) continue;
     if (l) kept.push(l);
   }
+  // A header folded onto a second line, or with space before its colon, is one
+  // the checks below would not see but a lenient parser downstream might
+  // (RFC 9112 rejects both): refuse it rather than guess.
+  if (kept.some((l) => /^[ \t]/.test(l) || /^[^:]*[ \t]:/.test(l)))
+    return { error: 'malformed request head', status: '400 Bad Request' };
   const bad = { error: 'bad destination host', status: '400 Bad Request' };
   const connect = /^CONNECT\s+(\[[0-9a-f:.]+\]|[^\s:]+):(\d{1,5})\s+HTTP\/1\.[01]$/i.exec(first);
   if (connect) {
@@ -264,7 +282,19 @@ export function parseProxyHead(head: string): ParsedRequest | { error: string; s
     // whatever reads it (the gateway choosing a credential, a virtual host)
     // to somewhere the allowlist never approved.
     const headers = [`Host: ${authority}`, ...kept.filter((l) => !/^host:/i.test(l))];
-    const chunked = headers.some((l) => /^transfer-encoding:.*chunked/i.test(l));
+    // One framing, stated once: two Content-Lengths, one that is not a number,
+    // or Content-Length beside Transfer-Encoding let this side and the far end
+    // disagree on where the body ends — a second request hidden in the first.
+    const lengths = headers.filter((l) => /^content-length:/i.test(l));
+    const encodings = headers.filter((l) => /^transfer-encoding:/i.test(l));
+    const framing = { error: 'ambiguous body length', status: '400 Bad Request' };
+    if (lengths.length > 1 || encodings.length > 1 || (lengths.length && encodings.length)) return framing;
+    if (lengths.length && !/^content-length:\s*\d+\s*$/i.test(lengths[0])) return framing;
+    // Chunked alone. Any other coding ("gzip", "gzip, chunked", "chunked,
+    // gzip") leaves the body's end to a decoder this side does not run, and
+    // RFC 9112 makes a request whose last coding is not chunked a 400.
+    if (encodings.length && !/^transfer-encoding:[ \t]*chunked[ \t]*$/i.test(encodings[0])) return framing;
+    const chunked = encodings.length > 0;
     const length = /^content-length:\s*(\d+)\s*$/im.exec(headers.join('\n'));
     const forGateway = headers.filter((l) => !/^connection:/i.test(l));
     return {
@@ -330,13 +360,37 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
       'blocked by NanoClaw network policy: this container is not known to NanoClaw',
     );
   }
+  // On an Ollama port the name is resolved once, here, and every connection
+  // below goes to that address: a second lookup (the gateway's, or a direct
+  // dial's) could answer with the Ollama server this one did not.
+  const ollama = await ollamaPin(req.host, req.port);
+  if ('refused' in ollama) {
+    log.warn('Egress filter: Ollama refused through the proxy (model port only)', {
+      agentGroupId: caller.agentGroupId,
+      host: req.host,
+      port: req.port,
+      reason: ollama.refused,
+    });
+    return answer(
+      client,
+      '403 Forbidden',
+      ollama.refused === 'unresolved'
+        ? `${req.host} could not be resolved`
+        : 'Ollama is reachable only through its model port',
+    );
+  }
+  const pinned = ollama.pin ?? undefined;
+  /** Where a connection goes: the pinned address when there is one, else the name. */
+  const dialHost = pinned ?? req.host;
   const building = caller.sessionId === BUILD_SESSION;
   // The agent's own workload services: on its own network, so dialled directly
   // whatever its policy (they are its own), never through the gateway.
   if (!building && deps.ownNetworks && inOwnNetwork(req.host, await deps.ownNetworks(caller.agentGroupId))) {
-    let own: net.Socket;
+    let own: Duplex;
     try {
-      own = await connectTcp(req.host, req.port);
+      // A stack on a worker is reached over that worker's link (workload-tunnel.ts).
+      const tunnel = await workloadTunnel(req.host, req.port);
+      own = tunnel ? tunnel() : await connectTcp(req.host, req.port);
     } catch (err) {
       return answer(
         client,
@@ -347,6 +401,27 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
     return spliceDirect(client, req, head.rest, own);
   }
   const mode = await deps.mode(caller.agentGroupId);
+  // A deploy key's target, for the agent holding the key (Allowlist mode).
+  const keyTarget =
+    !building && req.kind === 'connect' && mode === 'host-only'
+      ? await keyTargetFor(caller.agentGroupId, req.host, req.port)
+      : null;
+  if (keyTarget) {
+    let upstream: net.Socket;
+    try {
+      upstream = deps.direct
+        ? await deps.direct(req.host, req.port, pinned)
+        : await connectDirect(req.host, req.port, pinned, keyTarget.allowPrivate);
+    } catch (err) {
+      return answer(
+        client,
+        '502 Bad Gateway',
+        `could not reach ${req.host}:${req.port}: ${String((err as Error).message).slice(0, 200)}`,
+      );
+    }
+    log.info('Egress filter: deploy key tunnel', { agentGroupId: caller.agentGroupId, host: req.host, port: req.port });
+    return spliceDirect(client, req, head.rest, upstream);
+  }
   const alwaysBase = deps.always ? await deps.always(caller.agentGroupId) : undefined;
   const always =
     building && deps.buildRegistries
@@ -355,18 +430,19 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
   const allowlist = await deps.allowlist(caller.agentGroupId);
   if (!egressAllowed(mode, req.host, req.port, allowlist, always)) {
     recordBlocked(req.host, req.port, caller.agentGroupId, caller.sessionId, mode);
-    return answer(client, '403 Forbidden', blockedMessage(req.host, req.port, mode));
+    const why = building ? buildBlockedMessage(req.host, req.port) : blockedMessage(req.host, req.port, mode);
+    // A build's failure says what was blocked (build-refusals.ts): BuildKit shows only "Forbidden".
+    if (building) noteBuildRefusal(caller.agentGroupId, req.host, req.port, why);
+    return answer(client, '403 Forbidden', why);
   }
   if (building) {
     let upstream: net.Socket;
     try {
-      upstream = await (deps.direct ?? connectDirect)(req.host, req.port);
+      upstream = await (deps.direct ?? connectDirect)(req.host, req.port, pinned);
     } catch (err) {
-      return answer(
-        client,
-        '502 Bad Gateway',
-        `could not reach ${req.host}:${req.port}: ${String((err as Error).message).slice(0, 200)}`,
-      );
+      const why = String((err as Error).message).slice(0, 200);
+      noteBuildRefusal(caller.agentGroupId, req.host, req.port, `could not connect: ${why}`);
+      return answer(client, '502 Bad Gateway', `could not reach ${req.host}:${req.port}: ${why}`);
     }
     return spliceDirect(client, req, head.rest, upstream);
   }
@@ -374,7 +450,7 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
   const install = deps.installAllowlist ? await deps.installAllowlist() : [];
   if (req.kind === 'connect' && directTunnel(mode, req.host, req.port, install)) {
     try {
-      upstream = await (deps.direct ?? connectDirect)(req.host, req.port);
+      upstream = await (deps.direct ?? connectDirect)(req.host, req.port, pinned);
     } catch (err) {
       return answer(
         client,
@@ -399,7 +475,8 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
     const auth = Buffer.from(`${req.username}:${req.password}`).toString('base64');
     upstream.on('error', () => client.destroy());
     client.on('error', () => upstream.destroy());
-    upstream.write(`${req.gatewayHead!}Proxy-Authorization: Basic ${auth}\r\n\r\n`);
+    const gatewayHead = pinned ? pinGatewayHead(req.gatewayHead!, req.host, pinned) : req.gatewayHead!;
+    upstream.write(`${gatewayHead}Proxy-Authorization: Basic ${auth}\r\n\r\n`);
     upstream.pipe(client);
     if (req.bodyLength === null || req.bodyLength === undefined) {
       if (head.rest.length) upstream.write(head.rest);
@@ -431,7 +508,7 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
       const gw = deps.gateway();
       upstream = await connectThroughGateway(
         { host: gw.host, port: gw.port, username: req.username, password: req.password },
-        req.host,
+        dialHost,
         req.port,
       );
     } catch (err) {
@@ -526,6 +603,100 @@ export async function serveModelPort(
   up.pipe(client);
 }
 
+/**
+ * Ollama servers behind a model port (host:port as the host reaches them). The
+ * model port filters each request to inference; the general proxy must not be
+ * a second, unfiltered way in (pull, delete, create), whatever the agent's
+ * egress allows — so it refuses these targets outright.
+ */
+const ollamaTargets = new Map<string, Array<{ host: string; port: number }>>();
+
+export function __setOllamaTargetsForTest(targets: Array<{ host: string; port: number }>): void {
+  ollamaTargets.clear();
+  if (targets.length) ollamaTargets.set('test', targets);
+}
+
+const LOCAL_NAMES = new Set([HOST_NAME, 'localhost']);
+const isLocal = (host: string, own: Set<string>): boolean => {
+  const h = host.toLowerCase().replace(/^\[|\]$/g, '');
+  return LOCAL_NAMES.has(h) || h === '::1' || h.startsWith('127.') || own.has(h);
+};
+
+type Resolver = (host: string) => Promise<string[]>;
+const systemResolver: Resolver = async (host) => (await dns.lookup(host, { all: true })).map((a) => a.address);
+let resolveAll: Resolver = systemResolver;
+
+/** Tests: answer lookups from `fn` (null: the system resolver again). */
+export function __setResolverForTest(fn: Resolver | null): void {
+  resolveAll = fn ?? systemResolver;
+}
+
+async function addressesOf(host: string): Promise<string[]> {
+  if (net.isIP(host)) return [host];
+  try {
+    return await resolveAll(host);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Whether a proxy request may go on, for Ollama's sake: refused when it names
+ * an Ollama server (by name, by address, or as this host for a local one), or
+ * when its port is an Ollama server's and its name does not resolve. Else the
+ * address to dial: on an Ollama port a name is resolved here once and the
+ * connection pinned to that answer (null: nothing to pin — another port, or a
+ * literal address).
+ */
+export async function ollamaPin(
+  host: string,
+  port: number,
+  targets: Array<{ host: string; port: number }> = [...ollamaTargets.values()].flat(),
+  own: Set<string> = hostOwnAddresses(),
+): Promise<{ pin: string | null } | { refused: 'ollama' | 'unresolved' }> {
+  const same = targets.filter((t) => t.port === port);
+  if (!same.length) return { pin: null };
+  const h = host
+    .toLowerCase()
+    .replace(/\.$/, '')
+    .replace(/^\[|\]$/g, '');
+  for (const t of same) {
+    if (t.host.toLowerCase() === h) return { refused: 'ollama' };
+    if (isLocal(t.host, own) && isLocal(h, own)) return { refused: 'ollama' };
+  }
+  const literal = net.isIP(h) !== 0;
+  const mine = literal ? [h] : await addressesOf(h);
+  if (!mine.length) return { refused: 'unresolved' };
+  if (same.some((t) => isLocal(t.host, own)) && mine.some((a) => isLocal(a, own))) return { refused: 'ollama' };
+  for (const t of same) {
+    const theirs = await addressesOf(t.host);
+    if (mine.some((a) => theirs.includes(a))) return { refused: 'ollama' };
+  }
+  return { pin: literal ? null : mine[0] };
+}
+
+/** Whether a proxy request names an Ollama server (see ollamaPin). */
+export async function isOllamaTarget(
+  host: string,
+  port: number,
+  targets?: Array<{ host: string; port: number }>,
+  own?: Set<string>,
+): Promise<boolean> {
+  const r = await ollamaPin(host, port, targets, own);
+  return 'refused' in r && r.refused === 'ollama';
+}
+
+/**
+ * The gateway's request head sent to the pinned address: the request line's
+ * authority becomes the address, the Host header keeps the name.
+ */
+function pinGatewayHead(head: string, host: string, pinned: string): string {
+  const addr = net.isIPv6(pinned) ? `[${pinned}]` : pinned;
+  const end = head.indexOf('\r\n');
+  const line = head.slice(0, end).replace(`http://${host}`, `http://${addr}`);
+  return line + head.slice(end);
+}
+
 /** Model listeners by bridge (port → target), so one whose model was removed or moved is closed at the next spawn. */
 const modelPorts = new Map<string, Map<number, string>>();
 
@@ -556,6 +727,10 @@ export function ensureEgressFilter(
       `passthrough:${p.port}`,
     );
   }
+  ollamaTargets.set(
+    bridgeIp,
+    models.filter((m) => m.ollama).map((m) => m.target),
+  );
   // Keyed with the Ollama flag too: a port whose filtering changed is reopened.
   const wanted = new Map(models.map((m) => [m.port, `${m.target.host}:${m.target.port}${m.ollama ? ' ollama' : ''}`]));
   const had = modelPorts.get(bridgeIp) ?? new Map<number, string>();
@@ -581,13 +756,21 @@ export function ensureEgressFilter(
 
 /** Containers placed on the lockdown network at spawn, by name — the resolver registers them. */
 const byName = new Map<string, Caller>();
-let ipMap: { at: number; map: Map<string, string> } | null = null;
+/** Per network: source address → container name, re-read at most every IP_MAP_TTL_MS and on a miss. */
+const ipMaps = new Map<string, { at: number; map: Map<string, string> }>();
+
+/**
+ * Docker's default bridge: an agent in Open mode with a stack on a worker
+ * stays there (its own connections unfiltered) but uses this filter as its
+ * proxy, so it can reach that stack (container-egress openViaFilter).
+ */
+export const DEFAULT_BRIDGE = 'bridge';
 
 export function registerFilteredContainer(name: string, caller: Caller): void {
   byName.set(name, caller);
   // A new container may have been handed the address a dead one gave up; the
   // next lookup re-reads the network rather than trusting the cached map.
-  ipMap = null;
+  ipMaps.clear();
 }
 
 function runtime(args: string[]): Promise<string> {
@@ -603,11 +786,12 @@ function runtime(args: string[]): Promise<string> {
  * agent. Refreshed at most every two seconds and on a miss, so an address a
  * dead container gave up is re-read rather than trusted.
  */
-export function containerIdentifier(network: string): (ip: string) => Promise<Caller | null> {
-  return async (ip) => {
+export function containerIdentifier(network: string): (ip: string, allowRefresh?: boolean) => Promise<Caller | null> {
+  return async (ip, allowRefresh = true) => {
     const addr = ip.replace(/^::ffff:/, '');
     const lookup = async (fresh: boolean): Promise<string | undefined> => {
-      if (fresh || !ipMap || Date.now() - ipMap.at > IP_MAP_TTL_MS) {
+      const cached = ipMaps.get(network);
+      if (fresh || !cached || Date.now() - cached.at > IP_MAP_TTL_MS) {
         const out = await runtime([
           'network',
           'inspect',
@@ -620,11 +804,11 @@ export function containerIdentifier(network: string): (ip: string) => Promise<Ca
           const [name, cidr] = pair.split('=');
           if (name && cidr) map.set(cidr.split('/')[0], name);
         }
-        ipMap = { at: Date.now(), map };
+        ipMaps.set(network, { at: Date.now(), map });
       }
-      return ipMap.map.get(addr);
+      return ipMaps.get(network)!.map.get(addr);
     };
-    const name = (await lookup(false)) ?? (await lookup(true));
+    const name = (await lookup(false)) ?? (allowRefresh ? await lookup(true) : undefined);
     if (!name) return null;
     const known = byName.get(name);
     if (known) return known;
@@ -645,8 +829,18 @@ export function containerIdentifier(network: string): (ip: string) => Promise<Ca
 
 /** The default dependencies: the policy's own readers. */
 export function defaultFilterDeps(network: string, gateway: () => { host: string; port: number }): EgressFilterDeps {
+  const onNetwork = containerIdentifier(network);
+  // An Open agent on the default bridge that uses this filter as its proxy;
+  // only containers with NanoClaw's agent labels are known (anything else: null).
+  const onBridge = network === DEFAULT_BRIDGE ? null : containerIdentifier(DEFAULT_BRIDGE);
   return {
-    identify: containerIdentifier(network),
+    // Both cached maps first: a miss on one network re-reads it (a docker call),
+    // which a caller on the other must not pay on every connection.
+    identify: async (ip) =>
+      (await onNetwork(ip, false)) ??
+      (onBridge ? await onBridge(ip, false) : null) ??
+      (await onNetwork(ip)) ??
+      (onBridge ? await onBridge(ip) : null),
     gateway,
     mode: groupEgressMode,
     allowlist: allowlistFor,

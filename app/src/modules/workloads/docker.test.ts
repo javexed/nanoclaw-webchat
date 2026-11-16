@@ -124,4 +124,92 @@ describe('what Compose is given', () => {
     expect(path.dirname(files.stack)).toBe(workDir(w.id));
     expect(() => writeFiles(w, 'n', { web: 'x' })).toThrow(/api: no image/);
   });
+
+  it("writes a translated project's configs (escaped) and its aliases on the stack network", () => {
+    const w = {
+      id: `test-${process.pid}-${Date.now()}-cfg`,
+      agentGroupId: 'ag-1',
+      name: 'shop',
+      addresses: { web: '198.18.0.10', db: '198.18.0.11' },
+      stack: {
+        compose: {
+          services: {
+            web: { image: 'nginx:1.27', configs: [{ source: 'config-site', target: '/etc/nginx/conf.d/site.conf' }] },
+            db: { image: 'postgres:17', 'x-nanoclaw-aliases': ['shop-db'] },
+          },
+          configs: { 'config-site': { content: 'proxy_set_header Host $host;' } },
+        },
+        limits: {},
+        total: { memoryMb: 1024, cpus: 1 },
+      },
+    } as unknown as Workload;
+    created.push(workDir(w.id));
+    const files = writeFiles(w, 'nc-wl-x-0', { web: 'nginx:1.27', db: 'postgres:17' });
+    const stack = parse(fs.readFileSync(files.stack, 'utf-8')) as {
+      services: Record<string, Record<string, unknown>>;
+      configs: Record<string, { content: string }>;
+    };
+    // Compose would read `$host` as a variable: written as `$$host`, the file gets `$host`.
+    expect(stack.configs).toEqual({ 'config-site': { content: 'proxy_set_header Host $$host;' } });
+    expect(stack.services.web.configs).toEqual([{ source: 'config-site', target: '/etc/nginx/conf.d/site.conf' }]);
+    expect(stack.services.db['x-nanoclaw-aliases']).toBeUndefined();
+    const override = parse(fs.readFileSync(files.override, 'utf-8')) as {
+      services: Record<string, { networks: { nanoclaw: Record<string, unknown> } }>;
+    };
+    expect(override.services.db.networks.nanoclaw).toEqual({ ipv4_address: '198.18.0.11', aliases: ['shop-db'] });
+    expect(override.services.web.networks.nanoclaw).toEqual({ ipv4_address: '198.18.0.10' });
+  });
+});
+
+describe('buildFailure', () => {
+  it("names the failing step's own output and error, not the Dockerfile echo", async () => {
+    const { buildFailure } = await import('./docker.js');
+    const text = [
+      '#5 [api 2/4] RUN npm ci',
+      '#5 0.512 added 120 packages',
+      '#5 DONE 3.1s',
+      '#7 [web 3/6] RUN apt-get update && pecl install apcu',
+      '#7 1.204 Get:1 http://deb.debian.org/debian bookworm InRelease',
+      '#7 9.876 No releases available for package "pecl.php.net/apcu"',
+      '#7 9.877 install failed',
+      '#7 ERROR: process "/bin/sh -c apt-get update && pecl install apcu" did not complete successfully: exit code: 1',
+      '------',
+      ' > [web 3/6] RUN apt-get update && pecl install apcu:',
+      'Dockerfile:12',
+      '  12 | >>> RUN apt-get update && pecl install apcu',
+      'failed to solve: process "/bin/sh -c apt-get update && pecl install apcu" did not complete successfully: exit code: 1',
+    ].join('\n');
+    expect(buildFailure(text)).toBe(
+      [
+        '#7 1.204 Get:1 http://deb.debian.org/debian bookworm InRelease',
+        '#7 9.876 No releases available for package "pecl.php.net/apcu"',
+        '#7 9.877 install failed',
+        '#7 ERROR: process "/bin/sh -c apt-get update && pecl install apcu" did not complete successfully: exit code: 1',
+        'failed to solve: process "/bin/sh -c apt-get update && pecl install apcu" did not complete successfully: exit code: 1',
+      ].join('\n'),
+    );
+    expect(buildFailure('some other error')).toBeNull();
+  });
+});
+
+describe('where a stopped build stood', () => {
+  it('names the step still running and the slowest finished ones', async () => {
+    const { buildProgress } = await import('./docker.js');
+    const text = [
+      '#5 [stage-0 2/16] RUN apt-get update',
+      '#5 0.512 Get:1 http://deb.debian.org trixie InRelease',
+      '#5 DONE 312.4s',
+      '#6 [stage-0 3/16] COPY app/ /opt/app/',
+      '#6 CACHED',
+      '#7 [stage-0 4/16] RUN composer require x',
+      '#7 DONE 95.0s',
+      '#20 exporting to docker image format',
+      '#20 exporting layers',
+      '#20 CANCELED',
+    ].join('\n');
+    expect(buildProgress(text)).toBe(
+      'Still running: exporting to docker image format\nSlowest steps: [stage-0 2/16] RUN apt-get update (5 min); [stage-0 4/16] RUN composer require x (2 min)',
+    );
+    expect(buildProgress('Image x Building')).toBeNull();
+  });
 });

@@ -46,8 +46,7 @@ async function wireRoom(roomId: string, agentGroupId: string): Promise<void> {
     NOW,
   );
   const mg = (await db.get(`SELECT id FROM messaging_groups WHERE platform_id = ?`, roomId)) as
-    | { id: string }
-    | undefined;
+    { id: string } | undefined;
   await db.run(
     `INSERT INTO messaging_group_agents
        (id, messaging_group_id, agent_group_id, engage_mode, sender_scope, ignored_message_policy, session_mode, priority, created_at)

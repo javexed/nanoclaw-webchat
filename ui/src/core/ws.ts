@@ -32,7 +32,7 @@ import {
 import { showToast } from '../core/toast.js';
 import { apiJson, authFetch, getWsUrl, getWsProtocols } from '../core/api.js';
 import { state } from '../core/state.js';
-import { bumpUnread, firstUnreadIndex, seedUnread } from './unread.js';
+import { bumpUnread, firstUnreadIndex, syncUnread } from './unread.js';
 import { messages, readdRow, transcriptEmpty, turnFor, type MsgRow } from '../features/transcript-state.js';
 import { replyPreviewApplies } from '../features/reply-preview.js';
 import { autoReadReply } from '../features/voice.js';
@@ -174,11 +174,12 @@ export function connect() {
         // Seed persistent unread badges from the server's per-user read markers
         // so messages that arrived while away surface on reconnect — not just
         // live ones. Never dot the open room (the join that follows reads it).
+        // A room the server calls read loses its count and mention here too.
         msg.rooms.forEach((r: any) => {
-          if (r.unread && r.id !== state.currentRoom) seedUnread(state.unreadRooms, r.id, r.unread_count);
-          if (r.mention && r.id !== state.currentRoom) state.mentionedRooms.add(r.id);
-          else if (!r.mention) state.mentionedRooms.delete(r.id);
-          else state.unreadRooms.delete(r.id);
+          const open = r.id === state.currentRoom;
+          syncUnread(state.unreadRooms, r.id, r.unread, r.unread_count, open);
+          if (r.mention && !open) state.mentionedRooms.add(r.id);
+          else state.mentionedRooms.delete(r.id);
         });
         // Render rooms immediately from the WS payload — renderRooms doesn't use
         // allAgents, so don't block first paint on the /api/agents round-trip
@@ -345,7 +346,9 @@ export function connect() {
           document.hidden &&
           msg.sender !== state.myIdentity &&
           msg.message_type !== 'a2a' &&
-          msg.sender_type !== 'a2a'
+          msg.sender_type !== 'a2a' &&
+          // Approval cards and notices carry JSON; the server's push covers them.
+          !String(msg.message_type || '').startsWith('approval')
         ) {
           try {
             const mentioned = messageMentionsMe(msg.content);
@@ -594,14 +597,10 @@ export async function probeIsOwner() {
       // Sign-in: owner or global admin, the same audience its endpoint allows.
       isWorkspaceAdminView.value = state.isOwnerView || !!(me && userIsGlobalAdmin(me));
       $('#overflow-signin')!.hidden = !isWorkspaceAdminView.value;
-      // Server extensions installed as skills (the VS Code runner, …): their
-      // screens stay hidden unless listed.
-      let extensions: string[] = [];
       try {
         const fr = await authFetch('/api/webchat/features');
         const feats = fr.ok ? await fr.json() : {};
         state.marketplaceEnabled = feats.marketplaceEnabled === true;
-        extensions = Array.isArray(feats.extensions) ? feats.extensions : [];
         renderCredentialIsolation(feats);
       } catch {
         state.marketplaceEnabled = false;
@@ -614,13 +613,6 @@ export async function probeIsOwner() {
         $('#overflow-mcp')?.removeAttribute('hidden');
         $('#mtab-mcp-btn')?.removeAttribute('hidden');
         $('#mtab-skills-btn')?.removeAttribute('hidden');
-        // Runners: paired developer machines, when the VS Code runner is
-        // installed. Owner/global-admin surface; the API 403s anyone else, so
-        // revealing on the owner view is enough here.
-        if (extensions.includes('vscode')) {
-          $('#mtab-runners-btn')?.removeAttribute('hidden');
-          $('#overflow-runners')?.removeAttribute('hidden');
-        }
         // Network: the install's egress allowlist (every agent). Same audience.
         $('#mtab-network-btn')?.removeAttribute('hidden');
         $('#overflow-network')?.removeAttribute('hidden');

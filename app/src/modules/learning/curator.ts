@@ -53,6 +53,15 @@ export function decideStale(skills: ScopedSkillAge[], now: number, maxAgeDays: n
   return skills.filter((s) => s.lastUsedAt < cutoff).map((s) => s.name);
 }
 
+/**
+ * Where the agent-runner stamps a skill's use: `skill-usage/<name>/` beside
+ * the skills dir (which containers see read-only). Older stamps sit in the
+ * skill dir itself; both are read.
+ */
+export function skillUsageDir(skillDir: string): string {
+  return path.join(path.dirname(path.dirname(skillDir)), 'skill-usage', path.basename(skillDir));
+}
+
 /** Most recent of `.last-invoked` (stamped by the agent-runner) and SKILL.md mtime. */
 export function skillLastUsedAt(skillDir: string): number | null {
   let t = 0;
@@ -61,11 +70,13 @@ export function skillLastUsedAt(skillDir: string): number | null {
   } catch {
     return null; // not a skill
   }
-  try {
-    const stamp = Date.parse(fs.readFileSync(path.join(skillDir, '.last-invoked'), 'utf8').trim());
-    if (Number.isFinite(stamp)) t = Math.max(t, stamp);
-  } catch {
-    /* never invoked — SKILL.md mtime stands */
+  for (const dir of [skillDir, skillUsageDir(skillDir)]) {
+    try {
+      const stamp = Date.parse(fs.readFileSync(path.join(dir, '.last-invoked'), 'utf8').trim());
+      if (Number.isFinite(stamp)) t = Math.max(t, stamp);
+    } catch {
+      /* never invoked — SKILL.md mtime stands */
+    }
   }
   return t;
 }

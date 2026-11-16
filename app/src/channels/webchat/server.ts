@@ -256,6 +256,7 @@ import { getDb } from '../../db/connection.js';
 import { log } from '../../log.js';
 import { getAgentGroup, getAllAgentGroups } from '../../db/agent-groups.js';
 import { getPendingApproval, getSession } from '../../db/sessions.js';
+import type { PendingApproval } from '../../types.js';
 import { restartAgentGroupContainers } from '../../container-restart.js';
 import { restartAgentGroupContainersWhenIdle } from '../../container-restart-idle.js';
 import type { InboundMessage, OutboundFile } from '../adapter.js';
@@ -305,7 +306,7 @@ import { recordInstructionBaseline } from '../../modules/instruction-guard/store
 import { syncAgentProviderForAssignedModel, classifierParamsForModel } from './models.js';
 import { handleChunkedUpload, handleFileServe, handleHtmlFrame, handleMultipartUpload } from './files.js';
 import { initWebPush, isValidPushEndpoint } from './push.js';
-import { redactSensitiveData } from './redact.js';
+import { redactMessageContent, redactSensitiveData } from './redact.js';
 import { withTraceFlags } from './turn-traces.js';
 import { withLimitRetries } from './limit-retry.js';
 import { rLimitRetryDelete, rLimitRetryPost } from './server/routes-limit-retry.js';
@@ -330,6 +331,10 @@ import {
   NEVER_AUTO_APPROVE_PATTERNS,
 } from '../../modules/approvals/prejudge.js';
 import { checkApprovalClick } from '../../modules/approvals/index.js';
+import { finalizeReject } from '../../modules/approvals/finalize.js';
+import { REJECT_WITH_REASON_VALUE } from '../../modules/approvals/primitive.js';
+import { resendExpiredApproval } from '../../modules/approvals/resend.js';
+import { canResendApproval, markNoticeResent } from './inroom-approvals.js';
 import { listRegisteredApprovalActions } from '../../seam/index.js';
 import { hostAllowed } from './request-guard.js';
 import { maybeHandleTts, ttsEndpoint } from './tts.js';
@@ -376,13 +381,13 @@ import {
 } from './oauth-mint.js';
 import { realOnecliAdmin } from '../../modules/user-credentials/onecli-admin.js';
 import { ensureFleetIsolation, fleetIsolationEnabled } from '../../modules/fleet-isolation/index.js';
-import { extensionRoutes, runServerStart } from './extensions.js';
 import {
   listDeployKeys,
   createDeployKey,
   deleteDeployKey,
+  rotateDeployKey,
   setDeployKeyTarget,
-} from '../../modules/deploy-keys/index.js';
+} from '../../modules/deploy-keys/keys.js';
 import {
   WORKSPACE,
   type Scope,
@@ -432,10 +437,12 @@ import { closeDb } from '../../db/connection.js';
 import { rEgressGet, rEgressPut } from './server/routes-egress.js';
 import {
   RE_AGENT_APPS,
+  RE_AGENT_BUILD_REGISTRIES,
   RE_AGENT_WORKLOAD,
   RE_AGENT_WORKLOAD_ACTION,
   rAgentAppsGet,
   rAgentAppsPut,
+  rAgentBuildRegistriesPut,
   rAgentWorkloadAction,
   rAgentWorkloadDelete,
   rPublishingCloudflareConnect,
@@ -443,8 +450,20 @@ import {
   rPublishingGet,
   rPublishingTailnetConnect,
   rPublishingTailnetPut,
+  rPublishingWorkloadsPut,
 } from './server/routes-workloads.js';
 import { handleAccountRoutes, handlePreAuthSignin } from './server/routes-signin.js';
+import {
+  rScalingCapPut,
+  rScalingDrainPost,
+  rScalingWorkloadsPost,
+  rScalingJoinPost,
+  rScalingMachineDelete,
+  rScalingMachinesGet,
+  rScalingRevokePost,
+  rScalingSshJoinPost,
+  rScalingSshProbePost,
+} from './server/routes-scaling.js';
 import { handleSigninSettings } from './server/routes-signin-settings.js';
 
 const DEFAULT_HOST = '127.0.0.1';
@@ -562,10 +581,6 @@ export async function startWebchatServer(hooks: WebchatServerHooks): Promise<Web
     return { userId: auth.userId, displayName: auth.displayName };
   });
 
-  // Installed extensions (./extensions-installed.ts) attach their own
-  // WebSocket paths and services here, before the server listens.
-  runServerStart({ chatInbound: hooks.onInbound });
-
   await new Promise<void>((resolve, reject) => {
     httpServer.once('error', (err: NodeJS.ErrnoException) => {
       // EADDRINUSE on this port is almost always "another nanoclaw host is
@@ -608,7 +623,7 @@ export async function startWebchatServer(hooks: WebchatServerHooks): Promise<Web
 /**
  * The listener Tailscale Serve proxies to: loopback only, on its own port
  * (servePortFor). Its connections are handed to the main HTTP server, so every
- * route, WebSocket path and extension behaves the same, but each socket is
+ * route and WebSocket path behaves the same, but each socket is
  * marked first: auth.ts believes Serve's `Tailscale-User-Login` header on
  * those sockets and on no others. Plain HTTP only — Serve terminates TLS, and
  * an install with its own certificate does not use Serve.
@@ -927,7 +942,7 @@ async function handleHttp(
     return json(res, 403, { error: 'MCP and the skills marketplace are disabled by the workspace owner.' });
   }
 
-  for (const r of [...API_ROUTES, ...extensionRoutes()]) {
+  for (const r of API_ROUTES) {
     const methods = Array.isArray(r.method) ? r.method : [r.method];
     if (!methods.includes(method)) continue;
     const m =
@@ -1004,6 +1019,11 @@ interface ApiRoute {
 }
 
 const RE_ROOM_ID = /^\/api\/rooms\/([^/]+)$/;
+const RE_SCALING_MACHINE = /^\/api\/scaling\/machines\/([^/]+)$/;
+const RE_SCALING_DRAIN = /^\/api\/scaling\/machines\/([^/]+)\/drain$/;
+const RE_SCALING_REVOKE = /^\/api\/scaling\/machines\/([^/]+)\/revoke$/;
+const RE_SCALING_CAP = /^\/api\/scaling\/machines\/([^/]+)\/cap$/;
+const RE_SCALING_WORKLOADS = /^\/api\/scaling\/machines\/([^/]+)\/workloads$/;
 // Parameterised paths must be RegExp: a STRING path is compared with `===`,
 // so a pattern written as a string silently never matches (404).
 const RE_AGENT_EXPORT_TEMPLATE = /^\/api\/agents\/([^/]+)\/export-template$/;
@@ -1089,6 +1109,7 @@ const RE_ROUTER_DEL = /^\/api\/router\/routers\/([^/]+)$/;
 const RE_MODEL_ID = /^\/api\/models\/([^/]+)$/;
 const RE_MODEL_TEST = /^\/api\/models\/([^/]+)\/test$/;
 const RE_APPROVE = /^\/api\/approvals\/([^/]+)\/respond$/;
+const RE_APPROVE_RESEND = /^\/api\/approvals\/([^/]+)\/resend$/;
 const RE_USER_ID = /^\/api\/users\/([^/]+)$/;
 
 // ── Overview ──────────────────────────────────────────────────────────
@@ -1373,11 +1394,10 @@ async function rToolSecretsIsolation(ctx: RouteCtx, _m: RegExpMatchArray): Promi
   }
 }
 
-// Deploy keys — per-agent SSH keypairs. Not vault-backed: OneCLI injects into
-// outbound HTTPS, and SSH is not HTTP, so these are files in the group folder
-// (which is mounted only into that group's container, so they are private to
-// the agent by construction). The PRIVATE half is never returned by any verb
-// here — only the public key, which is the half you paste into a server.
+// Deploy keys — per-agent SSH keypairs, held on the host (modules/deploy-keys):
+// the agent signs through a host ssh-agent limited to the key's target and
+// never sees the key. The PRIVATE half is never returned by any verb here —
+// only the public key, which is the half you paste into a server.
 async function rDeployKeys(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, url, method, userId } = ctx;
   const agentGroupId = url.searchParams.get('agentGroupId') ?? '';
@@ -1397,14 +1417,24 @@ async function rDeployKeys(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
     }
     const raw = await readJsonBody(req, res);
     if (raw === null) return;
-    const body = JSON.parse(raw) as { name?: string; target?: string };
+    const body = JSON.parse(raw) as { name?: string; target?: string; targets?: unknown; rotate?: boolean };
     const name = (body.name ?? '').trim().toLowerCase();
-    const target = (body.target ?? '').trim() || undefined;
+    // `targets` (a list) or `target` (one, or several separated by commas).
+    const target = Array.isArray(body.targets)
+      ? body.targets.map((t) => String(t))
+      : (body.target ?? '').trim() || undefined;
+    // An owner's or global admin's target may resolve to a private address
+    // (egress filter); a scoped admin's may not.
+    const setBy = (await isOwner(userId)) || (await isGlobalAdmin(userId)) ? 'install' : 'agent';
+    const exists = (await listDeployKeys(agentGroupId)).some((k) => k.name === name);
     // Re-stamping an existing key's target must not regenerate it — anything
-    // already trusting the public half would break.
-    const key = (await listDeployKeys(agentGroupId)).some((k) => k.name === name)
-      ? await setDeployKeyTarget(agentGroupId, name, target ?? '')
-      : await createDeployKey(agentGroupId, name, target);
+    // already trusting the public half would break. Rotating does, on purpose.
+    const key =
+      body.rotate === true
+        ? await rotateDeployKey(agentGroupId, name)
+        : exists
+          ? await setDeployKeyTarget(agentGroupId, name, target ?? '', setBy)
+          : await createDeployKey(agentGroupId, name, target, setBy);
     await refreshCredentialNote(realOnecliAdmin, agentGroupId);
     return json(res, 200, { ok: true, key });
   } catch (err) {
@@ -1724,7 +1754,7 @@ async function rHistGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
     200,
     (await withLimitRetries(await withTraceFlags(msgs))).map((m) => ({
       ...m,
-      content: redactSensitiveData(m.content),
+      content: redactMessageContent(m.content),
     })),
   );
 }
@@ -2553,11 +2583,12 @@ async function rApprovePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   if (!expectedPlatformId || !(await isWebchatApprovalIndexedFor(approvalId, expectedPlatformId))) {
     return json(res, 403, { error: 'Not the intended approver for this request' });
   }
-  const body = await readJsonObject<{ value?: unknown }>(req, res);
+  const body = await readJsonObject<{ value?: unknown; reason?: unknown }>(req, res);
   if (body === undefined) return;
   const value = typeof body.value === 'string' ? body.value : '';
+  if (value === REJECT_WITH_REASON_VALUE) return rejectWithReason(ctx, pending, body.reason, expectedPlatformId);
   if (value !== 'approve' && value !== 'reject') {
-    return json(res, 400, { error: 'value must be "approve" or "reject"' });
+    return json(res, 400, { error: 'value must be "approve", "reject" or "reject_with_reason"' });
   }
   // Ask the approvals module whether this click will be accepted BEFORE handing
   // off: onAction is fire-and-forget, so after a 200 the client could never
@@ -2577,6 +2608,61 @@ async function rApprovePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   // handleApprovalsResponse owns the lifecycle (status update + delete).
   hooks.onAction(approvalId, value, userId);
   return json(res, 200, { ok: true });
+}
+
+/** Longest reason relayed to the agent from a "Reject with reason…". */
+const REJECT_REASON_MAX = 500;
+
+/**
+ * "Reject with reason…" from a card: the reason comes with the click (the
+ * card asks for it inline), so the reject finalizes at once with it, instead
+ * of the chat channels' capture of the approver's next message.
+ */
+async function rejectWithReason(
+  ctx: RouteCtx,
+  pending: PendingApproval,
+  rawReason: unknown,
+  platformId: string,
+): Promise<void> {
+  const { res, userId, hooks } = ctx;
+  const reason = (typeof rawReason === 'string' ? rawReason : '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, REJECT_REASON_MAX);
+  if (!reason) return json(res, 400, { error: 'reason is required' });
+  const check = await checkApprovalClick({
+    questionId: pending.approval_id,
+    value: 'reject',
+    userId,
+    channelType: 'webchat',
+    platformId,
+    threadId: null,
+  });
+  if (!check.ok) return json(res, 403, { error: check.reason ?? 'Not authorized to decide this request' });
+  const session = pending.session_id ? await getSession(pending.session_id) : undefined;
+  if (!session) {
+    // No agent to tell (a session-less request): a plain reject.
+    hooks.onAction(pending.approval_id, 'reject', userId);
+    return json(res, 200, { ok: true });
+  }
+  if (!(await finalizeReject(pending, session, userId, { reason }))) {
+    return json(res, 404, { error: 'Approval not found or already resolved' });
+  }
+  return json(res, 200, { ok: true });
+}
+
+/** "Send again" on an expired request: re-issue it as it was first asked (resend.ts). */
+async function rApproveResendPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const { res, userId } = ctx;
+  const approvalId = decodeURIComponent(m[1]);
+  if (!(await canResendApproval(userId, approvalId))) {
+    return json(res, 404, { error: 'Approval not found' });
+  }
+  const r = await resendExpiredApproval(approvalId, userId);
+  if (!r.ok) return json(res, 409, { error: r.reason });
+  const notice = await markNoticeResent(approvalId, userId);
+  if (notice) await broadcast(notice.room_id, { type: 'message', ...notice });
+  return json(res, 200, { ok: true, note: r.note });
 }
 
 // ── Push ──────────────────────────────────────────────────────────────
@@ -2683,7 +2769,7 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: RE_ROOM_THREADS, h: rRoomThreadsGet },
   { method: 'POST', path: RE_ROOM_THREADS, guards: ['csrf'], h: rRoomThreadsPost },
   { method: 'PATCH', path: RE_ROOM_THREAD, guards: ['csrf'], h: rRoomThreadPatch },
-  { method: 'DELETE', path: RE_ROOM_THREAD, guards: ['csrf', 'owner'], h: rRoomThreadDelete },
+  { method: 'DELETE', path: RE_ROOM_THREAD, guards: ['csrf'], h: rRoomThreadDelete },
   { method: 'POST', path: RE_ROOM_THREAD_PULL, guards: ['csrf'], h: rRoomThreadPullPost },
   { method: 'GET', path: '/api/docs', h: rDocsGet },
   { method: 'GET', path: RE_DOC_ASSET, h: rDocAssetGet },
@@ -2740,6 +2826,13 @@ const API_ROUTES: ApiRoute[] = [
   // Agent → Apps (server/routes-workloads.ts): the agent's admins; widening raises a card.
   { method: 'GET', path: RE_AGENT_APPS, h: rAgentAppsGet },
   { method: 'PUT', path: RE_AGENT_APPS, guards: ['csrf'], h: rAgentAppsPut, audit: 'workload.app.change' },
+  {
+    method: 'PUT',
+    path: RE_AGENT_BUILD_REGISTRIES,
+    guards: ['csrf'],
+    h: rAgentBuildRegistriesPut,
+    audit: 'workload.build_registries.change',
+  },
   { method: 'GET', path: RE_AGENT_WORKLOAD_ACTION, h: rAgentWorkloadAction },
   {
     method: 'POST',
@@ -2967,9 +3060,17 @@ const API_ROUTES: ApiRoute[] = [
     audit: 'policy.prejudge',
   },
   { method: 'POST', path: RE_APPROVE, guards: ['csrf'], h: rApprovePost },
+  { method: 'POST', path: RE_APPROVE_RESEND, guards: ['csrf'], h: rApproveResendPost, audit: 'approval.resend' },
   { method: 'GET', path: '/api/users', h: rUsersGet },
   // Admin → Publishing (server/routes-workloads.ts): owner only.
   { method: 'GET', path: '/api/publishing', guards: ['owner'], h: rPublishingGet },
+  {
+    method: 'PUT',
+    path: '/api/publishing/workloads',
+    guards: ['csrf', 'owner'],
+    h: rPublishingWorkloadsPut,
+    audit: 'publishing.workloads.set',
+  },
   {
     method: 'PUT',
     path: '/api/publishing/tailnet',
@@ -2997,6 +3098,54 @@ const API_ROUTES: ApiRoute[] = [
     guards: ['csrf', 'owner'],
     h: rPublishingCloudflareConnect,
     audit: 'publishing.cloudflare.connect',
+  },
+  // Admin → Scaling → Machines (server/routes-scaling.ts).
+  { method: 'GET', path: '/api/scaling/machines', guards: ['globalAdmin'], h: rScalingMachinesGet },
+  {
+    method: 'POST',
+    path: '/api/scaling/machines/join',
+    guards: ['csrf', 'globalAdmin'],
+    h: rScalingJoinPost,
+    audit: 'machine.token',
+  },
+  {
+    method: 'POST',
+    path: '/api/scaling/machines/ssh/probe',
+    guards: ['csrf', 'globalAdmin'],
+    h: rScalingSshProbePost,
+    audit: 'machine.ssh-probe',
+  },
+  // Audits itself (who, host, username, role, result — never the secrets).
+  { method: 'POST', path: '/api/scaling/machines/ssh/join', guards: ['csrf', 'globalAdmin'], h: rScalingSshJoinPost },
+  {
+    method: 'POST',
+    path: RE_SCALING_DRAIN,
+    guards: ['csrf', 'globalAdmin'],
+    h: rScalingDrainPost,
+    audit: 'machine.drain',
+  },
+  {
+    method: 'POST',
+    path: RE_SCALING_REVOKE,
+    guards: ['csrf', 'globalAdmin'],
+    h: rScalingRevokePost,
+    audit: 'machine.revoke',
+  },
+  { method: 'PUT', path: RE_SCALING_CAP, guards: ['csrf', 'globalAdmin'], h: rScalingCapPut, audit: 'machine.cap' },
+  // "Run workloads here": an owner's choice, like the Workloads switch itself.
+  {
+    method: 'POST',
+    path: RE_SCALING_WORKLOADS,
+    guards: ['csrf', 'owner'],
+    h: rScalingWorkloadsPost,
+    audit: 'machine.workloads',
+  },
+  {
+    method: 'DELETE',
+    path: RE_SCALING_MACHINE,
+    guards: ['csrf', 'globalAdmin'],
+    h: rScalingMachineDelete,
+    audit: 'machine.remove',
   },
   // Install-wide egress allowlist (server/routes-egress.ts).
   { method: 'GET', path: '/api/egress', guards: ['globalAdmin'], h: rEgressGet },
@@ -3621,8 +3770,7 @@ async function pushSubscribe(req: IncomingMessage, res: ServerResponse, userId: 
 
   // Prevent identity-hijack on known endpoints.
   const existing = (await db.get(`SELECT identity FROM webchat_push_subscriptions WHERE endpoint = ?`, endpoint)) as
-    | { identity: string }
-    | undefined;
+    { identity: string } | undefined;
   if (existing && existing.identity !== userId) {
     log.warn('Webchat push subscribe rejected — endpoint owned by different identity', {
       identity: userId,

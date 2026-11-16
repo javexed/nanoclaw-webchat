@@ -43,7 +43,8 @@ export interface WebchatMessage {
   sender: string;
   sender_type: string;
   content: string;
-  message_type: 'text' | 'file' | 'a2a' | 'approval' | 'approval_resolved' | 'context-divider' | 'skill_draft';
+  message_type:
+    'text' | 'file' | 'a2a' | 'approval' | 'approval_resolved' | 'approval_notice' | 'context-divider' | 'skill_draft';
   file_meta?: FileMeta | null;
   created_at: number;
   /** Provenance for thread context sync: null=native, 'pulled' (from main),
@@ -55,14 +56,14 @@ export interface WebchatMessage {
   served_model?: string;
 }
 
-interface WebchatMessageRow {
+export interface WebchatMessageRow {
   id: string;
   room_id: string;
   thread_id: string;
   sender: string;
   sender_type: string;
   content: string;
-  message_type: 'text' | 'file' | 'a2a' | 'approval' | 'approval_resolved' | 'skill_draft';
+  message_type: 'text' | 'file' | 'a2a' | 'approval' | 'approval_resolved' | 'approval_notice' | 'skill_draft';
   file_meta: string | null;
   created_at: number;
   /** Stable user id of a human sender (null for agents, system rows, and rows stored before it existed). */
@@ -428,8 +429,7 @@ export async function countAgentsForWebchatRoom(roomId: string): Promise<number>
 
 export async function getPrimeAgentForWebchatRoom(roomId: string): Promise<string | null> {
   const row = (await getDb().get(`SELECT agent_group_id FROM webchat_room_primes WHERE room_id = ?`, roomId)) as
-    | { agent_group_id: string }
-    | undefined;
+    { agent_group_id: string } | undefined;
   return row?.agent_group_id ?? null;
 }
 
@@ -477,8 +477,7 @@ export type CredentialMode = 'disabled' | 'optional' | 'required';
 /** Secure by default: rooms with no settings row read as 'disabled'. */
 export async function getRoomCredentialMode(roomId: string): Promise<CredentialMode> {
   const row = (await getDb().get(`SELECT credential_mode FROM webchat_room_settings WHERE room_id = ?`, roomId)) as
-    | { credential_mode: CredentialMode }
-    | undefined;
+    { credential_mode: CredentialMode } | undefined;
   return row?.credential_mode ?? 'disabled';
 }
 
@@ -501,8 +500,7 @@ export async function setRoomCredentialMode(roomId: string, mode: CredentialMode
 export async function getRoomOauthAllowed(roomId: string): Promise<boolean> {
   try {
     const row = (await getDb().get(`SELECT oauth_allowed FROM webchat_room_settings WHERE room_id = ?`, roomId)) as
-      | { oauth_allowed: number }
-      | undefined;
+      { oauth_allowed: number } | undefined;
     return (row?.oauth_allowed ?? 0) === 1;
   } catch {
     return false;
@@ -608,8 +606,7 @@ function settingsGetter<T>(column: string, decode: (value: unknown) => T): () =>
   return async () => {
     try {
       const row = (await getDb().get(`SELECT ${column} FROM webchat_settings WHERE id = 1`)) as
-        | Record<string, unknown>
-        | undefined;
+        Record<string, unknown> | undefined;
       return decode(row?.[column]);
     } catch {
       return decode(undefined);
@@ -694,9 +691,6 @@ export async function setAgentEgressHostsRaw(agentGroupId: string, json: string 
     Date.now(),
   );
 }
-
-export const getRunnerClientConfigRaw = settingsGetter('runner_client_config', decodeNullableString);
-export const setRunnerClientConfigRaw = settingsSetter('runner_client_config', encodeNullableString);
 
 /** Voice-dictation cleanup model. NULL (also a missing row/column) = raw transcript. */
 export const getSttCleanupModelId = settingsGetter('stt_cleanup_model_id', decodeNullableString);
@@ -798,7 +792,7 @@ export async function getEffectiveRoomMode(roomId: string): Promise<CredentialMo
 
 // ── Messages ──
 
-function rowToMessage(row: WebchatMessageRow): WebchatMessage {
+export function rowToMessage(row: WebchatMessageRow): WebchatMessage {
   // sender_user_id is the delete-ownership key, not a display field: it stays server-side.
   const { sender_user_id: _senderUserId, limit_resets_at: limitResetsAt, served_model: servedModel, ...rest } = row;
   return {
@@ -1001,8 +995,7 @@ export async function skillDraftCardPosition(
 ): Promise<{ roomId: string; newerMessages: number } | null> {
   const id = `skill-draft-card-${draftId}`;
   const row = (await getDb().get('SELECT room_id, created_at FROM webchat_messages WHERE id = ?', id)) as
-    | { room_id: string; created_at: number }
-    | undefined;
+    { room_id: string; created_at: number } | undefined;
   if (!row) return null;
   const n = (await getDb().get(
     'SELECT count(*) AS n FROM webchat_messages WHERE room_id = ? AND created_at > ? AND id != ?',
@@ -1095,8 +1088,7 @@ export async function listSkillDraftCards(before?: number, limit = 200): Promise
 export async function markRoomApprovalResolved(approvalId: string, resolvedBy: string): Promise<void> {
   const id = `appr-card-${approvalId}`;
   const row = (await getDb().get(`SELECT content FROM webchat_messages WHERE id = ?`, id)) as
-    | { content: string }
-    | undefined;
+    { content: string } | undefined;
   if (!row) return;
   let payload: Record<string, unknown> = {};
   try {
@@ -1197,6 +1189,35 @@ export async function storeWebchatFileMessage(
   return msg;
 }
 
+/**
+ * Whether the file at `url` in this room came in on an agent's message. Only
+ * agents' HTML renders in the drawer's frame (files.ts handleHtmlFrame); a
+ * member's .html stays a download. False when no message carries the file.
+ */
+export async function isAgentFileInRoom(roomId: string, url: string): Promise<boolean> {
+  const like = '%' + url.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
+  const rows = (await getDb().all(
+    `SELECT sender_type, file_meta FROM webchat_messages
+       WHERE room_id = ? AND message_type = 'file' AND file_meta LIKE ? ESCAPE '\\'`,
+    roomId,
+    like,
+  )) as { sender_type: string; file_meta: string | null }[];
+  let found = false;
+  for (const r of rows) {
+    let meta: FileMeta | null = null;
+    try {
+      meta = r.file_meta ? (JSON.parse(r.file_meta) as FileMeta) : null;
+    } catch {
+      meta = null;
+    }
+    if (meta?.url !== url) continue;
+    // Any member's message carrying the same file makes it not an agent's.
+    if (r.sender_type !== 'agent') return false;
+    found = true;
+  }
+  return found;
+}
+
 export async function getWebchatMessages(roomId: string, limit = 200, threadId?: string): Promise<WebchatMessage[]> {
   const rows = (
     threadId === undefined
@@ -1252,8 +1273,7 @@ export async function getWebchatMessagesAfterId(
   threadId?: string,
 ): Promise<WebchatMessage[]> {
   const anchor = (await getDb().get(`SELECT created_at FROM webchat_messages WHERE id = ?`, afterId)) as
-    | { created_at: number }
-    | undefined;
+    { created_at: number } | undefined;
   if (!anchor) return [];
   // (created_at, id) is the page order everywhere: messages stored in the same
   // millisecond (a reply and its attachment) would otherwise tie with the
@@ -1340,8 +1360,7 @@ export async function getWebchatMessagesBeforeId(
   threadId?: string,
 ): Promise<WebchatMessage[]> {
   const anchor = (await getDb().get(`SELECT created_at FROM webchat_messages WHERE id = ?`, beforeId)) as
-    | { created_at: number }
-    | undefined;
+    { created_at: number } | undefined;
   if (!anchor) return [];
   const rows = (
     threadId === undefined
@@ -1412,6 +1431,8 @@ export interface WebchatThread {
   kind: 'main' | 'agent' | 'topic';
   created_at: number;
   updated_at: number;
+  /** Who started a topic thread; null for main/agent lanes and older threads. */
+  created_by?: string | null;
 }
 
 /** Ensure a thread row exists; idempotent (never clobbers an existing title).
@@ -1460,7 +1481,11 @@ export function sanitizeThreadTitle(raw: unknown): string | null {
 }
 
 /** Create a manual topic thread (uuid). Returns the new thread. */
-export async function createWebchatThread(roomId: string, title: string): Promise<WebchatThread> {
+export async function createWebchatThread(
+  roomId: string,
+  title: string,
+  createdBy: string | null = null,
+): Promise<WebchatThread> {
   const now = Date.now();
   const thread: WebchatThread = {
     room_id: roomId,
@@ -1469,10 +1494,11 @@ export async function createWebchatThread(roomId: string, title: string): Promis
     kind: 'topic',
     created_at: now,
     updated_at: now,
+    created_by: createdBy,
   };
   await getDb().run(
-    `INSERT INTO webchat_threads (room_id, thread_id, title, kind, created_at, updated_at)
-       VALUES (@room_id, @thread_id, @title, @kind, @created_at, @updated_at)`,
+    `INSERT INTO webchat_threads (room_id, thread_id, title, kind, created_at, updated_at, created_by)
+       VALUES (@room_id, @thread_id, @title, @kind, @created_at, @updated_at, @created_by)`,
     thread,
   );
   return thread;
@@ -1505,8 +1531,7 @@ export async function getTopicThreadCounts(): Promise<Map<string, number>> {
 
 export async function getWebchatThread(roomId: string, threadId: string): Promise<WebchatThread | undefined> {
   return (await getDb().get(`SELECT * FROM webchat_threads WHERE room_id = ? AND thread_id = ?`, roomId, threadId)) as
-    | WebchatThread
-    | undefined;
+    WebchatThread | undefined;
 }
 
 /**
@@ -2142,16 +2167,14 @@ export function slugifyHandle(name: string): string {
 
 export async function getWebchatUserHandle(userId: string): Promise<string | null> {
   const row = (await getDb().get(`SELECT handle FROM webchat_user_handles WHERE user_id = ?`, userId)) as
-    | { handle: string }
-    | undefined;
+    { handle: string } | undefined;
   return row?.handle ?? null;
 }
 
 /** Which user_id (if any) currently owns a handle. */
 export async function userIdForHandle(handle: string): Promise<string | null> {
   const row = (await getDb().get(`SELECT user_id FROM webchat_user_handles WHERE handle = ?`, handle.toLowerCase())) as
-    | { user_id: string }
-    | undefined;
+    { user_id: string } | undefined;
   return row?.user_id ?? null;
 }
 

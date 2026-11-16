@@ -14,6 +14,7 @@ docs cover the harder subsystems in depth:
 - User credentials (per-member): [user-credentials.md](user-credentials.md)
 - GitHub Copilot as an agent harness: [copilot.md](copilot.md)
 - Agent workloads (an agent’s own Compose stacks) and publishing their apps, operator setup: [workloads.md](workloads.md)
+- Worker machines (joining, host rules and the isolation check, opt-in placement): [scaling.md](scaling.md)
 - Local-model routing: [llm-router.md](design/llm-router.md), [auto-routing.md](design/auto-routing.md)
 
 Ships **disabled by default** — the adapter factory returns `null` unless
@@ -61,6 +62,21 @@ surface both in the requesting agent's room and in per-approver DM "inboxes"
 (synthetic `approvals:<handle>` messaging groups). Cards clear live on first
 response.
 
+In the room, the card is actionable for the people who may approve it (Approve,
+Reject, Reject with reason… typed on the card) and read-only for everyone else
+("waiting for <name>"). It resolves in place: who approved or rejected it, and
+for an approved command its one-line result with the redacted output under
+Details. About an hour before an unanswered card expires the room gets a
+reminder; on expiry a notice says so (not "rejected") and **Send again**
+re-issues the identical request through the guard, the command's precheck and
+the same approver rules (`inroom-approvals.ts`, `modules/approvals/resend.ts`).
+
+The requesting agent is told the same facts: while it waits, whether someone
+who can approve it is in its room or the card went to Admin → Approvals; once
+it ran, a summary per command, known failures as cause and fix, with signed
+URLs, long base64 and token-looking strings redacted
+(`modules/approvals/words.ts`, on the `registerApprovalWords` CLI seam).
+
 ## Feature catalog
 
 ### Chat
@@ -85,8 +101,12 @@ implementation notes that matter here:
   in native players. Text previews stop at 2 MB (download instead). Files are
   served with `CSP: sandbox` (an opaque origin, even when framed) and
   `frame-ancestors 'self'`, and answer single `Range` requests with `206` so
-  media can seek — iOS Safari will not play an mp4 without that.
-  **HTML attachments** render interactively in the drawer, in an iframe with
+  media can seek — iOS Safari will not play an mp4 without that. PDFs alone
+  skip the `sandbox` (Chromium refuses its PDF viewer in a sandboxed
+  document); their type comes from the `.pdf` extension and `nosniff` holds
+  it, so the bytes go to the browser's PDF viewer or nowhere.
+  **HTML attachments** from an agent (never a member's: a member's `.html` is a
+  download, and the server refuses to frame it) render interactively in the drawer, in an iframe with
   `sandbox="allow-scripts"` only (no `allow-same-origin`, no popups), loaded
   from `?view=frame` — a response with its own CSP (`sandbox allow-scripts`,
   inline script/style only, `connect-src 'none'`, nothing from the network,
@@ -95,9 +115,12 @@ implementation notes that matter here:
   frame is not used because it would inherit the app's CSP and its
   `script-src 'self'` would block the page's inline scripts. Opened as a file,
   an `.html` attachment is a download. The page can pre-fill the composer —
-  never send — with `parent.postMessage({ type: 'nanoclaw:compose', text }, '*')`:
-  accepted only from the drawer's own frame (and not after the page navigates
-  away), only in exactly that shape, control and bidi characters stripped,
+  never send — with
+  `parent.postMessage({ type: 'nanoclaw:compose', text, nonce: location.hash.slice(1) }, '*')`:
+  accepted only from the drawer's own frame carrying the per-open nonce the
+  drawer puts in the frame URL's fragment (a page the frame navigates to never
+  sees it; a second load replaces the frame with "Left preview"), only in
+  exactly that shape, control and bidi characters stripped,
   cut at 4,000 characters. A "From page.html" note shows above the composer
   until the text is sent or cleared.
 - **Live agent activity** — redacted `status` frames stream a per-turn thinking
@@ -217,7 +240,7 @@ Localhost auto-pass is off once any explicit method is set.
 | Method | Env var(s) | Detection | Identity |
 |---|---|---|---|
 | Bearer | `WEBCHAT_TOKEN` (≥24) | `Authorization: Bearer` or WS subprotocol `bearer.<t>`; constant-time compare | `webchat:owner` |
-| OIDC (Microsoft Entra ID or any provider) | `WEBCHAT_OIDC_ISSUER`, `WEBCHAT_OIDC_AUDIENCE`, and the endpoints from discovery (below) | A signed id token — the web app's own sign-in, App Service's `x-ms-token-aad-id-token`, or a JWT presented as `Authorization: Bearer` (the VS Code extension). RS256 or ES256, pinned to the key's type; signature, issuer, audience, expiry checked against the issuer's keys. A token that fails falls through to the methods below; an expired one adds `X-Webchat-Auth-Hint: token-stale` and the browser renews it via `/.auth/refresh` | Microsoft: `webchat:<preferred_username>`; other providers: `webchat:<email>`, only when `email_verified` |
+| OIDC (Microsoft Entra ID or any provider) | `WEBCHAT_OIDC_ISSUER`, `WEBCHAT_OIDC_AUDIENCE`, and the endpoints from discovery (below) | A signed id token — the web app's own sign-in, App Service's `x-ms-token-aad-id-token`, or a JWT presented as `Authorization: Bearer` (a script or CLI). RS256 or ES256, pinned to the key's type; signature, issuer, audience, expiry checked against the issuer's keys. A token that fails falls through to the methods below; an expired one adds `X-Webchat-Auth-Hint: token-stale` and the browser renews it via `/.auth/refresh` | Microsoft: `webchat:<preferred_username>`; other providers: `webchat:<email>`, only when `email_verified` |
 | Trusted-proxy / SSO | `WEBCHAT_TRUSTED_PROXY_IPS` (`auto`/`*`/CIDR list), `WEBCHAT_TRUSTED_PROXY_HEADER`; for Cloudflare Access also `WEBCHAT_CF_ACCESS_TEAM_DOMAIN` + `WEBCHAT_CF_ACCESS_AUD` | The mode is only an IP gate: `auto`/`*` accepts any source, a list (IPv4 or IPv6 addresses or CIDRs; an IPv4-mapped IPv6 peer matches its IPv4) requires the hop to match. Either way the same headers are read — Azure EasyAuth / Cloudflare Access paired headers first, then `WEBCHAT_TRUSTED_PROXY_HEADER`. EasyAuth's pair is trusted on presence (unsigned). With the two Cloudflare settings, a verified `Cf-Access-Jwt-Assertion` is the only identity accepted (issuer, the application's AUD tag, expiry, same email as the header) — the EasyAuth pair and `WEBCHAT_TRUSTED_PROXY_HEADER` are ignored and a request without a valid assertion is refused; without them that pair is trusted on presence too — set them whenever Cloudflare Access fronts webchat | `webchat:<identity>` |
 | Tailscale | `WEBCHAT_TAILSCALE=true` | `tailscale whois --json <ip>` → `LoginName` (remembered 30 s per peer address); behind HTTPS over Tailscale, Serve's `Tailscale-User-Login` header, believed only on the Serve listener (below) | `webchat:tailscale:<email>` |
 | Localhost | _(none)_ | remote is loopback, the request carries no forwarding headers (`X-Forwarded-For`, `Forwarded`, `X-Real-IP`, `Cf-Connecting-IP`, `Cf-Ray`, `Tailscale-User-Login`, `X-Forwarded-Host`) and did not arrive on the Serve listener, **and** no explicit method configured | `webchat:local-owner` |
@@ -267,9 +290,6 @@ on the same page.
   secret only as HTTP Basic gets it that way. The page shows the **redirect
   URI** to register with the provider: `<origin>/auth/oidc/callback`
   (`/auth/microsoft/callback`, the first version's path, still works).
-  Microsoft also takes the VS Code extension's optional **App ID URI** and
-  **client ID**; the extension signs in with Microsoft only, so with another
-  provider it signs in over the network (Tailscale).
 - **Trusted proxy**: the proxy's IPv4 or IPv6 address(es) or CIDRs and the identity
   header. `auto` / `*` (trust any source) is `.env`-only: it is safe only when
   nothing but the proxy can reach the port, which the page cannot check.

@@ -1,0 +1,14 @@
+diff --git a/scripts/add-resend-steps.test.ts b/scripts/add-resend-steps.test.ts
+index 4f8f7664..012e5eb5 100644
+--- a/scripts/add-resend-steps.test.ts
++++ b/scripts/add-resend-steps.test.ts
+@@ -113,6 +113,9 @@ function apply(fetch: 'ok' | 'fails') {
+ 
+ beforeEach(() => {
+   root = fs.mkdtempSync(path.join(os.tmpdir(), 'add-resend-'));
++  // A checkout, not a gitless deploy: copy from-branch then goes through the
++  // stubbed `git fetch` / `git show` below rather than a fresh clone.
++  fs.mkdirSync(path.join(root, '.git'));
+   bin = path.join(root, 'bin');
+   calls = path.join(root, 'calls.log');
+   fs.mkdirSync(bin);

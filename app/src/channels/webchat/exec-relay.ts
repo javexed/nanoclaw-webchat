@@ -237,6 +237,41 @@ export interface RelayRuntime {
   attach(container: string, onLine: (line: string) => void): Pipe;
 }
 
+/**
+ * The longest frame line central accepts from a container. Frames are JSON with
+ * at most one socket chunk in base64, far under this; a container that writes
+ * past it without a newline would otherwise grow central's memory without end.
+ */
+export const MAX_FRAME_LINE_CHARS = 4 * 1024 * 1024;
+
+/**
+ * Split a stream into lines for `onLine`. A partial line past `max` calls
+ * `onOverflow` once and stops reading: the caller drops the attach, and the
+ * relay recovers as from any lost attach.
+ */
+export function frameLines(
+  onLine: (line: string) => void,
+  onOverflow: () => void,
+  max = MAX_FRAME_LINE_CHARS,
+): (chunk: Buffer) => void {
+  let acc = '';
+  let dead = false;
+  return (chunk) => {
+    if (dead) return;
+    acc += chunk.toString('utf8');
+    let i: number;
+    while ((i = acc.indexOf('\n')) !== -1) {
+      onLine(acc.slice(0, i));
+      acc = acc.slice(i + 1);
+    }
+    if (acc.length > max) {
+      dead = true;
+      acc = '';
+      onOverflow();
+    }
+  };
+}
+
 export const dockerRelayRuntime: RelayRuntime = {
   startDaemon: (container, script) =>
     new Promise((resolve, reject) =>
@@ -251,15 +286,10 @@ export const dockerRelayRuntime: RelayRuntime = {
     const child = spawn(CONTAINER_RUNTIME_BIN, ['exec', '-i', '-u', '0', container, 'bun', '-e', ATTACH_SCRIPT], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    let acc = '';
-    const lines = (chunk: Buffer): void => {
-      acc += chunk.toString('utf8');
-      let i: number;
-      while ((i = acc.indexOf('\n')) !== -1) {
-        onLine(acc.slice(0, i));
-        acc = acc.slice(i + 1);
-      }
-    };
+    const lines = frameLines(onLine, () => {
+      log.warn('Exec relay: a frame line from the container passed the limit, dropping the attach', { container });
+      child.kill('SIGKILL');
+    });
     child.stdout.on('data', lines);
     child.stderr.on('data', (d: Buffer) => onLine(`stderr: ${d.toString('utf8').trim()}`));
     child.stdin.on('error', () => {});

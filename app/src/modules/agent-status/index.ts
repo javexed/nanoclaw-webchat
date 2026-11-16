@@ -299,8 +299,7 @@ export function getStatusEventsSince(outDb: Database.Database, sinceSeq: number)
 export function getLastStatusEvent(outDb: Database.Database): { seq: number; kind: string } | undefined {
   try {
     return outDb.prepare('SELECT seq, kind FROM status_events ORDER BY seq DESC LIMIT 1').get() as
-      | { seq: number; kind: string }
-      | undefined;
+      { seq: number; kind: string } | undefined;
   } catch {
     return undefined;
   }

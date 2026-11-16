@@ -17,7 +17,7 @@ import RoomList from './RoomList.vue';
 import { learnTurnToolCount, roomAutoLearn, roomFilter, selectedRoomId, showArchived, showHidden } from './room-list-state.js';
 import { transcriptEmpty } from './transcript-state.js';
 import { beginTranscriptSwitch } from './transcript.js';
-import { autoReadEnabled, setAutoRead, ttsOffered } from './voice.js';
+import { autoReadEnabled, setAutoRead, stopTts, ttsOffered } from './voice.js';
 
 /** Supplied by provideRoomsDeps in composition-root.ts. `any` marks a signature not
  *  yet typed, not an opt-out of checking. */
@@ -261,6 +261,8 @@ export function joinRoom(roomId?: any, roomName?: any, jumpMessageId?: any, init
   // elapsed timer / reasoning traces can't leak into the new room.
   endAllAgentTurns();
   const prevRoom = state.currentRoom;
+  // Read-aloud belongs to the room it started in.
+  if (prevRoom !== roomId) stopTts();
   state.currentRoom = roomId;
   // The active room's thread tree is expanded by default; collapse the room we
   // just left (its chevron re-opens it) so stale trees don't linger open.

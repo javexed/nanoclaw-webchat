@@ -9,6 +9,10 @@
  * problem, so it starts a fresh incident (and alerts) rather than hiding
  * behind the old one. Runs that never reached the model by design (a script
  * gate said "nothing to do") neither open nor close an incident.
+ *
+ * However the runs fall (ok/failed flapping, a new signature each time), a
+ * task raises at most one failure alert per ALERT_MIN_GAP_MS; a recovery
+ * notice goes out only for an incident whose failure alert did.
  */
 import { readEnvFile } from '../../env.js';
 import { log } from '../../log.js';
@@ -37,6 +41,22 @@ function configuredReminderHours(): number {
   return configured;
 }
 
+/** Least time between two failure alerts of one task, whatever the incident. */
+export const ALERT_MIN_GAP_MS = 3_600_000;
+
+/**
+ * Fixed text per failure signature, for alerts that must not carry the
+ * agent's own words (approver DMs). The agent's reason stays in `ncl tasks get`.
+ */
+export const FAILURE_TEXT: Record<string, string> = {
+  'not-started': 'the agent container could not start',
+  interrupted: 'the run stopped before it finished',
+  script: 'the pre-task script failed',
+  stalled: 'the run kept stalling and was abandoned',
+  'model-error': 'the run ended with an error',
+  'agent-declared': 'the agent marked the run failed',
+};
+
 export type AlertKind = 'opened' | 'reminder' | 'recovered';
 
 export interface Alert {
@@ -48,10 +68,22 @@ export interface Alert {
   openedAt: string;
 }
 
-/** The text the owner sees. Plain sentences; the task id is what `ncl tasks get` takes. */
-export function alertText(alert: Alert, formatTime: (iso: string) => string): string {
+/**
+ * The text the owner sees. Plain sentences; the task id is what `ncl tasks get`
+ * takes. With `fixedText` (approver DMs) the reason is the signature's fixed
+ * text, never the stored reason, which may be the agent's own words.
+ */
+export function alertText(
+  alert: Alert,
+  formatTime: (iso: string) => string,
+  opts: { fixedText?: boolean } = {},
+): string {
   const task = `Scheduled task ${alert.seriesId}`;
-  const why = alert.reason ? `: ${alert.reason}` : '.';
+  const why = opts.fixedText
+    ? `: ${FAILURE_TEXT[alert.signature] ?? 'the run failed'}. Details: ncl tasks get ${alert.seriesId}`
+    : alert.reason
+      ? `: ${alert.reason}`
+      : '.';
   switch (alert.kind) {
     case 'opened':
       return `${task} failed${why}`;
@@ -82,7 +114,10 @@ export async function recordVerdict(
 
   if (verdict.outcome === 'ok') {
     if (!open) return null;
-    await saveIncident({ ...open, state: 'closed', closed_at: at });
+    // Only an incident its owner heard about gets a recovery notice.
+    const alerted = !!open.last_alert_at && open.last_alert_at >= open.opened_at;
+    await saveIncident({ ...open, state: 'closed', closed_at: at, last_alert_at: alerted ? at : open.last_alert_at });
+    if (!alerted) return null;
     return {
       kind: 'recovered',
       seriesId,
@@ -95,7 +130,10 @@ export async function recordVerdict(
 
   if (open && open.signature === verdict.signature) {
     const failures = open.failures + 1;
-    const due = !open.last_alert_at || now.getTime() - Date.parse(open.last_alert_at) >= hours * 3_600_000;
+    const since = open.last_alert_at ? now.getTime() - Date.parse(open.last_alert_at) : Infinity;
+    // An incident opened quietly (inside the gap) is announced once the gap is up.
+    const announced = !!open.last_alert_at && open.last_alert_at >= open.opened_at;
+    const due = since >= (announced ? Math.max(hours * 3_600_000, ALERT_MIN_GAP_MS) : ALERT_MIN_GAP_MS);
     const next: TaskIncidentRow = {
       ...open,
       failures,
@@ -106,7 +144,7 @@ export async function recordVerdict(
     await saveIncident(next);
     return due
       ? {
-          kind: 'reminder',
+          kind: announced ? 'reminder' : 'opened',
           seriesId,
           signature: next.signature,
           reason: next.reason,
@@ -116,6 +154,9 @@ export async function recordVerdict(
       : null;
   }
 
+  // A new incident (first failure, or a new signature) alerts unless the task
+  // alerted within the gap: flapping or shifting failures are not a storm.
+  const quiet = !!current?.last_alert_at && now.getTime() - Date.parse(current.last_alert_at) < ALERT_MIN_GAP_MS;
   const opened: TaskIncidentRow = {
     series_id: seriesId,
     agent_group_id: agentGroupId,
@@ -125,9 +166,10 @@ export async function recordVerdict(
     failures: 1,
     opened_at: at,
     last_failure_at: at,
-    last_alert_at: at,
+    last_alert_at: quiet ? current!.last_alert_at : at,
     closed_at: null,
   };
   await saveIncident(opened);
+  if (quiet) return null;
   return { kind: 'opened', seriesId, signature: opened.signature, reason: opened.reason, failures: 1, openedAt: at };
 }

@@ -25,7 +25,6 @@ import {
   showDetail,
 } from './agents.js';
 import { closeMcpDetail, fetchMcpServers, openMcpDetail, renderMcpSources } from './mcp.js';
-import { closeRunnerDetail, fetchRunners } from './runners.js';
 import { fetchNetwork } from './network.js';
 import { showConfirmModal } from './modals.js';
 import { closeModelDetail, fetchModels, openModelDetail, renderModels } from './models.js';
@@ -115,6 +114,7 @@ function teardownManage() {
 }
 
 export function switchManageTab(tab?: any) {
+  const prevTab = manageTab.value;
   manageTab.value = tab;
   document.querySelectorAll('.manage-tab').forEach((t: any) => {
     const on = (t as HTMLElement).dataset.mtab === tab;
@@ -124,21 +124,21 @@ export function switchManageTab(tab?: any) {
   $('#mtab-agents')!.hidden = tab !== 'agents';
   $('#mtab-models')!.hidden = tab !== 'models';
   $('#mtab-mcp')!.hidden = tab !== 'mcp';
-  const runnersPane = $('#mtab-runners');
-  if (runnersPane) runnersPane.hidden = tab !== 'runners';
-  if (tab !== 'runners') closeRunnerDetail();
   const networkPane = $('#mtab-network');
   if (networkPane) networkPane.hidden = tab !== 'network';
   $('#mtab-skills')!.hidden = tab !== 'skills';
   $('#mtab-routing')!.hidden = tab !== 'routing';
   if (typeof syncManageSortIcon === 'function') syncManageSortIcon(); // reflect the active tab's sort
-  // The Manage toolbar is shared across tabs, so the agent filter has to follow
-  // its own tab. Leaving it visible on Models/MCP/Skills would be a control that
-  // silently filters something you are not looking at.
+  // The Manage toolbar is shared across tabs, so the filter shows only on the
+  // tabs it filters (Agents, Models). Leaving it visible on MCP/Skills would be a
+  // control that silently filters something you are not looking at.
   const agentFilterEl = $<HTMLInputElement>('#agent-filter');
   if (agentFilterEl) {
-    agentFilterEl.hidden = tab !== 'agents';
-    if (tab !== 'agents' && agentFilter.value) {
+    agentFilterEl.hidden = tab !== 'agents' && tab !== 'models';
+    const what = tab === 'models' ? 'models' : 'agents';
+    agentFilterEl.placeholder = `Filter ${what}…`;
+    agentFilterEl.setAttribute('aria-label', `Filter ${what}`);
+    if (tab !== prevTab && agentFilter.value) {
       // Leaving a stale query behind means returning to Agents later and seeing
       // a truncated list with no visible cause.
       agentFilterEl.value = '';
@@ -147,7 +147,6 @@ export function switchManageTab(tab?: any) {
   }
   if (tab === 'agents') fetchAgents();
   else if (tab === 'models') fetchModels();
-  else if (tab === 'runners') void fetchRunners();
   else if (tab === 'network') void fetchNetwork();
   else if (tab === 'mcp') {
     fetchMcpServers();

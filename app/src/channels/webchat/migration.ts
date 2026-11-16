@@ -1439,3 +1439,221 @@ export const moduleWebchatWorkloadAppRouteEmails: Migration = {
     await db.exec(`ALTER TABLE workload_app_routes ADD COLUMN emails TEXT;`);
   },
 };
+
+/**
+ * The expiry a workload's agent was last reminded of (modules/workloads/
+ * reconcile.ts): the reminder a few days before goes out once per expiry,
+ * across restarts; extending sets a new expiry and so re-arms it.
+ */
+export const moduleWebchatWorkloadExpiryNotice: Migration = {
+  version: 233,
+  name: 'webchat-workload-expiry-notice',
+  async up(db) {
+    await db.exec(`ALTER TABLE workloads ADD COLUMN expiry_notice_for INTEGER;`);
+  },
+};
+
+/**
+ * When a published app was last opened through the gateway (modules/
+ * workloads/opened.ts, written at most every few minutes per app): an app
+ * people use is renewed before it expires (reconcile.ts).
+ */
+export const moduleWebchatWorkloadAppRouteOpened: Migration = {
+  version: 234,
+  name: 'webchat-workload-app-route-opened',
+  async up(db) {
+    await db.exec(`ALTER TABLE workload_app_routes ADD COLUMN last_opened_at INTEGER;`);
+  },
+};
+
+/**
+ * Who started a topic thread, so its creator can delete it as well as an
+ * owner. NULL for threads made before this (and for main/agent lanes): those
+ * stay owner-only.
+ */
+export const moduleWebchatThreadCreator: Migration = {
+  version: 235,
+  name: 'webchat-thread-creator',
+  async up(db) {
+    await db.exec(`ALTER TABLE webchat_threads ADD COLUMN created_by TEXT;`);
+  },
+};
+
+/**
+ * Machine sites and machines built on them by a provisioning backend. That
+ * feature is gone; the migration stays because installs have applied it, and
+ * nothing reads these tables any more.
+ */
+export const moduleWebchatMachines: Migration = {
+  version: 236,
+  name: 'webchat-machines',
+  async up(db) {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS machine_sites (
+        id             TEXT PRIMARY KEY,
+        backend        TEXT NOT NULL,
+        label          TEXT NOT NULL,
+        config_json    TEXT NOT NULL DEFAULT '{}',
+        sizes_json     TEXT NOT NULL DEFAULT '{}',
+        per_agent_cap  INTEGER NOT NULL DEFAULT 2,
+        install_cap    INTEGER NOT NULL DEFAULT 6,
+        auto_stop_at   TEXT,
+        enabled        INTEGER NOT NULL DEFAULT 1,
+        created_at     INTEGER NOT NULL,
+        updated_at     INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS machines (
+        id              TEXT PRIMARY KEY,
+        agent_group_id  TEXT NOT NULL,
+        site_id         TEXT NOT NULL,
+        name            TEXT NOT NULL,
+        size            TEXT NOT NULL,
+        state           TEXT NOT NULL,
+        handle          TEXT,
+        private_ip      TEXT,
+        op_id           TEXT NOT NULL,
+        last_error      TEXT,
+        expires_at      INTEGER,
+        created_by      TEXT,
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_machines_group ON machines (agent_group_id, state);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_machines_group_name_live
+        ON machines (agent_group_id, name) WHERE state <> 'deleted';
+    `);
+  },
+};
+
+/**
+ * Machines that joined NanoClaw (modules/machines/members.ts): one-time join
+ * tokens, and the machines themselves with their certificate, health and the
+ * capacity NanoClaw may use on them.
+ */
+export const moduleWebchatMachineMembers: Migration = {
+  version: 237,
+  name: 'webchat-machine-members',
+  async up(db) {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS machine_join_tokens (
+        token_hash  TEXT PRIMARY KEY,
+        role        TEXT NOT NULL,
+        created_by  TEXT,
+        created_at  INTEGER NOT NULL,
+        expires_at  INTEGER NOT NULL,
+        used_at     INTEGER,
+        machine_id  TEXT
+      );
+      CREATE TABLE IF NOT EXISTS machine_members (
+        id               TEXT PRIMARY KEY,
+        name             TEXT NOT NULL,
+        role             TEXT NOT NULL,
+        provider         TEXT NOT NULL,
+        state            TEXT NOT NULL,
+        facts_json       TEXT NOT NULL DEFAULT '{}',
+        health_json      TEXT,
+        peaks_json       TEXT NOT NULL DEFAULT '{}',
+        last_report      INTEGER,
+        cert_fp          TEXT,
+        cert_expires     INTEGER,
+        prev_cert_fp     TEXT,
+        prev_cert_expires INTEGER,
+        cap_memory_mb    INTEGER,
+        cap_cpus         REAL,
+        created_by       TEXT,
+        created_at       INTEGER NOT NULL,
+        updated_at       INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_machine_members_fp ON machine_members (cert_fp);
+    `);
+  },
+};
+
+/**
+ * Scaling, placement: an owner's pin of an agent's workloads to one node (a
+ * worker machine's id, or 'local' for central), and the one-line reason a
+ * workload sits where it does (shown on its card and in Admin → Machines).
+ */
+export const moduleWebchatWorkloadPlacement: Migration = {
+  version: 238,
+  name: 'webchat-workload-placement',
+  async up(db) {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS workload_pins (
+        agent_group_id TEXT PRIMARY KEY,
+        node           TEXT NOT NULL,
+        set_by         TEXT,
+        set_at         INTEGER NOT NULL
+      );
+      ALTER TABLE workloads ADD COLUMN placement_reason TEXT;
+    `);
+  },
+};
+
+/**
+ * Workers that run workloads: whether an owner turned workloads on for the
+ * machine (off for every machine, so nothing moves to a worker by itself),
+ * and its latest workload isolation check — 'ok', 'open' or 'unknown' — with
+ * when it ran (members.ts recordHealth). Placement uses a worker only while
+ * that check is 'ok' and recent.
+ */
+export const moduleWebchatMachineIsolation: Migration = {
+  version: 239,
+  name: 'webchat-machine-isolation',
+  async up(db) {
+    await db.exec(`
+      ALTER TABLE machine_members ADD COLUMN workloads_on INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE machine_members ADD COLUMN isolation TEXT;
+      ALTER TABLE machine_members ADD COLUMN isolation_at INTEGER;
+    `);
+  },
+};
+
+/**
+ * MCP tools whose every call waits for an owner's approval card (mcp-guard.ts).
+ * A server with any goes through the relay, which audits each call.
+ */
+export const moduleWebchatMcpApprovalTools: Migration = {
+  version: 240,
+  name: 'webchat-mcp-approval-tools',
+  async up(db) {
+    await db.exec(`ALTER TABLE webchat_mcp_servers ADD COLUMN approval_tools TEXT;`);
+  },
+};
+
+/**
+ * Idle workloads sleep (modules/workloads/sleep.ts): after how many hours
+ * without traffic (null = the default, 0 = never), and since when a stack is
+ * asleep (its containers stopped; the next request wakes it).
+ */
+export const moduleWebchatWorkloadSleep: Migration = {
+  version: 241,
+  name: 'webchat-workload-sleep',
+  async up(db) {
+    await db.exec(`
+      ALTER TABLE workloads ADD COLUMN sleep_after_h INTEGER;
+      ALTER TABLE workloads ADD COLUMN asleep_at INTEGER;
+    `);
+  },
+};
+
+/**
+ * The VS Code runner is gone: its paired machines and placements are dropped.
+ * Its earlier migrations (webchat-runners and the runner-* ALTERs) stay in the
+ * ordered list so upgraded installs keep a consistent history. The
+ * runner_image_* and runner_client_config columns on webchat_settings are left
+ * in place (nothing reads them); runner_egress_allowlist is the install-wide
+ * network allowlist and is still used.
+ */
+export const moduleWebchatDropRunners: Migration = {
+  version: 242,
+  name: 'webchat-drop-runners',
+  async up(db) {
+    await db.exec(`
+      DROP INDEX IF EXISTS idx_webchat_runner_placements_fp;
+      DROP TABLE IF EXISTS webchat_runner_placements;
+      DROP INDEX IF EXISTS idx_webchat_runner_machines_user;
+      DROP TABLE IF EXISTS webchat_runner_machines;
+    `);
+  },
+};

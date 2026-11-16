@@ -1,8 +1,16 @@
 diff --git a/src/cli/registry.ts b/src/cli/registry.ts
-index ec4c7de8..93865634 100644
+index ec4c7de8..812bea7c 100644
 --- a/src/cli/registry.ts
 +++ b/src/cli/registry.ts
-@@ -57,6 +57,13 @@ export type CommandDef<TArgs = unknown, TData = unknown> = {
+@@ -11,6 +11,7 @@
+ import { defineGuardedAction, type GuardedAction } from '../guard/index.js';
+ import { commandGuardSpec } from './guard.js';
+ import type { CallerContext } from './frame.js';
++import type { RequestFrame, ResponseFrame } from './frame.js';
+ 
+ /**
+  * Resources an agent under `cli_scope=group` may touch. Single source —
+@@ -57,6 +58,13 @@ export type CommandDef<TArgs = unknown, TData = unknown> = {
    /** Validates `frame.args` and produces the typed handler input. Throws on invalid. */
    parseArgs: (raw: Record<string, unknown>) => TArgs;
    handler: (args: TArgs, ctx: CallerContext) => Promise<TData>;
@@ -16,7 +24,7 @@ index ec4c7de8..93865634 100644
    /**
     * Optional presentational renderer. When set, dispatch attaches its output
     * as the response frame's `human` field (server-rendered once, printed
-@@ -67,6 +74,25 @@ export type CommandDef<TArgs = unknown, TData = unknown> = {
+@@ -67,6 +75,31 @@ export type CommandDef<TArgs = unknown, TData = unknown> = {
    formatHuman?: (data: TData) => string;
  };
  
@@ -37,8 +45,60 @@ index ec4c7de8..93865634 100644
 +   * do is not what the card showed.
 +   */
 +  pin?: Record<string, unknown>;
++  /**
++   * The precheck already did what was asked, because nothing in it needed
++   * an owner: the command answers with this as its result, and no card is
++   * made.
++   */
++  done?: unknown;
 +}
 +
  const registry = new Map<string, CommandDef>();
  const commandGuards = new Map<string, GuardedAction>();
  
+@@ -97,3 +130,45 @@ export function lookup(name: string): CommandDef | undefined {
+ export function listCommands(): CommandDef[] {
+   return [...registry.values()].sort((a, b) => a.name.localeCompare(b.name));
+ }
++
++/**
++ * Words for the requesting agent around an approval-gated command, from an
++ * installed surface. Both are optional: with none installed, or when one
++ * returns undefined or throws, dispatch keeps its own text.
++ *   - `pending`: told to the agent when its command is held for a card (who
++ *     can approve it, and where).
++ *   - `approved`: told to the agent once the approved command has run, in
++ *     place of the raw result.
++ */
++export interface ApprovalWords {
++  pending?: (ctx: CallerContext) => Promise<string | undefined>;
++  approved?: (outcome: { approvalId: string; frame: RequestFrame; response: ResponseFrame }) => string | undefined;
++}
++
++let approvalWords: ApprovalWords = {};
++
++export function registerApprovalWords(words: ApprovalWords): void {
++  approvalWords = words;
++}
++
++/** The installed pending note, or undefined. Never throws. */
++export async function approvalPendingWords(ctx: CallerContext): Promise<string | undefined> {
++  try {
++    return (await approvalWords.pending?.(ctx)) || undefined;
++  } catch {
++    return undefined;
++  }
++}
++
++/** The installed words for an approved command's outcome, or undefined. Never throws. */
++export function approvedResultWords(outcome: {
++  approvalId: string;
++  frame: RequestFrame;
++  response: ResponseFrame;
++}): string | undefined {
++  try {
++    return approvalWords.approved?.(outcome) || undefined;
++  } catch {
++    return undefined;
++  }
++}

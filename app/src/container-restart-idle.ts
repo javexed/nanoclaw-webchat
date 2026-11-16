@@ -41,8 +41,7 @@ function lastStatusKind(agentGroupId: string, sessionId: string): string | null 
   try {
     db = openOutboundDb(agentGroupId, sessionId);
     const row = db.prepare('SELECT kind FROM status_events ORDER BY seq DESC LIMIT 1').get() as
-      | { kind: string }
-      | undefined;
+      { kind: string } | undefined;
     return row?.kind ?? null;
   } catch {
     return null; // no feed table yet: nothing to say

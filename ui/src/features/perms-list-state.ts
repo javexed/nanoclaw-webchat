@@ -10,6 +10,8 @@ export const permsUsers = ref<any[]>([]);
 export const permsAgents = ref<any[]>([]);
 /** Lower-cased search box contents. */
 export const permsUserFilter = ref('');
+/** The Group matrix's search box, as typed. */
+export const permsGroupFilter = ref('');
 /** true = flat A–Z; false = the tiered you/owners/admins/rest order. */
 export const permsSortAz = ref(false);
 /** Selected row, drives both the .active class and which detail is shown. */

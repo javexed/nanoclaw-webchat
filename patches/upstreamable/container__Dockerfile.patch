@@ -1,8 +1,16 @@
 diff --git a/container/Dockerfile b/container/Dockerfile
-index d2889333..a19912ab 100644
+index 6d181d85..e8e8f2cd 100644
 --- a/container/Dockerfile
 +++ b/container/Dockerfile
-@@ -117,6 +117,24 @@ COPY cli-tools.json install-cli-tools.sh /tmp/
+@@ -58,6 +58,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+         ca-certificates \
+         curl \
+         git \
++        openssh-client \
+         poppler-utils \
+         tini \
+         unzip \
+@@ -119,11 +120,36 @@ COPY cli-tools.json install-cli-tools.sh /tmp/
  RUN --mount=type=cache,target=/root/.cache/pnpm \
      sh /tmp/install-cli-tools.sh /tmp/cli-tools.json
  
@@ -27,7 +35,19 @@ index d2889333..a19912ab 100644
  # ---- ncl CLI wrapper ----------------------------------------------------------
  # Actual script lives in the mounted source at /app/src/cli/ncl.ts.
  RUN printf '#!/bin/sh\nexec bun /app/src/cli/ncl.ts "$@"\n' > /usr/local/bin/ncl && \
-@@ -131,6 +149,14 @@ RUN mkdir -p /workspace/group /workspace/extra && \
+     chmod +x /usr/local/bin/ncl
+ 
++# ---- SSH ---------------------------------------------------------------------
++# Deploy keys: the host mounts a read-only view at /run/nanoclaw-ssh (Host
++# entries, pinned host keys, its ssh-agent socket; never a private key), so a
++# plain `ssh <name>` works. A missing file is ignored by Include. Destination-
++# constrained keys need OpenSSH 8.9 or later on this side (bookworm: 9.2).
++RUN printf 'Include /run/nanoclaw-ssh/config\n' > /etc/ssh/ssh_config.d/50-nanoclaw.conf
++
+ # ---- Entrypoint --------------------------------------------------------------
+ COPY entrypoint.sh /app/entrypoint.sh
+ RUN chmod +x /app/entrypoint.sh
+@@ -133,6 +159,14 @@ RUN mkdir -p /workspace/group /workspace/extra && \
      chown -R node:node /workspace && \
      chmod 777 /home/node
  

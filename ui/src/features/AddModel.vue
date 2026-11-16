@@ -5,6 +5,7 @@
  * (pull to an Ollama host from a short catalog, or add a model it has), or
  * Custom (the probe and manual form beside it, shown through onCustom).
  */
+import { normalizeOllamaModelName, sameOllamaModel } from './ollama-names.js';
 import { computed, onMounted, ref, watch } from 'vue';
 
 import { apiJson } from '../core/api.js';
@@ -168,9 +169,9 @@ async function loadInstalled() {
 }
 watch(host, () => void loadInstalled());
 
-const has = (tag: string) => installed.value.has(tag) || installed.value.has(`${tag}:latest`);
+const has = (tag: string) => [...installed.value].some((name) => sameOllamaModel(name, tag));
 
-const same = (a: string, b: string) => a === b || a === `${b}:latest`;
+const same = sameOllamaModel;
 
 /** The pull through the shared poller, so its line is the host cards' own; resolves on its outcome. */
 function waitForPull(url: string, tag: string): Promise<void> {
@@ -190,7 +191,7 @@ function waitForPull(url: string, tag: string): Promise<void> {
 }
 
 async function addLocal(rawTag: string) {
-  const tag = rawTag.trim();
+  const tag = normalizeOllamaModelName(rawTag);
   const url = serverUrl();
   if (!tag || !url) return;
   busy.value = true;
@@ -319,7 +320,7 @@ onMounted(async () => {
           @click="addLocal(otherTag)"
         >
           <BusyLabel
-            :busy="doing === `local:${otherTag.trim()}`"
+            :busy="doing === `local:${normalizeOllamaModelName(otherTag)}`"
             :label="has(otherTag.trim()) ? 'Add' : 'Install'"
             :busy-label="has(otherTag.trim()) ? 'Adding…' : 'Installing…'"
           />
@@ -332,5 +333,4 @@ onMounted(async () => {
       :on-cancel="(m: string) => void cancelOllamaPull(pullHost, m)"
     />
   </div>
-
 </template>

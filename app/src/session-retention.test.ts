@@ -8,9 +8,11 @@ import os from 'os';
 import path from 'path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { DATA, running } = vi.hoisted(() => ({
+const { DATA, running, failOnCall } = vi.hoisted(() => ({
   DATA: `/tmp/session-retention-test-${process.pid}`,
   running: new Set<string>(),
+  /** Session id -> the isContainerRunning call (1-based) that throws. */
+  failOnCall: new Map<string, number>(),
 }));
 
 vi.mock('./config.js', async (importOriginal) => ({
@@ -18,7 +20,14 @@ vi.mock('./config.js', async (importOriginal) => ({
   DATA_DIR: DATA,
 }));
 vi.mock('./container-runner.js', () => ({
-  isContainerRunning: (id: string) => running.has(id),
+  isContainerRunning: (id: string) => {
+    const n = failOnCall.get(id);
+    if (n !== undefined) {
+      if (n === 1) throw new Error(`probe failed for ${id}`);
+      failOnCall.set(id, n - 1);
+    }
+    return running.has(id);
+  },
 }));
 
 import { closeDb, getDb, initTestDb } from './db/connection.js';
@@ -111,6 +120,7 @@ beforeEach(async () => {
   await chat('mg-1', 'room-1');
   await chat('mg-pinned', 'room-pinned');
   running.clear();
+  failOnCall.clear();
 });
 
 afterEach(async () => {
@@ -280,6 +290,17 @@ describe('eligibility', () => {
     const report = await pruneSessions({ days: 90, now: NOW, graceMs: 0 });
     expect(ids(report)).toEqual([]);
     expect(await getSession('spent')).toMatchObject({ status: 'closed' });
+  });
+
+  it('reopens a session it closed when the second screen throws, and carries on', async () => {
+    await seedSession({ id: 'boom', thread: 't-boom', at: OLDER });
+    await seedSession({ id: 'boom-current', thread: 't-boom' });
+    await seedSession({ id: 'gone', mg: null, thread: 'system:tasks:g1', status: 'closed' });
+    failOnCall.set('boom', 2); // first screen passes, the second throws
+    const report = await pruneSessions({ days: 90, now: NOW, graceMs: 0 });
+    expect(report.errors).toEqual([{ sessionId: 'boom', error: expect.stringMatching(/probe failed/) }]);
+    expect(await getSession('boom')).toMatchObject({ status: 'active' });
+    expect(ids(report)).toEqual(['gone']);
   });
 
   it('counts only undelivered outbound mail as pending', async () => {

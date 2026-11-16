@@ -1,16 +1,16 @@
 diff --git a/src/modules/approvals/response-handler.test.ts b/src/modules/approvals/response-handler.test.ts
-index 07622d3d..b3c48bde 100644
+index c891de6b..444d33e7 100644
 --- a/src/modules/approvals/response-handler.test.ts
 +++ b/src/modules/approvals/response-handler.test.ts
-@@ -164,6 +164,7 @@ describe('approval response authorization', () => {
-       threadId: null,
+@@ -242,6 +242,7 @@ describe('approval response authorization', () => {
      };
  
+     const accepted = vi.fn();
 +    // BOTH in flight at once — the point of the test is the in-process claim.
-     const first = handleApprovalsResponse(response);
-     const second = handleApprovalsResponse(response);
+     const first = handleApprovalsResponse({ ...response, accepted });
+     const second = handleApprovalsResponse({ ...response, accepted });
      await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
-@@ -174,6 +175,57 @@ describe('approval response authorization', () => {
+@@ -255,6 +256,57 @@ describe('approval response authorization', () => {
      expect(await getPendingApproval('appr-race')).toBeUndefined();
    });
  
@@ -68,7 +68,7 @@ index 07622d3d..b3c48bde 100644
    it('allows global admins to resolve approvals without a session-scoped agent group', async () => {
      await upsertUser({
        id: 'telegram:global-admin',
-@@ -262,4 +314,193 @@ describe('approval response authorization', () => {
+@@ -343,4 +395,193 @@ describe('approval response authorization', () => {
      expect(handler).toHaveBeenCalledTimes(1);
      expect(await getPendingApproval('appr-4')).toBeUndefined();
    });

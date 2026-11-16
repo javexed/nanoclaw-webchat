@@ -40,9 +40,12 @@ const route: AppRoute = {
   createdBy: 'agent:ag-1',
   createdAt: 0,
   updatedAt: 0,
+  lastOpenedAt: null,
 };
 let live = true;
 let routeOn = true;
+let use: 'running' | 'starting' | 'failed' = 'running';
+const opened: string[] = [];
 
 const server = http.createServer(
   internalHandler(() => SECRET, {
@@ -51,6 +54,8 @@ const server = http.createServer(
     userExists: async (u) => u.startsWith('webchat:tailscale:'),
     isOwner: async () => false,
     canAccessAgentGroup: async (u) => u === 'webchat:tailscale:alice@x.example',
+    opened: async (r) => void opened.push(r.app),
+    waking: async () => use,
   }),
 );
 let base = '';
@@ -67,7 +72,9 @@ afterAll(() => {
 beforeEach(() => {
   live = true;
   routeOn = true;
+  use = 'running';
   audits.length = 0;
+  opened.length = 0;
   __clearPublishingRoutesForTest();
   registerPublishingRoute({
     kind: 'tailnet',
@@ -97,6 +104,43 @@ const check = (headers: Record<string, string>, p = '/gateway/check', method = '
   });
 
 describe('gateway check', () => {
+  it('a sleeping app answers a self-reloading Starting page while it wakes, then lets people in', async () => {
+    use = 'starting';
+    const page = await check({ 'Tailscale-User-Login': 'alice@x.example', Accept: 'text/html' });
+    expect(page.status).toBe(503);
+    expect(page.headers.get('retry-after')).toBe('3');
+    expect(await page.text()).toMatch(/http-equiv="refresh".*Starting/s);
+    expect(page.headers.get('x-nanoclaw-identity')).toBeNull();
+    const api = await check({ 'Tailscale-User-Login': 'alice@x.example' });
+    expect(await api.text()).toBe('Starting\n');
+    use = 'running';
+    expect((await check({ 'Tailscale-User-Login': 'alice@x.example' })).status).toBe(200);
+  });
+
+  it('a wake that failed answers that it could not start, without reloading', async () => {
+    use = 'failed';
+    const page = await check({ 'Tailscale-User-Login': 'alice@x.example', Accept: 'text/html' });
+    expect(page.status).toBe(503);
+    const body = await page.text();
+    expect(body).toMatch(/could not start/);
+    expect(body).not.toMatch(/refresh/);
+  });
+
+  it('wakes nothing for someone who may not open the app', async () => {
+    use = 'starting';
+    expect((await check({ 'Tailscale-User-Login': 'carol3@x.example' })).status).toBe(403);
+    expect((await check({})).status).toBe(401);
+  });
+
+  it('reports an app as opened only when it let someone in', async () => {
+    expect((await check({ 'Tailscale-User-Login': 'carol3@x.example' })).status).toBe(403);
+    expect((await check({})).status).toBe(401);
+    expect(opened).toEqual([]);
+    expect((await check({ 'Tailscale-User-Login': 'alice@x.example' })).status).toBe(200);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(opened).toEqual(['notes']);
+  });
+
   it('lets a member in with a signed identity for this app only', async () => {
     const r = await check({ 'Tailscale-User-Login': 'alice@x.example' });
     expect(r.status).toBe(200);

@@ -16,7 +16,7 @@
 #   scripts/regen-patches.sh <composed-tree> <file> ...
 
 
-## UPSTREAMABLE — candidate upstream PRs (75)
+## UPSTREAMABLE — candidate upstream PRs (77)
 
 .claude/skills/add-onecli/scripts/setup.ts
     keep OneCLI's management API and Postgres off the docker bridge on Linux.
@@ -54,6 +54,10 @@ container/agent-runner/package.json
     no minimumReleaseAge policy, so a caret held only by bun.lock lets one
     non-frozen install float the SDK; upstream's CLAUDE.md already says to bump
     it deliberately. No lockfile change.
+src/channels/chat-sdk-bridge.ts
+    the Discord Gateway's loopback webhook server ends idle keep-alive sockets
+    itself (1 s), so an idle client socket never outlives its test and
+    trips Node's bundled-undici parser-timer crash on slower suites
 src/delivery.ts
     a busy SQLite lock on a session mailbox read skips that session for one poll (warned once a minute) instead of logging an error; see app/src/mailbox-busy.ts
 src/providers/provider-container-registry.ts
@@ -102,6 +106,9 @@ container/agent-runner/src/upload-trace.test.ts
     abort signal so the test loop is stoppable
 pnpm-workspace.yaml
     dependency policy tweaks
+scripts/add-resend-steps.test.ts
+    give the throwaway root a .git, so the gitless-deploy fallback in
+    skill-apply.ts does not replace the stubbed git (rides with that patch)
 scripts/skill-apply.test.ts
     tests for masking + gitless fallback; scratch dirs removed in afterAll
 scripts/skill-apply.ts
@@ -187,7 +194,11 @@ src/container-runner.ts
     Product touchpoint: the instruction guard's spawn check
     (guardStandingInstructions) runs after initGroupFilesystem, before
     buildMounts composes the project document; it needs the session to card
-    the right approvers and tell the agent its edit is held.
+    the right approvers and tell the agent its edit is held. buildMounts also
+    mounts the guard's approved snapshot read-only at /app/.instruction-baseline
+    for the runner's per-turn check.
+    It also mounts the user-scope skills directory read-only over the
+    read-write Claude home (userSkillsReadOnlyMount): only the host writes skills.
 src/db/agent-groups.ts
     lifecycle status setter with validation
 src/db/db-v2.test.ts
@@ -226,7 +237,7 @@ src/modules/approvals/primitive.ts
 src/modules/approvals/response-handler.test.ts
     tests for the double-fire guard
 src/modules/approvals/response-handler.ts
-    double-fire guard on the approve path (slow handler tempts a second click); session-less rows (runner pairing) routed to sessionless.ts
+    double-fire guard on the approve path (slow handler tempts a second click); session-less rows (workload approval cards) routed to sessionless.ts
     checkApprovalClick: a refusal carries a reason the channel can show; an owner may decide a card named for someone else (audited as approval.owner_override)
 src/modules/self-mod/apply.ts
     respawn ALL of a group's sessions after install/mcp change, not just one
@@ -310,7 +321,7 @@ container/CLAUDE.md
 container/agent-runner/src/config.ts
     lenientOutput + learning config surface read by the runner
 container/agent-runner/src/index.ts
-    module imports (status feed, learning, send-file hint, task-run marks); the prompt addendum
+    module imports (status feed, learning, send-file hint, task-run marks, instruction guard); the prompt addendum
     is built after the provider so it can consult supportsMcpTools; records the
     built addendum and memory section in session state (context-snapshot.ts)
 container/agent-runner/src/mcp-tools/cli.instructions.md
@@ -365,6 +376,11 @@ src/cli/registry.ts
     text above the command line, and pins values (hashes, digests) into the
     approved arguments. Used by `ncl workloads up|delete|restore`. A seam
     registry for card text would retire the three cli patches.
+    Also registerApprovalWords: an installed surface's words for the agent
+    around an approval-gated command (who can approve it and where, while it
+    waits; a readable, redacted outcome once it ran). With none installed, or
+    one that throws, dispatch keeps its own text. Webchat's lives in
+    app/src/modules/approvals/words.ts.
 src/cli/crud.ts
     passes a custom operation's `precheck` through registerResource
 src/cli/dispatch.ts
@@ -373,11 +389,15 @@ src/cli/dispatch.ts
     by the approved replay); the precheck's title/summary/detail go above the
     unchanged command line through a spread-last override of title/question,
     with its own card-length check
+    asks the approval words (registry.ts) for the held reply and for the
+    approved outcome before its own text; insertions only, the original lines
+    still run when no words are installed
 src/cli/dispatch.test.ts
     tests for the precheck: refusal before a card, words above the full
     command line, pinned args overriding the agent's own
 src/modules/approvals/index.ts
     approval-TTL expiry on the sweep seam
+    loads the approval words (words.ts) so they register on the CLI seam
     re-exports checkApprovalClick for channels that answer their caller
 src/modules/index.ts
     module barrel registrations

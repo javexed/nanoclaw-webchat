@@ -51,7 +51,7 @@ vi.mock('./docker.js', async (orig) => {
 });
 vi.mock('./builder.js', async (orig) => ({
   ...(await orig<typeof import('./builder.js')>()),
-  ensureBuilder: async () => ({ name: 'b', proxy: 'http://build:build@192.0.2.1:1' }),
+  ensureBuilder: async () => ({ name: 'b', proxy: 'http://build:build@192.0.2.1:1', agentGroupId: 'ag' }),
   buildImage: async (_b: unknown, _spec: unknown, name: string) => {
     calls.built.push(name);
   },
@@ -154,6 +154,51 @@ describe('a redeploy without a card', () => {
   });
 });
 
+describe('an up that changes nothing approved', () => {
+  it('needs no card; a new image, more memory or the build limit does', async () => {
+    const c = await control.checkWorkload('ag-1', 'notes', 'compose.yml');
+    expect(await control.withinApproval('ag-1', c)).toBe(false);
+    await control.upWorkload('ag-1', 'notes', 'compose.yml', 'agent:ag-1', control.approvalPin(c));
+    write('services:\n  web:\n    image: nginx:1.27\n    environment: { A: "1" }\n');
+    expect(await control.withinApproval('ag-1', await control.checkWorkload('ag-1', 'notes', 'compose.yml'))).toBe(
+      true,
+    );
+    digest = D2;
+    expect(await control.withinApproval('ag-1', await control.checkWorkload('ag-1', 'notes', 'compose.yml'))).toBe(
+      false,
+    );
+    digest = D1;
+    write('services:\n  web:\n    image: nginx:1.27\n    mem_limit: 1g\n');
+    expect(await control.withinApproval('ag-1', await control.checkWorkload('ag-1', 'notes', 'compose.yml'))).toBe(
+      false,
+    );
+  });
+});
+
+describe('an up without a card is exactly what redeploy would take', () => {
+  it('env and command are not pinned by either; shape and size are pinned by both', async () => {
+    const c = await control.checkWorkload('ag-1', 'notes', 'compose.yml');
+    await control.upWorkload('ag-1', 'notes', 'compose.yml', 'agent:ag-1', control.approvalPin(c));
+    const cases: Array<[string, string]> = [
+      ['env', 'services:\n  web:\n    image: nginx:1.27\n    environment: { MODE: debug }\n'],
+      ['command', 'services:\n  web:\n    image: nginx:1.27\n    command: ["nginx", "-g", "daemon off;"]\n'],
+      ['capability', 'services:\n  web:\n    image: nginx:1.27\n    cap_add: [SETUID]\n'],
+      ['memory', 'services:\n  web:\n    image: nginx:1.27\n    mem_limit: 1g\n'],
+      ['image', 'services:\n  web:\n    image: nginx:1.28\n'],
+    ];
+    for (const [what, text] of cases) {
+      write(text);
+      const within = await control.withinApproval('ag-1', await control.checkWorkload('ag-1', 'notes', 'compose.yml'));
+      const redeploys = await control.redeployWorkload('ag-1', 'notes', 'compose.yml').then(
+        () => true,
+        () => false,
+      );
+      expect(within, what).toBe(redeploys);
+      expect(within, what).toBe(what === 'env' || what === 'command');
+    }
+  });
+});
+
 describe('confined builds', () => {
   const BUILD = 'services:\n  api:\n    build: { context: ./api, args: { MODE: prod } }\n';
 
@@ -217,5 +262,48 @@ describe('the rest of a workload’s life', () => {
     expect(control.parsePs('{"Service":"web","State":"running"}\n{"Service":"db","State":"exited"}')).toHaveLength(2);
     expect(control.parsePs('[{"Service":"web"}]')).toEqual([{ Service: 'web' }]);
     expect(control.parsePs('')).toEqual([]);
+  });
+});
+
+describe('a person’s Redeploy and Extend (Agent → Apps)', () => {
+  it('redeploys what is on record, whatever the file on disk says, and refuses while workloads are off', async () => {
+    const c = await control.checkWorkload('ag-1', 'notes', 'compose.yml');
+    await control.upWorkload('ag-1', 'notes', 'compose.yml', 'agent:ag-1', control.approvalPin(c));
+    write('services:\n  web:\n    image: evil.example/web:1\n');
+    calls.compose = [];
+    const w = await control.redeployApproved('ag-1', 'notes');
+    expect(w.state).toBe('running');
+    expect(stackFile(w.id).services.web.image).toBe(`nginx:1.27@${D1}`);
+    expect(calls.compose.some((a) => a[0] === 'up')).toBe(true);
+    vi.stubEnv('NANOCLAW_WORKLOADS', '');
+    await expect(control.redeployApproved('ag-1', 'notes')).rejects.toThrow(/workloads are off/);
+  });
+
+  it('`ncl workloads extend`: an agent asks with a card that says the dates; the host extends at once', async () => {
+    const { lookup } = await import('../../cli/registry.js');
+    await import('./cli.js');
+    const c = await control.checkWorkload('ag-1', 'notes', 'compose.yml');
+    await control.upWorkload('ag-1', 'notes', 'compose.yml', 'agent:ag-1', control.approvalPin(c));
+    const ext = lookup('workloads-extend')!;
+    expect(ext.access).toBe('approval');
+    const agent = { caller: 'agent' as const, sessionId: 's1', agentGroupId: 'ag-1', messagingGroupId: 'mg1' };
+    // Fresh from up: already 30 days out, so there is nothing to ask for.
+    await expect(ext.precheck!(ext.parseArgs({ name: 'notes' }), agent)).rejects.toThrow(/already runs until/);
+    const w = (await findWorkload('ag-1', 'notes'))!;
+    const { updateWorkload } = await import('./store.js');
+    await updateWorkload(w.id, { expiresAt: Date.now() + 2 * 86_400_000 });
+    const card = (await ext.precheck!(ext.parseArgs({ name: 'notes', group: 'ag-other' }), agent)) as {
+      title: string;
+      summary: string;
+      detail: string;
+    };
+    expect(card.title).toBe('Extend workload notes');
+    expect(card.summary).toBe('{agent} wants to keep the workload "notes" running for 30 more days.');
+    expect(card.detail).toMatch(/^Expires: \d{1,2} \w{3} → \d{1,2} \w{3}\. Nothing else changes\.$/);
+    await expect(ext.precheck!(ext.parseArgs({ name: 'ghost' }), agent)).rejects.toThrow(/no workload named/);
+    const out = (await ext.handler(ext.parseArgs({ name: 'notes', group: 'ag-1' }), { caller: 'host' } as never)) as {
+      expires: string;
+    };
+    expect(new Date(out.expires).getTime()).toBeGreaterThan(Date.now() + 29 * 86_400_000);
   });
 });
