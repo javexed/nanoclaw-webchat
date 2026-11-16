@@ -20027,9 +20027,9 @@ var _hoisted_49$1 = {
 };
 var _hoisted_50$1 = { class: "app-drawer-head" };
 var _hoisted_51$1 = { class: "app-drawer-row" };
-var _hoisted_52 = ["onKeydown"];
-var _hoisted_53 = ["disabled", "onClick"];
-var _hoisted_54 = {
+var _hoisted_52$1 = ["onKeydown"];
+var _hoisted_53$1 = ["disabled", "onClick"];
+var _hoisted_54$1 = {
 	key: 0,
 	class: "cred-hint err"
 };
@@ -20288,13 +20288,13 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 								spellcheck: "false",
 								placeholder: "name@example.com, …",
 								"aria-label": "Email addresses"
-							}, null, 40, _hoisted_52), [[vModelText, peopleText.value]]), createElementVNode("button", {
+							}, null, 40, _hoisted_52$1), [[vModelText, peopleText.value]]), createElementVNode("button", {
 								class: "btn btn-primary",
 								type: "button",
 								disabled: !people.value.emails.length || people.value.bad.length > 0 || void 0,
 								onClick: ($event) => unref(savePeople)(r, people.value.emails)
-							}, " Save ", 8, _hoisted_53)]),
-							people.value.bad.length ? (openBlock(), createElementBlock("p", _hoisted_54, "Not an email address: " + toDisplayString(people.value.bad.join(", ")), 1)) : createCommentVNode("", true)
+							}, " Save ", 8, _hoisted_53$1)]),
+							people.value.bad.length ? (openBlock(), createElementBlock("p", _hoisted_54$1, "Not an email address: " + toDisplayString(people.value.bad.join(", ")), 1)) : createCommentVNode("", true)
 						]))], 64)) : createCommentVNode("", true)
 					], 8, _hoisted_14$6);
 				}), 128))]))
@@ -24748,7 +24748,11 @@ var _hoisted_32 = {
 };
 var _hoisted_33 = { class: "publishing-actions" };
 var _hoisted_34 = ["disabled"];
-var _hoisted_35 = { class: "publishing-route" };
+var _hoisted_35 = {
+	key: 1,
+	id: "publishing-ports",
+	class: "publishing-route"
+};
 var _hoisted_36 = { class: "setting-group install-row" };
 var _hoisted_37 = { class: "setting-toggle" };
 var _hoisted_38 = ["checked", "disabled"];
@@ -24758,22 +24762,36 @@ var _hoisted_39 = {
 };
 var _hoisted_40 = ["title"];
 var _hoisted_41 = ["title"];
-var _hoisted_42 = { class: "publishing-fields" };
-var _hoisted_43 = { class: "form-label" };
-var _hoisted_44 = ["onUpdate:modelValue", "placeholder"];
-var _hoisted_45 = {
+var _hoisted_42 = {
+	key: 0,
+	class: "publishing-fix"
+};
+var _hoisted_43 = { class: "publishing-route" };
+var _hoisted_44 = { class: "setting-group install-row" };
+var _hoisted_45 = { class: "setting-toggle" };
+var _hoisted_46 = ["checked", "disabled"];
+var _hoisted_47 = {
 	key: 0,
 	class: "cred-hint err"
 };
-var _hoisted_46 = ["disabled"];
-var _hoisted_47 = { class: "secret-form" };
-var _hoisted_48 = { class: "secret-field" };
-var _hoisted_49 = {
+var _hoisted_48 = ["title"];
+var _hoisted_49 = ["title"];
+var _hoisted_50 = { class: "publishing-fields" };
+var _hoisted_51 = { class: "form-label" };
+var _hoisted_52 = ["onUpdate:modelValue", "placeholder"];
+var _hoisted_53 = {
 	key: 0,
 	class: "cred-hint err"
 };
-var _hoisted_50 = { class: "publishing-actions" };
-var _hoisted_51 = ["disabled"];
+var _hoisted_54 = ["disabled"];
+var _hoisted_55 = { class: "secret-form" };
+var _hoisted_56 = { class: "secret-field" };
+var _hoisted_57 = {
+	key: 0,
+	class: "cred-hint err"
+};
+var _hoisted_58 = { class: "publishing-actions" };
+var _hoisted_59 = ["disabled"];
 // src/features/PublishingPanel.vue
 var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 	__name: "PublishingPanel",
@@ -24784,7 +24802,8 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 		* reads Ready or names the one thing missing on this host, and the command that
 		* fixes it with a copy button. Then per route: a switch, its settings (only
 		* while on), Connect and a status line that reads Connected or names the one
-		* thing missing. Secrets typed here are sent once and cleared; nothing reads
+		* thing missing. Tailnet ports has no settings or credential: its status line
+		* and, while ports are missing, the setup command with a copy button. Secrets typed here are sent once and cleared; nothing reads
 		* them back.
 		*/
 		const view = computed(() => publishingView.value);
@@ -24852,13 +24871,18 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 				busy.value = "";
 			}
 		}
+		const ROUTE_NAME = {
+			tailnet: "Tailnet",
+			cloudflare: "Cloudflare",
+			ports: "Tailnet ports"
+		};
 		async function toggle(kind, e) {
 			const el = e.target;
 			const on = el.checked;
 			el.checked = !on;
 			if (!on) {
 				if (!await showConfirmModal({
-					title: `Turn off ${kind === "tailnet" ? "Tailnet" : "Cloudflare"}?`,
+					title: `Turn off ${ROUTE_NAME[kind]}?`,
 					body: "Apps published on it stop opening.",
 					confirmLabel: "Turn off",
 					destructive: true
@@ -24932,7 +24956,7 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 		return (_ctx, _cache) => {
 			return view.value ? (openBlock(), createElementBlock("div", _hoisted_1$8, [
 				createElementVNode("div", _hoisted_2$7, [
-					createElementVNode("div", _hoisted_3$7, [_cache[12] || (_cache[12] = createElementVNode("span", { class: "setting-label" }, "Workloads", -1)), createElementVNode("label", _hoisted_4$6, [createElementVNode("input", {
+					createElementVNode("div", _hoisted_3$7, [_cache[13] || (_cache[13] = createElementVNode("span", { class: "setting-label" }, "Workloads", -1)), createElementVNode("label", _hoisted_4$6, [createElementVNode("input", {
 						type: "checkbox",
 						"aria-label": "Workloads",
 						checked: view.value.workloads.on,
@@ -24949,7 +24973,7 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 							text: view.value.workloads.status.fix,
 							label: "Copy command"
 						}, null, 8, ["text"])])) : createCommentVNode("", true),
-						createElementVNode("div", _hoisted_11$4, [_cache[13] || (_cache[13] = createElementVNode("span", { class: "setting-label" }, "Confined builds", -1)), createElementVNode("label", _hoisted_12$4, [createElementVNode("input", {
+						createElementVNode("div", _hoisted_11$4, [_cache[14] || (_cache[14] = createElementVNode("span", { class: "setting-label" }, "Confined builds", -1)), createElementVNode("label", _hoisted_12$4, [createElementVNode("input", {
 							type: "checkbox",
 							"aria-label": "Confined builds",
 							checked: view.value.builds.on,
@@ -24960,7 +24984,7 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 						view.value.builds.on ? (openBlock(), createElementBlock(Fragment, { key: 2 }, [createElementVNode("p", {
 							class: normalizeClass(["publishing-status", { ok: view.value.builds.status.ok }]),
 							title: view.value.builds.status.detail || void 0
-						}, [_cache[14] || (_cache[14] = createElementVNode("span", {
+						}, [_cache[15] || (_cache[15] = createElementVNode("span", {
 							class: "publishing-dot",
 							"aria-hidden": "true"
 						}, null, -1)), createTextVNode(toDisplayString(view.value.builds.status.text), 1)], 10, _hoisted_15$4), view.value.builds.status.fix ? (openBlock(), createElementBlock("p", _hoisted_16$4, [createElementVNode("code", null, toDisplayString(view.value.builds.status.fix), 1), createVNode(CopyIconButton_default, {
@@ -24975,7 +24999,7 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 					title: view.value.gate.detail || void 0
 				}, toDisplayString(view.value.gate.text), 9, _hoisted_17$4)) : createCommentVNode("", true),
 				createElementVNode("div", _hoisted_18$3, [
-					createElementVNode("div", _hoisted_19$3, [_cache[15] || (_cache[15] = createElementVNode("span", { class: "setting-label" }, "Tailnet", -1)), createElementVNode("label", _hoisted_20$3, [createElementVNode("input", {
+					createElementVNode("div", _hoisted_19$3, [_cache[16] || (_cache[16] = createElementVNode("span", { class: "setting-label" }, "Tailnet", -1)), createElementVNode("label", _hoisted_20$3, [createElementVNode("input", {
 						type: "checkbox",
 						"aria-label": "Tailnet",
 						checked: view.value.tailnet.on,
@@ -24987,7 +25011,7 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 						createElementVNode("p", {
 							class: normalizeClass(["publishing-status", { ok: view.value.tailnet.status.ok }]),
 							title: view.value.tailnet.status.detail || void 0
-						}, [_cache[16] || (_cache[16] = createElementVNode("span", {
+						}, [_cache[17] || (_cache[17] = createElementVNode("span", {
 							class: "publishing-dot",
 							"aria-hidden": "true"
 						}, null, -1)), createTextVNode(toDisplayString(view.value.tailnet.status.text), 1)], 10, _hoisted_23$1),
@@ -24998,7 +25022,7 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 								title: w.detail
 							}, toDisplayString(w.text), 9, _hoisted_24$1);
 						}), 128)),
-						createElementVNode("div", _hoisted_25$1, [createElementVNode("label", _hoisted_26$1, [_cache[17] || (_cache[17] = createElementVNode("span", { class: "form-label" }, "Tailnet name", -1)), withDirectives(createElementVNode("input", {
+						createElementVNode("div", _hoisted_25$1, [createElementVNode("label", _hoisted_26$1, [_cache[18] || (_cache[18] = createElementVNode("span", { class: "form-label" }, "Tailnet name", -1)), withDirectives(createElementVNode("input", {
 							"onUpdate:modelValue": _cache[3] || (_cache[3] = ($event) => tsDomain.value = $event),
 							type: "text",
 							placeholder: "tail1234.ts.net",
@@ -25022,13 +25046,13 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 							type: "button",
 							onClick: _cache[4] || (_cache[4] = ($event) => openConnect("tailnet"))
 						}, toDisplayString(unref(connectLabel)(view.value.tailnet.status)), 1)) : (openBlock(), createElementBlock(Fragment, { key: 2 }, [
-							createElementVNode("div", _hoisted_29$1, [createElementVNode("label", _hoisted_30, [_cache[18] || (_cache[18] = createElementVNode("span", { class: "form-label" }, "Client ID", -1)), withDirectives(createElementVNode("input", {
+							createElementVNode("div", _hoisted_29$1, [createElementVNode("label", _hoisted_30, [_cache[19] || (_cache[19] = createElementVNode("span", { class: "form-label" }, "Client ID", -1)), withDirectives(createElementVNode("input", {
 								"onUpdate:modelValue": _cache[5] || (_cache[5] = ($event) => secret.clientId = $event),
 								type: "text",
 								autocomplete: "off",
 								autocapitalize: "none",
 								spellcheck: "false"
-							}, null, 512), [[vModelText, secret.clientId]])]), createElementVNode("label", _hoisted_31, [_cache[19] || (_cache[19] = createElementVNode("span", { class: "form-label" }, "Client secret", -1)), withDirectives(createElementVNode("input", {
+							}, null, 512), [[vModelText, secret.clientId]])]), createElementVNode("label", _hoisted_31, [_cache[20] || (_cache[20] = createElementVNode("span", { class: "form-label" }, "Client secret", -1)), withDirectives(createElementVNode("input", {
 								"onUpdate:modelValue": _cache[6] || (_cache[6] = ($event) => secret.clientSecret = $event),
 								type: "password",
 								placeholder: "tskey-client-…",
@@ -25036,7 +25060,7 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 								spellcheck: "false"
 							}, null, 512), [[vModelText, secret.clientSecret]])])]),
 							errors["tailnet.clientId"] || errors["tailnet.clientSecret"] ? (openBlock(), createElementBlock("p", _hoisted_32, toDisplayString(errors["tailnet.clientId"] || errors["tailnet.clientSecret"]), 1)) : createCommentVNode("", true),
-							_cache[20] || (_cache[20] = createElementVNode("p", { class: "cred-hint" }, "Never shown again", -1)),
+							_cache[21] || (_cache[21] = createElementVNode("p", { class: "cred-hint" }, "Never shown again", -1)),
 							createElementVNode("div", _hoisted_33, [createElementVNode("button", {
 								class: "btn btn-primary",
 								type: "button",
@@ -25054,36 +25078,66 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 						], 64))
 					], 64)) : createCommentVNode("", true)
 				]),
-				createElementVNode("div", _hoisted_35, [
-					createElementVNode("div", _hoisted_36, [_cache[21] || (_cache[21] = createElementVNode("span", { class: "setting-label" }, "Cloudflare", -1)), createElementVNode("label", _hoisted_37, [createElementVNode("input", {
+				view.value.ports ? (openBlock(), createElementBlock("div", _hoisted_35, [
+					createElementVNode("div", _hoisted_36, [_cache[22] || (_cache[22] = createElementVNode("span", { class: "setting-label" }, "Tailnet ports", -1)), createElementVNode("label", _hoisted_37, [createElementVNode("input", {
 						type: "checkbox",
-						"aria-label": "Cloudflare",
-						checked: view.value.cloudflare.on,
-						disabled: busy.value === "cloudflare-switch" || void 0,
-						onChange: _cache[8] || (_cache[8] = ($event) => toggle("cloudflare", $event))
+						"aria-label": "Tailnet ports",
+						checked: view.value.ports.on,
+						disabled: busy.value === "ports-switch" || void 0,
+						onChange: _cache[8] || (_cache[8] = ($event) => toggle("ports", $event))
 					}, null, 40, _hoisted_38)])]),
-					errors["cloudflare.on"] || errors["cloudflare.form"] ? (openBlock(), createElementBlock("p", _hoisted_39, toDisplayString(errors["cloudflare.on"] || errors["cloudflare.form"]), 1)) : createCommentVNode("", true),
-					view.value.cloudflare.on ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [
+					errors["ports.on"] || errors["ports.form"] ? (openBlock(), createElementBlock("p", _hoisted_39, toDisplayString(errors["ports.on"] || errors["ports.form"]), 1)) : createCommentVNode("", true),
+					view.value.ports.on ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [
 						createElementVNode("p", {
-							class: normalizeClass(["publishing-status", { ok: view.value.cloudflare.status.ok }]),
-							title: view.value.cloudflare.status.detail || void 0
-						}, [_cache[22] || (_cache[22] = createElementVNode("span", {
+							class: normalizeClass(["publishing-status", { ok: view.value.ports.status.ok }]),
+							title: view.value.ports.status.detail || void 0
+						}, [_cache[23] || (_cache[23] = createElementVNode("span", {
 							class: "publishing-dot",
 							"aria-hidden": "true"
-						}, null, -1)), createTextVNode(toDisplayString(view.value.cloudflare.status.text), 1)], 10, _hoisted_40),
-						(openBlock(true), createElementBlock(Fragment, null, renderList(view.value.cloudflare.status.warnings, (w) => {
+						}, null, -1)), createTextVNode(toDisplayString(view.value.ports.status.text), 1)], 10, _hoisted_40),
+						(openBlock(true), createElementBlock(Fragment, null, renderList(view.value.ports.status.warnings, (w) => {
 							return openBlock(), createElementBlock("p", {
 								key: w.detail,
 								class: "cred-hint",
 								title: w.detail
 							}, toDisplayString(w.text), 9, _hoisted_41);
 						}), 128)),
-						createElementVNode("div", _hoisted_42, [(openBlock(), createElementBlock(Fragment, null, renderList(CF_FIELDS, (f) => {
+						view.value.ports.fix ? (openBlock(), createElementBlock("p", _hoisted_42, [createElementVNode("code", null, toDisplayString(view.value.ports.fix), 1), createVNode(CopyIconButton_default, {
+							text: view.value.ports.fix,
+							label: "Copy command"
+						}, null, 8, ["text"])])) : createCommentVNode("", true)
+					], 64)) : createCommentVNode("", true)
+				])) : createCommentVNode("", true),
+				createElementVNode("div", _hoisted_43, [
+					createElementVNode("div", _hoisted_44, [_cache[24] || (_cache[24] = createElementVNode("span", { class: "setting-label" }, "Cloudflare", -1)), createElementVNode("label", _hoisted_45, [createElementVNode("input", {
+						type: "checkbox",
+						"aria-label": "Cloudflare",
+						checked: view.value.cloudflare.on,
+						disabled: busy.value === "cloudflare-switch" || void 0,
+						onChange: _cache[9] || (_cache[9] = ($event) => toggle("cloudflare", $event))
+					}, null, 40, _hoisted_46)])]),
+					errors["cloudflare.on"] || errors["cloudflare.form"] ? (openBlock(), createElementBlock("p", _hoisted_47, toDisplayString(errors["cloudflare.on"] || errors["cloudflare.form"]), 1)) : createCommentVNode("", true),
+					view.value.cloudflare.on ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [
+						createElementVNode("p", {
+							class: normalizeClass(["publishing-status", { ok: view.value.cloudflare.status.ok }]),
+							title: view.value.cloudflare.status.detail || void 0
+						}, [_cache[25] || (_cache[25] = createElementVNode("span", {
+							class: "publishing-dot",
+							"aria-hidden": "true"
+						}, null, -1)), createTextVNode(toDisplayString(view.value.cloudflare.status.text), 1)], 10, _hoisted_48),
+						(openBlock(true), createElementBlock(Fragment, null, renderList(view.value.cloudflare.status.warnings, (w) => {
+							return openBlock(), createElementBlock("p", {
+								key: w.detail,
+								class: "cred-hint",
+								title: w.detail
+							}, toDisplayString(w.text), 9, _hoisted_49);
+						}), 128)),
+						createElementVNode("div", _hoisted_50, [(openBlock(), createElementBlock(Fragment, null, renderList(CF_FIELDS, (f) => {
 							return createElementVNode("label", {
 								key: f.key,
 								class: "publishing-field"
 							}, [
-								createElementVNode("span", _hoisted_43, toDisplayString(f.label), 1),
+								createElementVNode("span", _hoisted_51, toDisplayString(f.label), 1),
 								withDirectives(createElementVNode("input", {
 									"onUpdate:modelValue": ($event) => cf[f.key] = $event,
 									type: "text",
@@ -25091,8 +25145,8 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 									autocomplete: "off",
 									autocapitalize: "none",
 									spellcheck: "false"
-								}, null, 8, _hoisted_44), [[vModelText, cf[f.key]]]),
-								errors[`cloudflare.${f.key}`] ? (openBlock(), createElementBlock("span", _hoisted_45, toDisplayString(errors[`cloudflare.${f.key}`]), 1)) : createCommentVNode("", true)
+								}, null, 8, _hoisted_52), [[vModelText, cf[f.key]]]),
+								errors[`cloudflare.${f.key}`] ? (openBlock(), createElementBlock("span", _hoisted_53, toDisplayString(errors[`cloudflare.${f.key}`]), 1)) : createCommentVNode("", true)
 							]);
 						}), 64)), createElementVNode("button", {
 							class: "btn btn-secondary publishing-save",
@@ -25103,31 +25157,31 @@ var PublishingPanel_default = /* @__PURE__ */ defineComponent({
 							busy: busy.value === "cloudflare-save",
 							label: "Save",
 							"busy-label": "Saving…"
-						}, null, 8, ["busy"])], 8, _hoisted_46)]),
+						}, null, 8, ["busy"])], 8, _hoisted_54)]),
 						connecting.value !== "cloudflare" ? (openBlock(), createElementBlock("button", {
 							key: 0,
 							class: "btn btn-secondary publishing-connect",
 							type: "button",
-							onClick: _cache[9] || (_cache[9] = ($event) => openConnect("cloudflare"))
+							onClick: _cache[10] || (_cache[10] = ($event) => openConnect("cloudflare"))
 						}, toDisplayString(unref(connectLabel)(view.value.cloudflare.status)), 1)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [
-							createElementVNode("div", _hoisted_47, [createElementVNode("label", _hoisted_48, [_cache[23] || (_cache[23] = createElementVNode("span", { class: "form-label" }, "API token", -1)), withDirectives(createElementVNode("input", {
-								"onUpdate:modelValue": _cache[10] || (_cache[10] = ($event) => secret.token = $event),
+							createElementVNode("div", _hoisted_55, [createElementVNode("label", _hoisted_56, [_cache[26] || (_cache[26] = createElementVNode("span", { class: "form-label" }, "API token", -1)), withDirectives(createElementVNode("input", {
+								"onUpdate:modelValue": _cache[11] || (_cache[11] = ($event) => secret.token = $event),
 								type: "password",
 								autocomplete: "new-password",
 								spellcheck: "false"
 							}, null, 512), [[vModelText, secret.token]])])]),
-							errors["cloudflare.token"] ? (openBlock(), createElementBlock("p", _hoisted_49, toDisplayString(errors["cloudflare.token"]), 1)) : createCommentVNode("", true),
-							_cache[24] || (_cache[24] = createElementVNode("p", { class: "cred-hint" }, "Never shown again", -1)),
-							createElementVNode("div", _hoisted_50, [createElementVNode("button", {
+							errors["cloudflare.token"] ? (openBlock(), createElementBlock("p", _hoisted_57, toDisplayString(errors["cloudflare.token"]), 1)) : createCommentVNode("", true),
+							_cache[27] || (_cache[27] = createElementVNode("p", { class: "cred-hint" }, "Never shown again", -1)),
+							createElementVNode("div", _hoisted_58, [createElementVNode("button", {
 								class: "btn btn-primary",
 								type: "button",
 								disabled: !secret.token || busy.value === "cloudflare-connect" || void 0,
-								onClick: _cache[11] || (_cache[11] = ($event) => connect("cloudflare"))
+								onClick: _cache[12] || (_cache[12] = ($event) => connect("cloudflare"))
 							}, [createVNode(BusyLabel_default, {
 								busy: busy.value === "cloudflare-connect",
 								label: "Connect",
 								"busy-label": "Connecting…"
-							}, null, 8, ["busy"])], 8, _hoisted_51), createElementVNode("button", {
+							}, null, 8, ["busy"])], 8, _hoisted_59), createElementVNode("button", {
 								class: "btn btn-secondary",
 								type: "button",
 								onClick: cancelConnect

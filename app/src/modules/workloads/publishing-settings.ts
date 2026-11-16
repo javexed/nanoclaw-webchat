@@ -1,6 +1,6 @@
 /**
  * Admin → Publishing (owner only): the Workloads and Confined builds switches
- * with this host's readiness, the two publishing routes' switches, settings
+ * with this host's readiness, the publishing routes' switches, settings
  * and credentials, and their status lines.
  *
  * The switches and settings ARE the `.env` keys the docs name
@@ -35,11 +35,14 @@ import { sliceName } from './docker.js';
 import { gatewayState } from './gateway/index.js';
 import { lastPreflight, OFF_REASON, preflightRunning, runPreflight, type PreflightResult } from './preflight.js';
 import { confinedBuildsOn, workloadSetting, workloadsSwitchedOn, type WorkloadEnvKey } from './settings.js';
+import { DEFAULT_PORTS } from './port/config.js';
+import { portStatus, refreshPortStatus, setupRange, type PortStatus } from './port/index.js';
 import { DOMAIN_RE } from './tailnet/config.js';
 import { connectTailnetClient } from './tailnet/credential.js';
 import { refreshTailnetStatus, tailnetStatus, type TailnetStatus } from './tailnet/index.js';
 
-type RouteStatus = TailnetStatus | CloudflareStatus;
+type RouteStatus = TailnetStatus | CloudflareStatus | PortStatus;
+type Kind = 'tailnet' | 'cloudflare' | 'port';
 
 export interface StatusLine {
   /** `Connected`, `Off`, `Not connected`, or the one thing missing in a few words. */
@@ -79,10 +82,17 @@ const SHORT: Array<[RegExp, string]> = [
   [/_IMAGE/i, 'Image setting not valid'],
   [/the tunnel is /i, 'Tunnel not healthy'],
   [/still to be (deleted|removed)/i, 'Clean-up pending'],
+  [/ports are not set up on the tailnet|not set up on the tailnet yet/i, 'Ports not set up'],
+  [/clash with the app gateway/i, 'Ports clash with the app gateway'],
+  [/NANOCLAW_WORKLOAD_PORTS must be/i, 'Port range not valid'],
+  [/Tailscale is not running/i, 'Tailscale not running'],
+  [/is on Funnel/i, 'A port is on Funnel'],
+  [/serves something else|can be used/i, 'Ports in use'],
 ];
 
-export function shortReason(kind: 'tailnet' | 'cloudflare', reason: string): string {
+export function shortReason(kind: Kind, reason: string): string {
   for (const [re, text] of SHORT) if (re.test(reason)) return text;
+  if (kind === 'port') return 'Not available';
   return kind === 'tailnet' ? 'Tailscale API not answering' : 'Cloudflare API not answering';
 }
 
@@ -91,7 +101,7 @@ const sentence = (m: string): string => {
   return t.charAt(0).toUpperCase() + t.slice(1);
 };
 
-export function statusLine(kind: 'tailnet' | 'cloudflare', s: RouteStatus): StatusLine {
+export function statusLine(kind: Kind, s: RouteStatus): StatusLine {
   const warnings = s.warnings.map((w) => ({ text: shortReason(kind, w), detail: sentence(w) }));
   if (s.state === 'connected') return { text: 'Connected', ok: true, needsConnect: false, detail: '', warnings };
   if (s.state === 'off') return { text: 'Off', ok: false, needsConnect: false, detail: '', warnings };
@@ -240,6 +250,20 @@ export interface PublishingView extends HostView {
     teamDomain: string;
     status: StatusLine;
   };
+  /** The tailnet ports route: one port per app on this machine's tailnet name. */
+  ports: {
+    on: boolean;
+    /** The ports it hands out, e.g. 9001-9010. */
+    range: string;
+    status: StatusLine;
+    /** The command that sets the ports up on the tailnet, run on this host; '' when there is none to give. */
+    fix: string;
+  };
+}
+
+/** The setup command for the ports still missing, or ''. Pure. */
+export function portsFix(root: string, range: string): string {
+  return range ? `sudo bash ${script(root, 'workloads-tailnet-ports.sh')} --ports ${range}` : '';
 }
 
 export async function publishingView(
@@ -263,6 +287,12 @@ export async function publishingView(
       zoneId: get('NANOCLAW_WORKLOAD_CLOUDFLARE_ZONE_ID') ?? '',
       teamDomain: get('NANOCLAW_WORKLOAD_CLOUDFLARE_TEAM_DOMAIN') ?? '',
       status: statusLine('cloudflare', cloudflareStatus()),
+    },
+    ports: {
+      on: !!get('NANOCLAW_WORKLOAD_PORTS'),
+      range: get('NANOCLAW_WORKLOAD_PORTS') ?? '',
+      status: statusLine('port', portStatus()),
+      fix: portsFix(process.cwd(), setupRange()),
     },
   };
 }
@@ -321,6 +351,14 @@ export async function applyTailnet(root: string, i: TailnetInput, env: Env = pro
   if (v.domain !== undefined) setOrDrop(root, env, 'NANOCLAW_WORKLOAD_TAILNET_DOMAIN', v.domain);
   if (v.on !== undefined) setOrDrop(root, env, 'NANOCLAW_WORKLOAD_TAILNET', v.on ? '1' : '');
   await refreshTailnetStatus().catch(() => undefined);
+}
+
+/** The Tailnet ports switch: on writes the default range unless one is set already. */
+export async function applyPorts(root: string, i: { on?: unknown }, env: Env = process.env): Promise<void> {
+  if (typeof i.on !== 'boolean') throw new SettingRefused('on', 'Must be on or off');
+  if (!i.on) drop(root, env, 'NANOCLAW_WORKLOAD_PORTS');
+  else if (!workloadSetting('NANOCLAW_WORKLOAD_PORTS')) put(root, env, 'NANOCLAW_WORKLOAD_PORTS', DEFAULT_PORTS);
+  await refreshPortStatus().catch(() => undefined);
 }
 
 export interface CloudflareInput {

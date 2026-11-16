@@ -178,8 +178,9 @@ only from your own container. To let people open an app, publish it (below).
 
 ## Publishing an app to people
 
-A published app gets its own address (e.g. `https://notes.<tailnet>.ts.net/`)
-on a publishing route an owner turned on for this host, and only the people
+A published app gets its own address (e.g. `https://notes.<tailnet>.ts.net/`,
+or on the `port` route NanoClaw's own name with a port of its own, e.g.
+`https://<node>.<tailnet>.ts.net:9001/`) on a publishing route an owner turned on for this host, and only the people
 its "who can open" rule allows get in; NanoClaw signs them in.
 
 **An app meant for people: deploy and publish in one step.** Prefer this over
@@ -187,7 +188,7 @@ its "who can open" rule allows get in; NanoClaw signs them in.
 
 - `ncl workloads up --name myapp --file myapp/compose.yml --publish tailnet --reason "<what people use it for>"`
   — the card shows what runs and where people open it. `--publish` is the
-  route (`tailnet` or `cloudflare`). Options as for `expose`: `--who`,
+  route (`tailnet`, `cloudflare` or `port`). Options as for `expose`: `--who`,
   `--emails`, `--app`; `--service`/`--port` only when NanoClaw cannot tell
   (it serves the one service that declares an `expose:` port, on that port —
   so declare one, e.g. `expose: ["8080"]`).
@@ -201,8 +202,8 @@ To publish a workload that already runs:
 
 - `ncl workloads expose --name myapp --service web --port 8080 --reason "<what people use it for>"`
   — asks an owner (approval card). Options: `--app <name>` (the first part of
-  its address; default the workload's name), `--route tailnet|cloudflare`
-  (needed only when both are on), `--who only-me|agent-members|signed-in`
+  its address; default the workload's name), `--route tailnet|cloudflare|port`
+  (needed only when more than one is on), `--who only-me|agent-members|signed-in`
   (default `only-me`: the person who approves the card). On `cloudflare`
   also `--who specific --emails a@example.com,b@example.com` (named people,
   who must also be NanoClaw users signed in with that address).

@@ -189,6 +189,30 @@ describe('gateway check', () => {
     expect((await check({ 'X-NanoClaw-Gateway-Secret': '' })).status).toBe(403);
   });
 
+  it('on the port route, checks the host name and leaves the port to Caddy’s listener', async () => {
+    __clearPublishingRoutesForTest();
+    registerPublishingRoute({
+      kind: 'port',
+      label: 'a port',
+      enabled: async () => true,
+      hostnameFor: async () => 'node.tail1.ts.net:9001',
+      identify: async (req) =>
+        req.peer === '127.0.0.1' ? { userId: 'webchat:tailscale:alice@x.example', displayName: 'Alice' } : null,
+    });
+    route.kind = 'port';
+    try {
+      const at = (host: string, peer = '127.0.0.1') => check({ 'X-Forwarded-Host': host, 'X-NanoClaw-Peer': peer });
+      const ok = await at('node.tail1.ts.net:9001');
+      expect(ok.status).toBe(200);
+      expect(ok.headers.get('x-nanoclaw-auth')).toBe('port');
+      expect((await at('node.tail1.ts.net')).status).toBe(200);
+      expect((await at('other.tail1.ts.net:9001')).status).toBe(404);
+      expect((await at('node.tail1.ts.net:9001', '198.18.0.200')).status).toBe(401);
+    } finally {
+      route.kind = 'tailnet';
+    }
+  });
+
   it('serves nothing for an unpublished, stopped or switched-off app, or another host', async () => {
     expect((await check({ 'X-NanoClaw-Route': 'nope' })).status).toBe(404);
     live = false;

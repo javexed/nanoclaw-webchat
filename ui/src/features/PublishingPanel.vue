@@ -5,7 +5,8 @@
  * reads Ready or names the one thing missing on this host, and the command that
  * fixes it with a copy button. Then per route: a switch, its settings (only
  * while on), Connect and a status line that reads Connected or names the one
- * thing missing. Secrets typed here are sent once and cleared; nothing reads
+ * thing missing. Tailnet ports has no settings or credential: its status line
+ * and, while ports are missing, the setup command with a copy button. Secrets typed here are sent once and cleared; nothing reads
  * them back.
  */
 import { computed, onUnmounted, reactive, ref, watch } from 'vue';
@@ -75,13 +76,15 @@ async function run(what: string, prefix: string, fn: () => Promise<void>): Promi
   }
 }
 
-async function toggle(kind: 'tailnet' | 'cloudflare', e: Event): Promise<void> {
+const ROUTE_NAME = { tailnet: 'Tailnet', cloudflare: 'Cloudflare', ports: 'Tailnet ports' } as const;
+
+async function toggle(kind: 'tailnet' | 'cloudflare' | 'ports', e: Event): Promise<void> {
   const el = e.target as HTMLInputElement;
   const on = el.checked;
   el.checked = !on; // shows what is saved until the server answers
   if (!on) {
     const ok = await showConfirmModal({
-      title: `Turn off ${kind === 'tailnet' ? 'Tailnet' : 'Cloudflare'}?`,
+      title: `Turn off ${ROUTE_NAME[kind]}?`,
       body: 'Apps published on it stop opening.',
       confirmLabel: 'Turn off',
       destructive: true,
@@ -189,8 +192,10 @@ async function connect(kind: 'tailnet' | 'cloudflare'): Promise<void> {
           ><span v-else class="publishing-dot" aria-hidden="true"></span>{{ view.workloads.status.text }}
         </p>
         <p v-if="view.workloads.status.fix" class="publishing-fix">
-          <code>{{ view.workloads.status.fix }}</code
-          ><CopyIconButton :text="view.workloads.status.fix" label="Copy command" />
+          <code>{{ view.workloads.status.fix }}</code><CopyIconButton
+            :text="view.workloads.status.fix"
+            label="Copy command"
+          />
         </p>
         <div id="publishing-confined-builds" class="setting-group install-row">
           <span class="setting-label">Confined builds</span>
@@ -215,8 +220,10 @@ async function connect(kind: 'tailnet' | 'cloudflare'): Promise<void> {
             <span class="publishing-dot" aria-hidden="true"></span>{{ view.builds.status.text }}
           </p>
           <p v-if="view.builds.status.fix" class="publishing-fix">
-            <code>{{ view.builds.status.fix }}</code
-            ><CopyIconButton :text="view.builds.status.fix" label="Copy command" />
+            <code>{{ view.builds.status.fix }}</code><CopyIconButton
+              :text="view.builds.status.fix"
+              label="Copy command"
+            />
           </p>
         </template>
       </template>
@@ -313,6 +320,38 @@ async function connect(kind: 'tailnet' | 'cloudflare'): Promise<void> {
             <button class="btn btn-secondary" type="button" @click="cancelConnect">Cancel</button>
           </div>
         </template>
+      </template>
+    </div>
+
+    <div v-if="view.ports" id="publishing-ports" class="publishing-route">
+      <div class="setting-group install-row">
+        <span class="setting-label">Tailnet ports</span>
+        <label class="setting-toggle"
+          ><input
+            type="checkbox"
+            aria-label="Tailnet ports"
+            :checked="view.ports.on"
+            :disabled="busy === 'ports-switch' || undefined"
+            @change="toggle('ports', $event)"
+        /></label>
+      </div>
+      <p v-if="errors['ports.on'] || errors['ports.form']" class="cred-hint err">
+        {{ errors['ports.on'] || errors['ports.form'] }}
+      </p>
+      <template v-if="view.ports.on">
+        <p
+          class="publishing-status"
+          :class="{ ok: view.ports.status.ok }"
+          :title="view.ports.status.detail || undefined"
+        >
+          <span class="publishing-dot" aria-hidden="true"></span>{{ view.ports.status.text }}
+        </p>
+        <p v-for="w in view.ports.status.warnings" :key="w.detail" class="cred-hint" :title="w.detail">
+          {{ w.text }}
+        </p>
+        <p v-if="view.ports.fix" class="publishing-fix">
+          <code>{{ view.ports.fix }}</code><CopyIconButton :text="view.ports.fix" label="Copy command" />
+        </p>
       </template>
     </div>
 

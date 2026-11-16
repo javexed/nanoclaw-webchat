@@ -14,6 +14,7 @@ import { isLinked, openWorkerTcp, whenLinked } from '../machines/links.js';
 import './cli.js';
 import { tickGateway } from './gateway/index.js';
 import { tickCloudflare } from './cloudflare/index.js';
+import { tickPorts } from './port/index.js';
 import { tickTailnet } from './tailnet/index.js';
 import { pruneRoutes } from './publish.js';
 import { reconcileWorkloads } from './reconcile.js';
@@ -90,5 +91,6 @@ registerModuleSweep('workloads-gateway', async () => {
   await tickCloudflare(on).catch((err) =>
     log.warn('Cloudflare route: sweep failed', { err: String(err).slice(0, 300) }),
   );
+  await tickPorts(on).catch((err) => log.warn('Tailnet ports route: sweep failed', { err: String(err).slice(0, 300) }));
   await tickGateway(on);
 });

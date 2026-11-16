@@ -30,7 +30,7 @@ import { registerSessionlessApprovalHandler, requestSessionlessApproval } from '
 import { getUser } from '../permissions/db/users.js';
 import { diskLevel, diskUsed, gb, type DiskLevel } from './disk.js';
 import { syncGateway } from './gateway/index.js';
-import { enabledRoutes, isRouteKind, publishingRoute, type RouteKind } from './gateway/publishing.js';
+import { enabledRoutes, isRouteKind, publishingRoute, ROUTE_KIND_WORDS, type RouteKind } from './gateway/publishing.js';
 import { declaredPort, exposeApp, parseEmails, planExpose, routeView, unexposeApp, widensAccess } from './publish.js';
 import { findRouteByApp, isWho, listRoutes, updateRoute, type AppRoute, type Who } from './routes.js';
 import { notifyWorkloadAgent } from './notify.js';
@@ -354,7 +354,7 @@ export class ChangeRefused extends Error {
 }
 
 function readNext(i: ChangeInput, prev: AppSetting): AppSetting {
-  if (!isRouteChoice(i.route)) throw new ChangeRefused('route must be off, tailnet or cloudflare');
+  if (!isRouteChoice(i.route)) throw new ChangeRefused(`route must be off, ${ROUTE_KIND_WORDS}`);
   if (i.route === 'off') return { route: 'off', who: prev.who, emails: prev.emails };
   const who = i.who === undefined ? prev.who : i.who;
   if (!isWho(who)) throw new ChangeRefused('who must be only-me, specific, agent-members or signed-in');
