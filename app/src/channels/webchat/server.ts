@@ -336,7 +336,7 @@ import { REJECT_WITH_REASON_VALUE } from '../../modules/approvals/primitive.js';
 import { resendExpiredApproval } from '../../modules/approvals/resend.js';
 import { canResendApproval, markNoticeResent } from './inroom-approvals.js';
 import { listRegisteredApprovalActions } from '../../seam/index.js';
-import { hostAllowed } from './request-guard.js';
+import { actionAllowed, hostAllowed } from './request-guard.js';
 import { maybeHandleTts, ttsEndpoint } from './tts.js';
 import {
   DEFAULT_CLEANUP_PROMPT,
@@ -714,6 +714,13 @@ async function handleHttp(
   if (!(req.url ?? '').startsWith('/health') && !(await hostAllowed(req))) {
     res.writeHead(421, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('This server does not answer to that host name. Add it to WEBCHAT_ALLOWED_HOSTS.\n');
+    return;
+  }
+  // An action from a page on another origin, even one on this same site
+  // (another port, a published app): its requests carry the visitor's sign-in.
+  if (!actionAllowed(req)) {
+    res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ error: 'Requests that change something must come from this page' }));
     return;
   }
 
