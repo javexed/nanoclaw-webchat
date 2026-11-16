@@ -182,6 +182,40 @@ jobs:
           echo "Manifest integrity (migrations register; dev tree matches)" > "$RUNNER_TEMP/ci-step"
           bash scripts/check-manifest.sh
 
+      - name: Dependency audit self-test (proves it still detects advisories)
+        if: steps.scope.outputs.guards == 'true'
+        run: |
+          echo "Dependency audit self-test (proves it still detects advisories)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-deps-audit.selftest.sh
+
+      - name: Dependency audit (host + container, high/critical)
+        # GitHub's dependency scanning sees only ui/. The host and container
+        # dependencies arrive at compose time, so this is the only audit they
+        # get. A PR that changes dependencies must not carry a high/critical
+        # advisory; any other PR only warns, so an advisory published today
+        # does not block unrelated work. Runs on main fail, so it shows red.
+        run: |
+          echo "Dependency audit (host + container, high/critical)" > "$RUNNER_TEMP/ci-step"
+          set -uo pipefail
+          # Same merge-base walk as the container-scope step; anything it cannot
+          # decide counts as a dependency change (fail on findings).
+          deps_changed() {
+            [ "${{ github.event_name }}" = "pull_request" ] || return 0
+            [ -n "${{ github.base_ref }}" ] || return 0
+            git fetch -q --depth 50 origin "${{ github.base_ref }}" 2>/dev/null || return 0
+            BASE_SHA=$(git rev-parse FETCH_HEAD)
+            git fetch -q --depth 50 origin "$(git rev-parse HEAD)" 2>/dev/null || return 0
+            MB=$(git merge-base "$BASE_SHA" HEAD 2>/dev/null) || return 0
+            git diff --name-only "$MB"..HEAD 2>/dev/null \
+              | grep -qE '(^|/)(package\.json|pnpm-lock\.yaml|bun\.lock)$|^install\.sh$|^versions\.json$|^patches/.*package\.json\.patch$'
+          }
+          MODE=""
+          if ! deps_changed; then
+            MODE="--warn-only"
+            echo "This PR changes no dependencies: advisories are reported as warnings."
+          fi
+          bash scripts/check-deps-audit.sh "$RUNNER_TEMP/composed" $MODE
+
       - name: Failure-comment redaction self-test (proves it still masks tokens)
         if: steps.scope.outputs.guards == 'true'
         run: |
