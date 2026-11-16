@@ -7,7 +7,7 @@
 // A change that narrows (unpublish, a narrower rule, fewer people) applies at
 // once; one that widens or moves route goes to an approval card, whoever asks
 // (server: modules/workloads/gui.ts). The row reverts to what is live and
-// shows Needs approval until the card is answered. "Allow Docker Hub for
+// shows Needs approval until the card is answered. A build source (Docker Hub,
 // builds" follows the same rule: on is a card, off applies. Extend and
 // Redeploy keep what was approved, so they apply directly.
 import { apiJson } from '../core/api.js';
@@ -239,19 +239,19 @@ export async function extend(r: AppRow): Promise<void> {
   await reload();
 }
 
-/** "Allow Docker Hub for builds": on goes to an approval card, off applies at once. */
-export async function setDockerHub(on: boolean): Promise<void> {
+/** A build source: on goes to an approval card, off applies at once. */
+export async function setBuildSource(source: string, on: boolean): Promise<void> {
   if (appsBuildsBusy.value) return;
-  appsBuildsBusy.value = true;
+  appsBuildsBusy.value = source;
   appsBuildsError.value = '';
   try {
-    const out = await apiJson(`${base()}/apps/build-registries`, { method: 'PUT', body: { on } });
+    const out = await apiJson(`${base()}/apps/build-registries`, { method: 'PUT', body: { source, on } });
     if (out?.pending) showToast('Sent for approval');
     else if (out?.applied) showToast('Saved', { kind: 'success' });
   } catch (err) {
     appsBuildsError.value = (err as Error)?.message || 'That did not work';
   } finally {
-    appsBuildsBusy.value = false;
+    appsBuildsBusy.value = null;
   }
   await reload();
 }

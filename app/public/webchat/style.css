@@ -9793,6 +9793,11 @@ button[data-draft-id] {
   margin: 0;
 }
 /* "Allow Docker Hub for builds": one switch row above the list. */
+.apps-build-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
 .apps-builds {
   gap: 8px;
 }

@@ -30,12 +30,20 @@ export interface AppRow {
   renewsWhileUsed?: boolean;
 }
 
+/** A build source (Docker Hub, npm, …): on, or a card to turn it on waiting. */
+export interface BuildSourceRow {
+  id: string;
+  label: string;
+  on: boolean;
+  pending: boolean;
+}
+
 export interface AppsView {
   available: boolean;
   routes: RouteKind[];
   disk: { usedGb: number; quotaGb: number; level: 'ok' | 'warn' | 'over' } | null;
-  /** Confined builds on this host; this agent's builds may pull from Docker Hub; a card for that waits. */
-  builds?: { on: boolean; dockerHub: boolean; pending: boolean };
+  /** Confined builds on this host, and the package sources this agent's builds may download from. */
+  builds?: { on: boolean; sources: BuildSourceRow[] };
   apps: AppRow[];
 }
 
@@ -180,6 +188,6 @@ export const appsService = ref<Map<string, string>>(new Map());
 export const appsInfoKey = ref<string | null>(null);
 /** Rows with a request in flight. */
 export const appsBusy = ref<Set<string>>(new Set());
-/** "Allow Docker Hub for builds": a request in flight, and a refusal shown under it. */
-export const appsBuildsBusy = ref(false);
+/** Build sources: the one with a request in flight, and a refusal shown under them. */
+export const appsBuildsBusy = ref<string | null>(null);
 export const appsBuildsError = ref('');

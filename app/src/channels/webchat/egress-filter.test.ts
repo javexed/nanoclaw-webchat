@@ -422,7 +422,7 @@ describe('an agent’s workload builds', () => {
     const refused = await ask(`CONNECT registry-1.docker.io:443 HTTP/1.1\r\n${cred}\r\n\r\n`);
     expect(refused).toContain('403');
     // Says where a person turns it on, not a host command.
-    expect(refused).toContain('an admin can allow Docker Hub for builds in Agent → Apps');
+    expect(refused).toContain('an admin can turn on its source under Build sources in Agent → Apps');
     expect(seen).toEqual([]);
   });
 

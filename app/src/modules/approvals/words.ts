@@ -156,7 +156,7 @@ const FAILURES: FailureClass[] = [
         r,
       ),
     words:
-      "The build couldn't reach Docker Hub to fetch its base image. An admin can allow it for this agent: Agent → Apps → Allow Docker Hub for builds.",
+      "The build couldn't reach Docker Hub to fetch its base image. An admin can allow it for this agent: Agent → Apps → Build sources → Docker Hub.",
   },
   {
     test: (r) => /workloads are off/i.test(r),

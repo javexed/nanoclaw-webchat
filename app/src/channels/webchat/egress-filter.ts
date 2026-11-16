@@ -118,7 +118,7 @@ async function buildRegistriesFor(agentGroupId: string): Promise<string[]> {
 /** A build's refusal: where a person turns it on (Agent → Apps), not a host command. */
 function buildBlockedMessage(host: string, port: number): string {
   const where = port === 443 || port === 80 ? host : `${host}:${port}`;
-  return `blocked by NanoClaw network policy: this build may not reach ${where} — an admin can allow Docker Hub for builds in Agent → Apps, or allow ${where} on this agent's Network list`;
+  return `blocked by NanoClaw network policy: this build may not reach ${where} — an admin can turn on its source under Build sources in Agent → Apps, or allow ${where} on this agent's Network list`;
 }
 
 /** Is a literal IPv4 address inside one of these CIDRs? Names never are: no lookup can move them in. */
