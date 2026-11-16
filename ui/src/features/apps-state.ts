@@ -28,6 +28,10 @@ export interface AppRow {
   expiresAt: number | null;
   /** Published: renewed near its expiry while people open it. Absent from an older server. */
   renewsWhileUsed?: boolean;
+  /** Hosts its services may call at runtime, as approved. Absent from an older server. */
+  canCall?: string[];
+  /** Calls its services were refused lately. */
+  egressRefused?: number;
 }
 
 /** A build source (Docker Hub, npm, …): on, or a card to turn it on waiting. */

@@ -28,7 +28,7 @@ import { ensureHelperImage } from './backup.js';
 import { dockerEnv, ensureProbeNetwork, sliceName, sliceStatus } from './docker.js';
 import { HELPER_IMAGE } from './images.js';
 import { PROBE_INDEX, subnetFor } from './override.js';
-import { workloadsSwitchedOn } from './settings.js';
+import { workloadEgressPort, workloadsSwitchedOn } from './settings.js';
 
 const run = promisify(execFile);
 export const PREFLIGHT_EVERY_MS = 30 * 60_000;
@@ -42,7 +42,17 @@ export interface PreflightResult {
   /** The probe reached this host: the host rules are missing. */
   isolationOpen: boolean;
   at: number;
+  /** Runtime egress on its port, checked when NANOCLAW_WORKLOAD_EGRESS_PORT is set; absent otherwise. */
+  egress?: { port: number; ok: boolean; reason: string };
 }
+
+/**
+ * What a probe to the egress port on an address where nothing of NanoClaw's
+ * listens got: refused (the rule lets it through and nothing else holds the
+ * port: ready), dropped (nothing answered in time: the rule is missing), or
+ * answered (a service on this host listens on that port on every address).
+ */
+export type EgressProbe = 'refused' | 'dropped' | 'answered';
 
 let last: PreflightResult | null = null;
 let running: Promise<PreflightResult> | null = null;
@@ -65,6 +75,7 @@ export interface PreflightDeps {
   slice: typeof sliceStatus;
   tools: () => Promise<string | null>;
   isolation: () => Promise<Isolation>;
+  egressProbe?: (port: number) => Promise<EgressProbe>;
 }
 
 /** compose and buildx present (null), or what is missing. */
@@ -133,7 +144,82 @@ export async function probeIsolation(): Promise<Isolation> {
   }
 }
 
-const defaults: PreflightDeps = { slice: sliceStatus, tools: toolsPresent, isolation: probeIsolation };
+/**
+ * Runtime egress: the host rules accept new connections from workload
+ * bridges to its port on any workload address, so nothing else on this host
+ * may listen there on every address. A throwaway container on the probe
+ * network asks the probe network's gateway, where NanoClaw never listens,
+ * on that port: it must be refused outright.
+ */
+export async function probeEgressPort(port: number): Promise<EgressProbe> {
+  await ensureHelperImage();
+  const network = await ensureProbeNetwork(PROBE_INDEX);
+  const { gateway } = subnetFor(PROBE_INDEX);
+  const { stdout } = await run(
+    CONTAINER_RUNTIME_BIN,
+    [
+      'run',
+      '--rm',
+      '--network',
+      network,
+      '--log-driver',
+      'none',
+      '--cap-drop',
+      'ALL',
+      '--security-opt',
+      'no-new-privileges:true',
+      '--cgroup-parent',
+      sliceName(),
+      '--memory',
+      '64m',
+      '--pids-limit',
+      '16',
+      HELPER_IMAGE(),
+      'sh',
+      '-c',
+      `wget -q -T 4 -O- http://${gateway}:${port}/ 2>&1; echo " rc=$?"`,
+    ],
+    { env: dockerEnv(), timeout: 60_000 },
+  );
+  if (/refused/i.test(stdout)) return 'refused';
+  if (/timed out|unreachable|no route/i.test(stdout)) return 'dropped';
+  if (/ rc=\d+/.test(stdout)) return 'answered';
+  throw new Error(`the egress port probe gave no answer: ${stdout.slice(0, 200)}`);
+}
+
+/** Whether runtime egress can run on its port, in words (preflight's check). */
+async function checkEgress(deps: PreflightDeps, port: number): Promise<{ port: number; ok: boolean; reason: string }> {
+  const rules = `sudo deploy/workloads-host-rules.sh --stack-egress-port ${port} --install-unit (with your other flags)`;
+  let probe: EgressProbe;
+  try {
+    probe = await (deps.egressProbe ?? probeEgressPort)(port);
+  } catch (err) {
+    return {
+      port,
+      ok: false,
+      reason: `the runtime egress check could not run: ${String((err as Error).message ?? err).slice(0, 300)}`,
+    };
+  }
+  if (probe === 'refused') return { port, ok: true, reason: '' };
+  if (probe === 'dropped')
+    return {
+      port,
+      ok: false,
+      reason: `runtime egress is not let through on port ${port}: the host rules lack it (${rules}), or something on this host holds that port open`,
+    };
+  return {
+    port,
+    ok: false,
+    reason: `runtime egress is refused: a service on this host listens on port ${port} on every address, so workload containers would reach it; pick another NANOCLAW_WORKLOAD_EGRESS_PORT or bind that service elsewhere`,
+  };
+}
+
+const defaults: PreflightDeps = {
+  slice: sliceStatus,
+  tools: toolsPresent,
+  isolation: probeIsolation,
+  egressProbe: probeEgressPort,
+};
 
 async function check(deps: PreflightDeps, now: number): Promise<PreflightResult> {
   const fail = (reason: string, isolationOpen = false): PreflightResult => ({
@@ -158,7 +244,15 @@ async function check(deps: PreflightDeps, now: number): Promise<PreflightResult>
       'workload containers can reach this host: the host rules are missing (run deploy/workloads-host-rules.sh --install-unit as root)',
       true,
     );
-  return { ok: true, reason: '', isolationOpen: false, at: now };
+  // Runtime egress is its own switch: a failure here refuses only stacks that call out.
+  const port = workloadEgressPort();
+  return {
+    ok: true,
+    reason: '',
+    isolationOpen: false,
+    at: now,
+    ...(port !== null ? { egress: await checkEgress(deps, port) } : {}),
+  };
 }
 
 /** Run the preflight (one at a time) and remember the result. */
@@ -180,6 +274,19 @@ export async function runPreflight(deps: PreflightDeps = defaults, now = Date.no
 
 /** Is the last result older than the interval (or missing)? */
 export const preflightDue = (now = Date.now()): boolean => !last || now - last.at >= PREFLIGHT_EVERY_MS;
+
+/**
+ * Why runtime egress cannot run on `port` now, or null. Not checked yet on
+ * this port (it was just set): a check is started, and the caller hears to
+ * try again shortly.
+ */
+export function egressRefusal(port: number): string | null {
+  const e = last?.egress;
+  if (last?.ok && e?.port === port) return e.ok ? null : e.reason;
+  if (last && !last.ok) return last.reason;
+  if (!running && workloadsSwitchedOn()) void runPreflight().catch(() => undefined);
+  return 'runtime egress is still being checked on this host: try again in a minute';
+}
 
 export function __setPreflightForTest(r: PreflightResult | null): void {
   last = r;

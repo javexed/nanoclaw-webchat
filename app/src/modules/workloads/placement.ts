@@ -23,6 +23,10 @@
  * pulls run on central and the images are sent (control.ts), so any worker
  * takes any stack; no new stack goes to a worker with less than
  * MIN_DISK_FREE_GB free.
+ *
+ * A stack that declares runtime egress runs on central: its egress proxy
+ * lives here (channels/webchat/workload-egress.ts). An agent pinned to a
+ * worker cannot have one.
  */
 import { availableOn, isHealthy, isolationRefusal, listMembers, type Member } from '../machines/members.js';
 import { isLinked } from '../machines/links.js';
@@ -97,12 +101,19 @@ const gb = (mb: number): string => `${(mb / 1024).toFixed(1)} GB`;
 
 export async function placeWorkload(
   agentGroupId: string,
-  need: { memoryMb: number; cpus: number },
+  need: { memoryMb: number; cpus: number; egress?: boolean },
   deps: PlaceDeps = defaultDeps(),
 ): Promise<Placement> {
   const now = deps.now ?? Date.now();
   const pin = await deps.pin(agentGroupId);
   if (pin === LOCAL) return { node: LOCAL, reason: 'pinned to central by an owner' };
+  if (need.egress) {
+    if (pin)
+      throw new Error(
+        "this agent's workloads are pinned to a worker, and a stack with x-nanoclaw-egress runs on central only; drop the egress or ask an owner",
+      );
+    return { node: LOCAL, reason: 'it calls out (x-nanoclaw-egress), which runs on central only' };
+  }
   if (pin) {
     // A pin outranks "Run workloads here" (off or on), never the isolation check.
     const m = (await deps.members()).find((x) => x.id === pin && x.role === 'worker');

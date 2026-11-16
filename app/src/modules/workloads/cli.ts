@@ -46,6 +46,8 @@ import {
   withinApproval,
 } from './control.js';
 import { diskUsed, gb } from './disk.js';
+import { egressOf } from './egress.js';
+import { workloadEgressRefusals } from '../../channels/webchat/workload-egress-refusals.js';
 import { isLinked } from '../machines/links.js';
 import { getMember, isolationStatus, listMembers, setWorkloadsOn } from '../machines/members.js';
 import {
@@ -119,6 +121,20 @@ const view = (w: Workload, open?: string) => ({
   expires: w.expiresAt ? new Date(w.expiresAt).toISOString().slice(0, 10) : null,
   error: w.lastError,
 });
+
+/** A workload's runtime egress, as approved, and its recent refusals (newest first). */
+export function egressView(w: Workload): Record<string, unknown> {
+  const refused = workloadEgressRefusals(w.agentGroupId, w.id).slice(0, 20);
+  return {
+    egress: egressOf(w),
+    egress_refused: refused.map((r) => ({
+      at: new Date(r.at).toISOString().slice(0, 16).replace('T', ' '),
+      service: r.service,
+      target: `${r.host}:${r.port}`,
+      reason: r.reason,
+    })),
+  };
+}
 
 /** 1536 → "1.5 GB", 512 → "512 MB". */
 const gbText = (mb: number): string => (mb >= 1024 ? `${Math.round((mb / 1024) * 10) / 10} GB` : `${mb} MB`);
@@ -418,6 +434,19 @@ registerResource({
       handler: async (args, ctx) => ({
         services_private: await psWorkload(groupOf(args, ctx), str(args.name, 'name')),
       }),
+    },
+    status: {
+      access: 'open',
+      description:
+        'One workload: its state, what each service may call at runtime (x-nanoclaw-egress, as approved) and what it was refused lately.',
+      args: [GROUP, NAME],
+      handler: async (args, ctx) => {
+        const g = groupOf(args, ctx);
+        const name = str(args.name, 'name');
+        const w = await findWorkload(g, name);
+        if (!w) throw new Error(`you have no workload named "${name}"`);
+        return { ...view(w, await openLine(w)), ...egressView(w) };
+      },
     },
     logs: {
       access: 'open',

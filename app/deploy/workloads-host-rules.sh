@@ -24,10 +24,17 @@
 # servers, the connector Cloudflare's edge, and neither reaches anything of
 # this host or its LAN. Without --gateway the edge networks reach nothing here.
 #
-#   sudo deploy/workloads-host-rules.sh [--gateway ADDR:PORT]                 # add (idempotent)
-#   sudo deploy/workloads-host-rules.sh [--gateway ADDR:PORT] --install-unit  # add, and re-add at every boot
-#   sudo deploy/workloads-host-rules.sh [--gateway ADDR:PORT] --check         # exit 0 when present
-#   sudo deploy/workloads-host-rules.sh --remove                              # take them out again
+# Runtime egress (--stack-egress-port PORT, NANOCLAW_WORKLOAD_EGRESS_PORT): a
+# new connection from a workload bridge to that one TCP port on a workload
+# address (each network's own gateway, where NanoClaw's egress proxy listens)
+# is accepted; everything else to this host is still dropped. IPv4 only.
+# NanoClaw's preflight checks that nothing else on this host answers on that
+# port. Without the flag, stacks have no way out at all.
+#
+#   sudo deploy/workloads-host-rules.sh [--gateway ADDR:PORT] [--stack-egress-port PORT]                 # add (idempotent)
+#   sudo deploy/workloads-host-rules.sh [--gateway ADDR:PORT] [--stack-egress-port PORT] --install-unit  # add, and re-add at every boot
+#   sudo deploy/workloads-host-rules.sh [--gateway ADDR:PORT] [--stack-egress-port PORT] --check         # exit 0 when present
+#   sudo deploy/workloads-host-rules.sh --remove                                                         # take them out again
 set -euo pipefail
 
 CHAIN=NANOCLAW-WORKLOADS
@@ -43,6 +50,7 @@ UNIT=nanoclaw-workloads-firewall.service
 SBIN=/usr/local/sbin/nanoclaw-workloads-firewall
 
 GATEWAY=''
+STACK_PORT=''
 ACTION=''
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -54,12 +62,20 @@ while [ $# -gt 0 ]; do
       GATEWAY="${1#--gateway=}"
       shift
       ;;
+    --stack-egress-port)
+      STACK_PORT="${2:-}"
+      shift 2
+      ;;
+    --stack-egress-port=*)
+      STACK_PORT="${1#--stack-egress-port=}"
+      shift
+      ;;
     --remove | --check | --install-unit)
       ACTION="$1"
       shift
       ;;
     *)
-      echo "usage: $0 [--gateway ADDR:PORT] [--install-unit | --check | --remove]" >&2
+      echo "usage: $0 [--gateway ADDR:PORT] [--stack-egress-port PORT] [--install-unit | --check | --remove]" >&2
       exit 2
       ;;
   esac
@@ -76,6 +92,13 @@ if [ -n "$GATEWAY" ]; then
   fi
 fi
 
+if [ -n "$STACK_PORT" ]; then
+  if ! [[ "$STACK_PORT" =~ ^[0-9]{1,5}$ ]] || [ "$STACK_PORT" -lt 1 ] || [ "$STACK_PORT" -gt 65535 ]; then
+    echo "--stack-egress-port must be a TCP port, e.g. 8472" >&2
+    exit 2
+  fi
+fi
+
 [ "$(id -u)" = 0 ] || { echo "run as root (sudo $0 $*)" >&2; exit 1; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -87,6 +110,16 @@ jumps() {
   echo "-i $IFACE -j $CHAIN"
   [ "$ipt" = iptables ] && echo "-s $RANGE4 -j $CHAIN"
   return 0
+}
+
+# The workload chain's rules, in order, per family: replies pass, the egress
+# proxy's port on a workload address is accepted (IPv4, with the flag), the
+# rest is dropped.
+chain_rules() {
+  local ipt="$1"
+  echo "-m conntrack --ctstate ESTABLISHED,RELATED -j RETURN"
+  [ "$ipt" = iptables ] && [ -n "$STACK_PORT" ] && echo "-i $IFACE -d $RANGE4 -p tcp --dport $STACK_PORT -j ACCEPT"
+  echo "-j DROP"
 }
 
 # The edge chain's rules, in order, per family.
@@ -120,9 +153,7 @@ fill() {
 
 add() {
   local ipt="$1"
-  "$ipt" -N "$CHAIN" 2>/dev/null || "$ipt" -F "$CHAIN"
-  "$ipt" -A "$CHAIN" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-  "$ipt" -A "$CHAIN" -j DROP
+  fill "$ipt" "$CHAIN" chain_rules
   while read -r rule; do
     [ -n "$rule" ] || continue
     # shellcheck disable=SC2086
@@ -164,6 +195,11 @@ check() {
   while read -r rule; do
     [ -n "$rule" ] || continue
     # shellcheck disable=SC2086
+    "$ipt" -C "$CHAIN" $rule 2>/dev/null || return 1
+  done < <(chain_rules "$ipt")
+  while read -r rule; do
+    [ -n "$rule" ] || continue
+    # shellcheck disable=SC2086
     "$ipt" -C INPUT $rule 2>/dev/null || return 1
   done < <(jumps "$ipt")
   "$ipt" -C INPUT -i "$EDGE_IFACE" -j "$EDGE_CHAIN" 2>/dev/null || return 1
@@ -200,7 +236,7 @@ Wants=network-pre.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=$SBIN${GATEWAY:+ --gateway $GATEWAY}
+ExecStart=$SBIN${GATEWAY:+ --gateway $GATEWAY}${STACK_PORT:+ --stack-egress-port $STACK_PORT}
 ExecStop=$SBIN --remove
 
 [Install]

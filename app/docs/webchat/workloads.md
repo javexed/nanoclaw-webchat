@@ -53,6 +53,10 @@ workload network (`198.19.255.0/24`) and asks a listener on the host's address
 there. If it gets an answer, workloads are refused **and every running
 workload is stopped** until the rules are back.
 
+With runtime egress on (see [Runtime egress](#runtime-egress-optional)), add
+`--stack-egress-port <port>` to every one of these commands, alongside any
+`--gateway`: a re-run with fewer flags takes the missing rules out.
+
 Worker machines get the same rules from their installer and run the same
 check themselves; central places nothing on a worker whose check has not
 passed recently. See [scaling.md](scaling.md).
@@ -636,6 +640,104 @@ who administers it does not need one.
   An unpublished workload, or an app nobody opened in a week, is never renewed:
   it gets the reminder and stops at its expiry as before.
 
+## Runtime egress (optional)
+
+By default a running stack reaches nothing outside its own network: no
+internet, no LAN, nothing on this host. Runtime egress lets a service call
+the few hosts an owner approved for it, for example an app's API service
+calling a public API and a LAN model server:
+
+```yaml
+services:
+  api:
+    image: ghcr.io/example/cards-api:1.4
+    x-nanoclaw-egress:
+      - api.example.com
+      - "192.0.2.10:11434"
+```
+
+**Turning it on.** Pick a free TCP port (8472 is a fine choice), then:
+
+```bash
+# .env
+NANOCLAW_WORKLOAD_EGRESS_PORT=8472
+
+sudo deploy/workloads-host-rules.sh --stack-egress-port 8472 --install-unit   # plus --gateway … if you use it
+```
+
+The flag inserts one rule before the workload chain's drop: a new TCP
+connection arriving on a workload bridge to port 8472 on a workload address
+is accepted (IPv4 only). NanoClaw's egress proxy listens there, on the
+gateway address of each agent network that runs a stack with approved
+egress. The preflight then checks that a probe container's connection to
+that port on an address where NanoClaw never listens is refused: if
+something answers, a service on this host listens on that port on every
+address, workload containers could reach it, and runtime egress is refused
+until you pick another port or rebind that service. While the key is unset,
+or the check fails, a stack that declares `x-nanoclaw-egress` is refused
+with the reason; stacks without it are unaffected.
+
+**What a service gets.** `HTTP_PROXY`/`HTTPS_PROXY` (and lowercase) pointing
+at its network's proxy with a placeholder credential, `NO_PROXY` for its own
+stack (localhost, the subnet, every service name, alias and address) and
+`NODE_USE_ENV_PROXY=1`. NanoClaw's override is applied after the stack's own
+file, so these win. Only services that declare egress get them.
+
+**The rules for the list** (at most 10 entries per service):
+
+- `host` (ports 443 and 80), `host:port`, or a literal address;
+- `*.domain` matches its subdomains on port 443 only; a bare `*` is refused;
+- a LAN address must be written literally with its port
+  (`192.168.0.20:8080`); a name that resolves to a private address is
+  refused at connect time;
+- never this host (`localhost`, `host.docker.internal`), the workload range
+  `198.18.0.0/15`, Docker's `172.16.0.0/12`, loopback, link-local
+  `169.254.0.0/16` (cloud metadata), the tailnet's `100.64.0.0/10`, or the
+  publishing edge subnet.
+
+**Who decides.** The list is part of each service's line on the approval
+card ("may call …"), so adding or removing a host needs a new card from the
+same approvers as any deploy. Every entry must also be something the agent
+may reach itself: on its Network allowlist (install and its own hosts) or its
+own model's address, never the model floor such as `api.anthropic.com`. At
+runtime both apply: a request must match the approved list AND the agent's
+current allowlist, so taking a host off the agent cuts its stacks off too.
+An agent on **Open** has no allowlist, so for it the approved list alone
+applies. Whether the app is published (and to whom) makes no difference.
+
+**Threat model.** The proxy knows a caller by its source address: the
+listener's own address names the agent's network, and the source must be a
+service address NanoClaw assigned to a running stack on it. Stack containers
+drop every capability (no `NET_RAW` or `NET_ADMIN`), so they cannot claim
+another address; the agent's own containers on the same network (addresses
+`.128` and up) hold none and are refused, as is any service that declared
+nothing. The proxy reads the approved record, never the agent's file.
+Connections go directly from this host, **never through the credential
+gateway** (which would add the agent's secrets), to the address the name
+resolved to, checked at that moment against this host's own addresses,
+loopback, link-local, the workload range, every current Docker network, the
+edge subnet and the tailnet range, so a DNS answer cannot steer it inward.
+
+**Ollama.** An Ollama server NanoClaw knows from the model registry is
+normally refused on the agents' proxy. A service whose approved list names it
+may send it inference over plain HTTP (an `http://` URL, not a tunnel): one
+request per connection, with a `Content-Length` body (no chunked bodies),
+and only the inference and read-only paths an agent's model port allows
+(never pull, create, copy, push or delete).
+
+**Limits.**
+
+- HTTP and HTTPS through the proxy only: a client that ignores
+  `HTTP(S)_PROXY`, or a protocol other than HTTP (a database, SMTP, raw
+  TCP), has no way out.
+- Central only: a stack that declares egress is placed on central, an agent
+  pinned to a worker cannot have one, and an existing stack on a worker
+  cannot add it.
+- Refusals are kept in memory for a day: `ncl workloads status --name <n>`
+  shows the approved list and the latest refusals; Agent → Apps shows
+  "Can call" and a refusal count. Each refusal is also audited as
+  `runner.egress.blocked` with the caller `workload:<id>/<service>`.
+
 ## Settings (`.env`)
 
 | Key | Default | |
@@ -662,6 +764,7 @@ who administers it does not need one.
 | `NANOCLAW_WORKLOAD_CLOUDFLARE_TEAM_DOMAIN` | `WEBCHAT_CF_ACCESS_TEAM_DOMAIN` | The Access team domain, e.g. `myteam.cloudflareaccess.com`. |
 | `NANOCLAW_WORKLOAD_CLOUDFLARE_IMAGE` | pinned cloudflared | A mirror for the connector image; must name a digest. |
 | `NANOCLAW_WORKLOAD_PORTS` | off | The tailnet ports route's ports, e.g. `9001-9010` (see 7). |
+| `NANOCLAW_WORKLOAD_EGRESS_PORT` | off | Runtime egress's port on each agent network's gateway (see [Runtime egress](#runtime-egress-optional)); the host rules need `--stack-egress-port` with the same port. |
 
 ## What NanoClaw enforces
 

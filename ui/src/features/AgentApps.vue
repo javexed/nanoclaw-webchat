@@ -185,6 +185,10 @@ function whoChanged(r: AppRow, e: Event): void {
             v-html="KEBAB"
           ></button>
         </div>
+        <p v-if="r.canCall?.length" class="cred-hint app-calls">
+          Can call: {{ r.canCall.join(', ')
+          }}<template v-if="r.egressRefused"> · Refused: {{ r.egressRefused }}</template>
+        </p>
         <div v-if="r.deployed" class="app-row-controls">
           <select
             :value="r.route"

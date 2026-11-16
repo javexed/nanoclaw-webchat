@@ -9812,6 +9812,11 @@ button[data-draft-id] {
   color: var(--text-dim);
   white-space: nowrap;
 }
+.app-calls {
+  margin: 2px 0 0;
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
 .app-expiry-soon {
   color: var(--warning-strong);
 }

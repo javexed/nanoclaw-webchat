@@ -34,7 +34,13 @@ import { builderRuntime, runtimeAvailable } from './builder.js';
 import { sliceName } from './docker.js';
 import { gatewayState } from './gateway/index.js';
 import { lastPreflight, OFF_REASON, preflightRunning, runPreflight, type PreflightResult } from './preflight.js';
-import { confinedBuildsOn, workloadSetting, workloadsSwitchedOn, type WorkloadEnvKey } from './settings.js';
+import {
+  confinedBuildsOn,
+  workloadEgressPort,
+  workloadSetting,
+  workloadsSwitchedOn,
+  type WorkloadEnvKey,
+} from './settings.js';
 import { DEFAULT_PORTS } from './port/config.js';
 import { portStatus, refreshPortStatus, setupRange, type PortStatus } from './port/index.js';
 import { DOMAIN_RE } from './tailnet/config.js';
@@ -132,6 +138,12 @@ const status = (text: string, extra: Partial<HostStatus> = {}): HostStatus => ({
   ...extra,
 });
 
+/** The host rules' runtime egress flag, when NANOCLAW_WORKLOAD_EGRESS_PORT is set: a re-run must keep it. */
+const egressFlag = (): string => {
+  const port = workloadEgressPort();
+  return port === null ? '' : ` --stack-egress-port ${port}`;
+};
+
 /** A script under this install's deploy/, as the owner runs it on the host. */
 const script = (root: string, rel: string): string => path.join(root, 'deploy', rel);
 
@@ -158,7 +170,7 @@ function missingOnHost(p: PreflightResult, root: string, slice: string): HostSta
   const detail = sentence(p.reason);
   if (p.isolationOpen)
     return status('Host rules missing', {
-      fix: `sudo bash ${script(root, 'workloads-host-rules.sh')} --install-unit`,
+      fix: `sudo bash ${script(root, 'workloads-host-rules.sh')}${egressFlag()} --install-unit`,
       detail,
     });
   if (/slice/i.test(p.reason))
