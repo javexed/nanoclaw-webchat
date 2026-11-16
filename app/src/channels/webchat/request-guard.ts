@@ -12,6 +12,12 @@
  * Origin: a browser WebSocket carries the page's Origin, and a cross-site
  * page must not open one with the visitor's ambient identity. Clients that
  * are not browsers (scripts, CLIs) send none.
+ *
+ * Actions: a browser request that changes something must come from a page
+ * on this origin. Another port or a sibling name on the same site (an app
+ * published at :9001, or at app.<tailnet>.ts.net) is a different origin but
+ * the same site, so its requests still carry this server's cookie and the
+ * visitor's tailnet identity.
  */
 import type { IncomingMessage } from 'http';
 import net from 'net';
@@ -96,6 +102,20 @@ export function originAllowed(req: IncomingMessage): boolean {
     .trim()
     .toLowerCase();
   return originHost === String(req.headers.host ?? '').toLowerCase() || (!!forwarded && originHost === forwarded);
+}
+
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/**
+ * A request that may change something: from a page on this origin, or from
+ * something that is not a browser (no Sec-Fetch-Site, no Origin). Refuses a
+ * same-site or cross-site page, and an opaque (`null`) Origin.
+ */
+export function actionAllowed(req: IncomingMessage): boolean {
+  if (SAFE_METHODS.has((req.method ?? 'GET').toUpperCase())) return true;
+  const site = String(req.headers['sec-fetch-site'] ?? '').toLowerCase();
+  if (site && site !== 'same-origin' && site !== 'none') return false;
+  return originAllowed(req);
 }
 
 export function __resetRequestGuardForTest(): void {
