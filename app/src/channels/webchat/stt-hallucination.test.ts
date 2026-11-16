@@ -145,3 +145,20 @@ describe('wavStats', () => {
     expect(filterHallucination('Thank you.', wavStats(wav(700, 800)))).toBe('Thank you.');
   });
 });
+
+describe('non-speech-only transcripts', () => {
+  it.each(['[Music]', '(applause)', '*sigh*', '♪♪♪', '♪ ♫ ♪', '[BLANK_AUDIO] (music) ♪'])('drops %j', (t) =>
+    expect(filterHallucination(t, null)).toBe(''),
+  );
+
+  it.each(['[Music] then the build failed', '♪ la la ♪'])('keeps %j', (t) =>
+    expect(filterHallucination(t, null)).toBe(t),
+  );
+
+  it('rejects a long glyph run with a trailing word without backtracking', () => {
+    const t0 = Date.now();
+    expect(filterHallucination('♪'.repeat(5000) + ' x', null)).not.toBe('');
+    expect(filterHallucination(' ♪'.repeat(5000) + ' x', null)).not.toBe('');
+    expect(Date.now() - t0).toBeLessThan(500);
+  });
+});

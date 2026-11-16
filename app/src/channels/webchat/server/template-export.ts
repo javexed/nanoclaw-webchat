@@ -238,7 +238,8 @@ export async function exportAgentAsTemplate(
       const tasksDir = path.join(staging, EXT, 'tasks');
       fs.mkdirSync(tasksDir, { recursive: true });
       for (const task of await tasks) {
-        const body = `---\nschedule: "${task.schedule.replace(/"/g, '\\"')}"\n---\n${task.prompt.trim()}\n`;
+        // JSON string syntax is valid YAML double-quoted syntax: quotes AND backslashes escaped.
+        const body = `---\nschedule: ${JSON.stringify(task.schedule)}\n---\n${task.prompt.trim()}\n`;
         fs.writeFileSync(path.join(tasksDir, `${task.name}.md`), body);
       }
     }
