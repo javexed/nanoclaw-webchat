@@ -55,9 +55,13 @@ export function assertGithubUrl(url: string): void {
 // checked here rather than trusted.
 export async function githubFetch(url: string, headers: Record<string, string>): Promise<Response> {
   assertGithubUrl(url);
+  // Rebuild the request on a fixed origin, so only the path and query come from the input.
+  const u = new URL(url);
+  const origin = u.hostname === 'api.github.com' ? 'https://api.github.com' : 'https://raw.githubusercontent.com';
+  const target = origin + u.pathname + u.search;
   for (let attempt = 0; ; attempt++) {
     try {
-      const r = await fetch(url, { headers, signal: AbortSignal.timeout(12000) });
+      const r = await fetch(target, { headers, signal: AbortSignal.timeout(12000) });
       if (r.status >= 500 && r.status < 600 && attempt < 1) {
         await new Promise((res) => setTimeout(res, 600));
         continue;
