@@ -104,8 +104,8 @@ async function check(req: IncomingMessage, res: ServerResponse, route: AppRoute,
   const kind = publishingRoute(route.kind);
   if (!kind || !(await kind.enabled())) return send(res, 503, 'This app’s publishing route is off.');
   const hostname = await kind.hostnameFor(route.app);
-  // Caddy routes by hostname; a check for another host than the app's is not one Caddy should make.
-  if (!hostname || hostOf(header(req, 'x-forwarded-host')) !== hostname) return send(res, 404, 'Not found');
+  // Caddy routes by hostname (or, on the port route, by port); a check for another host is not one Caddy makes.
+  if (!hostname || hostOf(header(req, 'x-forwarded-host')) !== hostOf(hostname)) return send(res, 404, 'Not found');
   const app: PublishedApp = { id: route.id, app: route.app, hostname, agentGroupId: route.agentGroupId };
   const who = await kind.identify({ headers: req.headers, peer: header(req, 'x-nanoclaw-peer') }, app);
   if (!who) return send(res, 401, 'Sign in required.');

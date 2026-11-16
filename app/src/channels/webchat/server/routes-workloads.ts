@@ -26,6 +26,7 @@ import {
 import { appsOf, ChangeRefused, changeApp, setBuildSource, setPublishDeps } from '../../../modules/workloads/gui.js';
 import {
   applyCloudflare,
+  applyPorts,
   applyTailnet,
   applyWorkloads,
   connectCloudflare,
@@ -175,6 +176,18 @@ export async function rPublishingTailnetPut(ctx: RouteCtx, _m: RegExpMatchArray)
   if (body === undefined) return;
   try {
     await applyTailnet(process.cwd(), { on: body.on, domain: body.domain });
+    return json(ctx.res, 200, await publishingView());
+  } catch (err) {
+    return settingFail(ctx, err);
+  }
+}
+
+/** The Tailnet ports switch. Body: { on }. */
+export async function rPublishingPortsPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const body = await readJsonObject<{ on?: unknown }>(ctx.req, ctx.res);
+  if (body === undefined) return;
+  try {
+    await applyPorts(process.cwd(), { on: body.on });
     return json(ctx.res, 200, await publishingView());
   } catch (err) {
     return settingFail(ctx, err);

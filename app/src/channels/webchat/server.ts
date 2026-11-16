@@ -447,6 +447,7 @@ import {
   rAgentWorkloadDelete,
   rPublishingCloudflareConnect,
   rPublishingCloudflarePut,
+  rPublishingPortsPut,
   rPublishingGet,
   rPublishingTailnetConnect,
   rPublishingTailnetPut,
@@ -3091,6 +3092,13 @@ const API_ROUTES: ApiRoute[] = [
     guards: ['csrf', 'owner'],
     h: rPublishingTailnetConnect,
     audit: 'publishing.tailnet.connect',
+  },
+  {
+    method: 'PUT',
+    path: '/api/publishing/ports',
+    guards: ['csrf', 'owner'],
+    h: rPublishingPortsPut,
+    audit: 'publishing.ports.set',
   },
   {
     method: 'PUT',

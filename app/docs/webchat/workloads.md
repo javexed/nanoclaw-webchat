@@ -92,14 +92,16 @@ At most 20 builds an hour per agent run without a card (kept in the database).
 
 An agent publishes one of its services as an app with
 `ncl workloads expose`, or deploys and publishes in one step with
-`ncl workloads up --publish <route>` (one card for both). People open it at the app's own address — never under
-NanoClaw's own — signed in by the publishing route the app is on:
+`ncl workloads up --publish <route>` (one card for both). People open it at the app's own address — never at
+NanoClaw's own origin — signed in by the publishing route the app is on:
 
 - **tailnet** — a Tailscale sidecar per app, `<app>.<tailnet>.ts.net`;
-- **cloudflare** — a Cloudflare Tunnel with one Access application per app.
+- **cloudflare** — a Cloudflare Tunnel with one Access application per app;
+- **port** — one port per app on this machine's own tailnet name,
+  `<node>.<tailnet>.ts.net:9001`.
 
 The routes themselves are set up separately (the tailnet in section 5,
-Cloudflare in section 6). Until one is
+Cloudflare in section 6, tailnet ports in section 7). Until one is
 on, `expose` is refused with "no publishing route is on" (`up --publish`
 with "the tailnet route is not on…", and the hint to deploy without
 `--publish`), and nothing is published. Both routes reach the same gateway, set up here.
@@ -138,7 +140,8 @@ It refuses to run, and says why in the log, when:
 Someone NanoClaw has no user for is never let in. The person's identity comes
 only from the app's own route: on the tailnet, `Tailscale-User-Login` from that
 app's own sidecar; on Cloudflare, the Access token verified for that app's own
-Access audience. NanoClaw's own sign-in (cookies, bearer tokens, proxy
+Access audience; on a tailnet port, `Tailscale-User-Login` on the gateway's
+loopback listener for that port. NanoClaw's own sign-in (cookies, bearer tokens, proxy
 headers) plays no part, and the check never redirects.
 
 **What an app receives.** Requests are rebuilt from an allow-list of headers
@@ -151,8 +154,10 @@ edges' sign-in cookies are cut out of `Cookie`. Caddy sets `Host` and fresh
 `X-NanoClaw-User`, `X-NanoClaw-Name`, `X-NanoClaw-Auth` (the route) and
 `X-NanoClaw-Identity`: an ES256 token with `aud` = the app's hostname, valid
 two minutes, verifiable against `/.nanoclaw/jwks.json` on the app's own
-address. Cookies an app sets lose their `Domain` attribute, so an app cannot
-set cookies for its neighbours or for NanoClaw.
+address (on the port route, `aud` is `host:port`). Cookies an app sets lose
+their `Domain` attribute, so an app cannot set cookies for its neighbours or
+for NanoClaw, and a `Set-Cookie` for one of NanoClaw's own cookie names is
+emptied.
 
 **Approvals.** `expose` always needs an owner's card, which says where the app
 will be, what serves it and who can open it; the route, rule and app name are
@@ -269,7 +274,7 @@ disconnected.
    onecli agents set-secrets --id <agent id> --secret-ids <secret id>
    ```
 
-   (Connect in Admin → Publishing does the same, section 7.) NanoClaw never holds the
+   (Connect in Admin → Publishing does the same, section 8.) NanoClaw never holds the
    secret: OneCLI adds it to NanoClaw's token request as HTTP Basic client
    authentication, NanoClaw keeps the hour-long access token in memory, and
    each sidecar only ever sees its own single-use key. OneCLI identities in
@@ -391,7 +396,7 @@ catch-all stay (they publish nothing).
    onecli agents set-secrets --id <agent id> --secret-ids <secret id>
    ```
 
-   (Connect in Admin → Publishing does the same, section 7.) NanoClaw
+   (Connect in Admin → Publishing does the same, section 8.) NanoClaw
    never holds the token. A OneCLI identity in `all` secret mode would be
    given it too, and with it could change who may open every app, so the
    route does not run while one exists; switch them to `selective`.
@@ -412,7 +417,77 @@ stays separate from the apps': keep `WEBCHAT_CF_ACCESS_AUD` set to its AUD.
 The route is on only when all of the above holds; its status reads
 `Connected` or names the one thing missing.
 
-## 7. In webchat
+## 7. The tailnet ports route (optional)
+
+Publishes each app on a port of this machine's own tailnet name:
+`https://<node>.<tailnet>.ts.net:9001`. No Tailscale admin setup, no OAuth
+client, no sidecars: the host's own Tailscale serves the ports, set up once
+by the owner. Reachable only from devices your tailnet policy lets reach this
+machine on those ports. Never Funnel.
+
+**Why another port is enough.** A browser keeps a page's powers to its
+origin (scheme, host and port), so an app's pages on `:9001` cannot read
+NanoClaw's pages or call its API as NanoClaw's own page would. The browser
+still counts another port as the same *site*: it sends NanoClaw's sign-in
+cookie with requests from `:9001`, and Tailscale adds the visitor's identity
+whatever page sent them. So NanoClaw refuses every request that can change
+something (anything but `GET`, `HEAD`, `OPTIONS`) unless it comes from a page
+on its own origin (`Sec-Fetch-Site` and `Origin`), and its WebSocket checks
+`Origin` the same way. The gateway cuts NanoClaw's cookie from what an app
+receives and empties an app's `Set-Cookie` for NanoClaw's cookie names.
+
+**How it works.** `tailscale serve` on the host terminates HTTPS on each port
+and forwards it to `http://127.0.0.1:<port>`, adding `Tailscale-User-Login`
+for a person's device. The gateway (section 4) gives each published app a
+listener of its own there, on loopback, and believes that header only from
+loopback. NanoClaw never changes Tailscale's config: it reads `tailscale serve
+status`, and hands each app a port that forwards whole (`/`) to its own
+loopback listener, is not on Funnel, and is free. A port that serves anything
+else is left alone and reported. An app keeps its port while it is published;
+unpublishing gives it back, and a port given for a card nobody approved is
+given back after a week (`data/workload-gateway/ports.json`).
+
+**Shared cookies.** Apps on this route share one host name, and a browser
+sends a cookie to every port of a name: app A's cookies reach app B. Their
+pages are still kept apart (separate origins: storage, scripts, service
+workers). Publish an app that must keep its cookies from other apps on the
+tailnet route instead.
+
+### Owner setup
+
+1. **The app gateway** on loopback (section 4): `NANOCLAW_WORKLOAD_GATEWAY_PORT`
+   set, `NANOCLAW_WORKLOAD_GATEWAY_BIND` left at `127.0.0.1` (or the edge
+   address, when the tailnet or Cloudflare route is on too: the port
+   listeners bind loopback either way). The ports must not include the
+   gateway's own two.
+2. **The ports on the tailnet**, once per host, as root (or Tailscale's
+   operator):
+
+   ```bash
+   sudo bash deploy/workloads-tailnet-ports.sh --ports 9001-9010
+   sudo bash deploy/workloads-tailnet-ports.sh --ports 9001-9010 --check    # exit 0 when all are set up
+   sudo bash deploy/workloads-tailnet-ports.sh --ports 9001-9010 --remove   # take them out again
+   ```
+
+   It refuses a port that is on Funnel and leaves alone one that already
+   serves something else.
+3. **Access:** if your tailnet policy limits which ports people reach on this
+   machine, allow `tcp:9001-9010` (or your range) for the people who open apps.
+   NanoClaw still applies each app's "who can open" rule on top.
+4. **Settings** (`.env`, or Admin → Publishing → Tailnet ports, which writes
+   `9001-9010`):
+
+   ```bash
+   NANOCLAW_WORKLOAD_PORTS=9001-9010   # one port or a range, 1024–65535, at most 50
+   ```
+
+The route is on when at least one port is usable. Its status reads
+`Connected`, or names the one thing missing; while some ports in the range are
+not set up yet, Admin → Publishing shows the setup command for them.
+
+`who: specific` is for the Cloudflare route only.
+
+## 8. In webchat
 
 ### Admin → Publishing (owner)
 
@@ -433,8 +508,12 @@ the command.
 
 Then one block per route: a switch, its settings while it is on, **Connect**, and
 a status line that reads `Connected`, `Not connected`, or the one thing missing
-in a few words (the same check as `tailnetStatus()` / `cloudflareStatus()`,
-with any warnings under it). Above them, one line says when the app gateway
+in a few words (the same check as `tailnetStatus()` / `cloudflareStatus()` /
+`portStatus()`, with any warnings under it). **Tailnet ports** has no settings
+or credential: a switch (on writes `NANOCLAW_WORKLOAD_PORTS=9001-9010` unless a
+range is set), its status line and, while ports are missing on the tailnet,
+`deploy/workloads-tailnet-ports.sh` with this install's path and the range,
+and a copy button. Above them, one line says when the app gateway
 is not running (section 4).
 
 - **The switches and fields are the `.env` keys** of sections 5 and 6 (and
@@ -456,7 +535,7 @@ is not running (section 4).
   injected on). NanoClaw never stores it, the page clears it after sending,
   and no answer or error carries it back.
 
-Owner only: the endpoints (`GET /api/publishing`, `PUT /api/publishing/{workloads,tailnet,cloudflare}`,
+Owner only: the endpoints (`GET /api/publishing`, `PUT /api/publishing/{workloads,tailnet,cloudflare,ports}`,
 `POST /api/publishing/{tailnet,cloudflare}/connect`) refuse everyone else, and
 writes carry the CSRF header. Every change is in the audit log.
 
@@ -582,6 +661,7 @@ who administers it does not need one.
 | `NANOCLAW_WORKLOAD_CLOUDFLARE_ZONE_ID` | — | The app domain's zone. |
 | `NANOCLAW_WORKLOAD_CLOUDFLARE_TEAM_DOMAIN` | `WEBCHAT_CF_ACCESS_TEAM_DOMAIN` | The Access team domain, e.g. `myteam.cloudflareaccess.com`. |
 | `NANOCLAW_WORKLOAD_CLOUDFLARE_IMAGE` | pinned cloudflared | A mirror for the connector image; must name a digest. |
+| `NANOCLAW_WORKLOAD_PORTS` | off | The tailnet ports route's ports, e.g. `9001-9010` (see 7). |
 
 ## What NanoClaw enforces
 
@@ -616,6 +696,8 @@ who administers it does not need one.
 - Base images in a Dockerfile's `FROM` lines are not pinned unless written
   with a digest; the Dockerfile and build args are.
 - Until a route is on, nothing can be published.
+- On the tailnet ports route, apps share cookies with each other (one host
+  name), and there are only as many apps as ports set up.
 - On the tailnet, an app name already used by another device on the tailnet
   cannot be published there.
 - On Cloudflare, people are named by email: only NanoClaw users whose id is

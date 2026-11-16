@@ -35,6 +35,8 @@ export interface PublishingView {
     teamDomain: string;
     status: StatusLine;
   };
+  /** One port per app on this machine's tailnet name. Missing from older servers. */
+  ports?: { on: boolean; range: string; status: StatusLine; fix: string };
 }
 
 export type CloudflareFields = Pick<PublishingView['cloudflare'], 'domain' | 'accountId' | 'zoneId' | 'teamDomain'>;

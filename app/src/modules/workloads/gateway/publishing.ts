@@ -7,6 +7,9 @@
  *               believed only from that app's own sidecar
  *   cloudflare  a Cloudflare Tunnel connector; Cf-Access-Jwt-Assertion,
  *               verified for that app's own Access application
+ *   port        one port per app on this machine's own tailnet name, served
+ *               by the host's Tailscale; Tailscale-User-Login, believed only
+ *               on the gateway's loopback listener for that port
  *
  * A route kind registers here when its module is set up and switched on. With
  * none registered, nothing can be published: `ncl workloads expose` says so.
@@ -18,10 +21,13 @@ import type { IncomingHttpHeaders } from 'http';
 
 import type { AppRoute } from '../routes.js';
 
-export const ROUTE_KINDS = ['tailnet', 'cloudflare'] as const;
+export const ROUTE_KINDS = ['tailnet', 'cloudflare', 'port'] as const;
 export type RouteKind = (typeof ROUTE_KINDS)[number];
 
 export const isRouteKind = (v: unknown): v is RouteKind => ROUTE_KINDS.includes(v as RouteKind);
+
+/** "tailnet, cloudflare or port", for a refusal. */
+export const ROUTE_KIND_WORDS = `${ROUTE_KINDS.slice(0, -1).join(', ')} or ${ROUTE_KINDS[ROUTE_KINDS.length - 1]}`;
 
 /** A forwarded request as the gateway's check sees it. */
 export interface GatewayRequest {
@@ -53,7 +59,7 @@ export interface PublishingRoute {
   label: string;
   /** On, set up and usable right now. */
   enabled(): Promise<boolean>;
-  /** The address an app is opened at, or null when this route cannot name one yet. */
+  /** The address an app is opened at (a host name, or host:port), or null when this route cannot name one yet. */
   hostnameFor(app: string): Promise<string | null>;
   /** The person behind a request, or null when the edge did not prove one. */
   identify(req: GatewayRequest, app: PublishedApp): Promise<GatewayIdentity | null>;

@@ -64,7 +64,7 @@ import {
   type ExposeInput,
 } from './publish.js';
 import { dayText } from './notify.js';
-import { isRouteKind } from './gateway/publishing.js';
+import { isRouteKind, ROUTE_KIND_WORDS } from './gateway/publishing.js';
 import { describeShape, decodeApproved } from './shape.js';
 import { sleepAfterH } from './sleep.js';
 import {
@@ -275,7 +275,7 @@ registerResource({
         {
           name: 'publish',
           type: 'string',
-          description: 'Also publish it for people, on this route: tailnet or cloudflare (one card for both).',
+          description: `Also publish it for people, on this route: ${ROUTE_KIND_WORDS} (one card for both).`,
         },
         {
           name: 'who',
@@ -317,7 +317,7 @@ registerResource({
             throw new Error(`--${stray.join(', --')} go${stray.length === 1 ? 'es' : ''} with --publish`);
         }
         const g = groupOf(args, ctx);
-        if (pub && !isRouteKind(pub.route)) throw new Error('--publish must be tailnet or cloudflare');
+        if (pub && !isRouteKind(pub.route)) throw new Error(`--publish must be ${ROUTE_KIND_WORDS}`);
         // The route first: with it off there is nothing to card, and the agent hears how to deploy only.
         const route = pub ? await pickRoute(pub.route).catch((err: unknown) => Promise.reject(deployOnly(err))) : null;
         const c = await checkWorkload(g, name, str(args.file, 'file'));
@@ -544,7 +544,7 @@ registerResource({
         { ...SERVICE, required: true },
         { name: 'port', type: 'number', description: 'The port the service listens on.', required: true },
         { name: 'app', type: 'string', description: 'The app’s name in its address (default: the workload’s name).' },
-        { name: 'route', type: 'string', description: 'tailnet or cloudflare (default: the one that is on).' },
+        { name: 'route', type: 'string', description: `${ROUTE_KIND_WORDS} (default: the one that is on).` },
         {
           name: 'who',
           type: 'string',

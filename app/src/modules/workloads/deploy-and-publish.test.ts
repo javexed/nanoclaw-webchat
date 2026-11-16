@@ -159,7 +159,7 @@ describe('one card for deploy and publish', () => {
     expect(err).toMatch(/deploy without --publish/);
     __clearPublishingRoutesForTest();
     await expect(card({ publish: 'cloudflare' })).rejects.toThrow(/turn on Cloudflare in Admin → Publishing/);
-    await expect(card({ publish: 'funnel' })).rejects.toThrow(/--publish must be tailnet or cloudflare/);
+    await expect(card({ publish: 'funnel' })).rejects.toThrow(/--publish must be tailnet, cloudflare or port/);
   });
 
   it('is refused while the app gateway is off', async () => {

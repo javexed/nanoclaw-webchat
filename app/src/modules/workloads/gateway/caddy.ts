@@ -11,7 +11,11 @@
  * the client's X-Forwarded-* or Forwarded — is in it; the app gets the signed
  * X-NanoClaw-* identity instead, and fresh X-Forwarded-* that Caddy sets.
  * Cookies an app sets lose any Domain attribute, so an app can only set
- * cookies for its own host.
+ * cookies for its own host, and a cookie named like NanoClaw's own is
+ * refused (an app on another port of NanoClaw's name shares its cookies).
+ *
+ * An app on the port route (host:port) gets a listener of its own on
+ * 127.0.0.1 at that port, where the host's Tailscale serve forwards it.
  *
  * Every value templated into the Caddyfile is checked first: hostnames,
  * targets (an address in the workload range), route ids and the secret.
@@ -39,6 +43,17 @@ export const HOSTNAME_RE =
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SECRET_RE = /^[A-Za-z0-9_-]{32,128}$/;
 
+/** An app's address: a host name, or host:port for the port route (ports 1024–65535). */
+export function splitAddress(a: string): { host: string; port: number | null } | null {
+  const m = /^([^:]+)(?::(\d{4,5}))?$/.exec(a);
+  if (!m || !HOSTNAME_RE.test(m[1])) return null;
+  if (m[2] === undefined) return { host: m[1], port: null };
+  const port = Number(m[2]);
+  return port >= 1024 && port <= 65535 ? { host: m[1], port } : null;
+}
+
+export const validAddress = (a: string): boolean => splitAddress(a) !== null;
+
 /** A workload service address: 198.18.0.0/15 (override.ts), with a port. */
 export function validTarget(t: string): boolean {
   const m = /^198\.(18|19)\.(0|[1-9]\d{0,2})\.([1-9]\d{0,2}):([1-9]\d{0,4})$/.exec(t);
@@ -50,6 +65,7 @@ export function validTarget(t: string): boolean {
 export interface GatewaySite {
   /** The route's id: how the check finds the app. */
   id: string;
+  /** A host name, or host:port for the port route. */
   hostname: string;
   /** address:port on the workload network, or a relay to a stack on a worker (relay.ts). */
   target: string;
@@ -57,7 +73,7 @@ export interface GatewaySite {
 
 export function validSite(s: GatewaySite): boolean {
   // A stack on a worker is reached through a relay socket over its link (relay.ts).
-  return UUID_RE.test(s.id) && HOSTNAME_RE.test(s.hostname) && (validTarget(s.target) || isRelayTarget(s.target));
+  return UUID_RE.test(s.id) && validAddress(s.hostname) && (validTarget(s.target) || isRelayTarget(s.target));
 }
 
 /**
@@ -113,6 +129,9 @@ export const IDENTITY_HEADERS = ['X-NanoClaw-User', 'X-NanoClaw-Name', 'X-NanoCl
 const CREDENTIAL_COOKIES =
   '(?i)(^|;\\s*)(nanoclaw_[^=;]*|__host-nanoclaw[^=;]*|cf_authorization|cf_appsession|appserviceauthsession[^=;]*)=[^;]*';
 
+/** A Set-Cookie from an app for one of NanoClaw's own cookie names: emptied, so the browser ignores it. */
+const NANOCLAW_SET_COOKIE = '(?i)^\\s*(nanoclaw_|__host-nanoclaw).*$';
+
 export const runDir = (): string => path.join(gatewayDir(), 'caddy');
 /** Inside the container. */
 /** Where the run folder is mounted in the Caddy container. */
@@ -141,10 +160,14 @@ export function renderCaddyfile(cfg: GatewayConfig, sites: GatewaySite[], secret
     if (!validSite(s)) throw new Error(`refusing to render gateway site ${JSON.stringify(s.hostname)}`);
     if (seen.has(s.hostname)) throw new Error(`two gateway sites for ${s.hostname}`);
     seen.add(s.hostname);
+    const port = splitAddress(s.hostname)!.port;
+    if (port !== null && (port === cfg.port || port === cfg.internalPort))
+      throw new Error(`gateway site ${s.hostname} takes the gateway's own port`);
     const auth = [`\t\t\theader_up X-NanoClaw-Gateway-Secret ${secret}`, `\t\t\theader_up X-NanoClaw-Route ${s.id}`];
     out.push(
       '',
-      `http://${s.hostname} {`,
+      // A port-route app: its own listener on loopback, where only the host's Tailscale serve forwards.
+      ...(port === null ? [`http://${s.hostname} {`] : [`http://:${port} {`, '\tbind 127.0.0.1']),
       '\troute {',
       // Nothing the browser sends may claim a NanoClaw identity.
       '\t\trequest_header -X-NanoClaw-*',
@@ -177,6 +200,7 @@ export function renderCaddyfile(cfg: GatewayConfig, sites: GatewaySite[], secret
       `\t\t\theader_up X-Forwarded-Host ${s.hostname}`,
       '\t\t\theader_up X-Forwarded-Proto https',
       '\t\t\theader_down Set-Cookie "(?i);\\s*domain=[^;]*" ""',
+      `\t\t\theader_down Set-Cookie "${NANOCLAW_SET_COOKIE}" ""`,
       '\t\t\tflush_interval -1',
       '\t\t}',
       '\t}',
