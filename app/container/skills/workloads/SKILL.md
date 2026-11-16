@@ -3,9 +3,9 @@ name: workloads
 description: >-
   Workloads: run the apps you build (a Compose stack — web app, API, database)
   on NanoClaw itself with `ncl workloads`, and reach them from your own
-  container. Use this skill whenever you need to deploy, run, host or test an
-  app or service, think you need a server or VM for one, or bring an existing
-  project's docker-compose.yml over. Covers the rules a stack must follow,
+  container. Use this skill whenever you plan, design, build, deploy, run, host
+  or test an app or service (before choosing its stack), think you need a
+  server or VM for one, or bring an existing project's docker-compose.yml over. Covers the rules a stack must follow,
   converting a Compose project, builds, approvals, addresses, logs/exec, disk
   quota, backups and restore, and publishing an app to people.
 ---
