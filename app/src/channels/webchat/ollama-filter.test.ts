@@ -42,6 +42,23 @@ describe('what an agent may ask of Ollama', () => {
     ])
       expect(ollamaRequestAllowed(m, p), `${m} ${p}`).toBe(false);
   });
+
+  it('checks the path exactly as it is forwarded: nothing encoded, dotted, doubled or absolute', () => {
+    for (const [m, p] of [
+      ['POST', '/api/pull/%2e%2e/chat'],
+      ['POST', '/api/chat/%2e%2e/pull'],
+      ['POST', '/api/%63hat'],
+      ['POST', '/api/./chat'],
+      ['POST', '/api//chat'],
+      ['POST', '/api\\chat'],
+      ['POST', 'http://ollama/api/chat'],
+      ['POST', '/API/CHAT'],
+      ['POST', '/api/chat/'],
+    ])
+      expect(ollamaRequestAllowed(m, p), `${m} ${p}`).toBe(false);
+    expect(ollamaRequestAllowed('POST', '/api/chat?stream=false')).toBe(true);
+    expect(ollamaRequestAllowed('POST', '/api/chat?x=/api/pull')).toBe(true);
+  });
 });
 
 describe('an agent connection to Ollama, through the filter', () => {
