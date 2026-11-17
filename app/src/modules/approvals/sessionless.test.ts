@@ -6,6 +6,7 @@ import { createPendingApproval, getPendingApproval } from '../../db/sessions.js'
 
 import {
   __resetSessionlessApprovalsForTest,
+  onSessionlessApprovalResolved,
   registerSessionlessApprovalHandler,
   resolveSessionlessApproval,
   type SessionlessApprovalContext,
@@ -73,5 +74,24 @@ describe('session-less approvals', () => {
     );
     expect(seen).toEqual(['reject']);
     expect(await getPendingApproval(row.approval_id)).toBeUndefined();
+  });
+
+  it('tells resolved listeners once per settled click, approve or reject, even when the handler throws', async () => {
+    const told: string[] = [];
+    onSessionlessApprovalResolved((id, outcome, userId) => {
+      told.push(`${id}:${outcome}:${userId}`);
+    });
+    onSessionlessApprovalResolved(() => {
+      throw new Error('listener exploded'); // must not stop the click from settling
+    });
+    registerSessionlessApprovalHandler('pair_test', async ({ outcome }) => {
+      if (outcome === 'reject') throw new Error('handler exploded');
+    });
+    const a = await pendingRow('pair_test', {});
+    expect(await resolveSessionlessApproval(a, 'approve', 'webchat:owner')).toBe(true);
+    expect(await resolveSessionlessApproval(a, 'approve', 'webchat:owner')).toBe(true); // repeat click: nothing new
+    const b = await pendingRow('pair_test', {});
+    await expect(resolveSessionlessApproval(b, 'reject', 'webchat:admin')).rejects.toThrow('handler exploded');
+    expect(told).toEqual([`${a.approval_id}:approve:webchat:owner`, `${b.approval_id}:reject:webchat:admin`]);
   });
 });

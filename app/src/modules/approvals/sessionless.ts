@@ -35,12 +35,36 @@ export type SessionlessApprovalHandler = (ctx: SessionlessApprovalContext) => Pr
 
 const handlers = new Map<string, SessionlessApprovalHandler>();
 
+/** Told once a session-less approval is settled, so a channel can clear the card it showed. */
+export type SessionlessResolvedListener = (
+  approvalId: string,
+  outcome: 'approve' | 'reject',
+  userId: string,
+) => Promise<void> | void;
+const resolvedListeners: SessionlessResolvedListener[] = [];
+
+export function onSessionlessApprovalResolved(listener: SessionlessResolvedListener): void {
+  resolvedListeners.push(listener);
+}
+
+async function tellResolved(approvalId: string, outcome: 'approve' | 'reject', userId: string): Promise<void> {
+  for (const listener of resolvedListeners) {
+    try {
+      await listener(approvalId, outcome, userId);
+      // eslint-disable-next-line no-catch-all/no-catch-all -- one failing listener must not block the others
+    } catch (err) {
+      log.error('Session-less approval: resolved listener threw', { approvalId, err });
+    }
+  }
+}
+
 export function registerSessionlessApprovalHandler(action: string, handler: SessionlessApprovalHandler): void {
   if (handlers.has(action)) throw new Error(`Session-less approval handler already registered: ${action}`);
   handlers.set(action, handler);
 }
 export function __resetSessionlessApprovalsForTest(): void {
   handlers.clear();
+  resolvedListeners.length = 0;
 }
 
 /** Raise the card to every owner/global admin. Returns the approval id, or null when nobody could be reached. */
@@ -134,6 +158,7 @@ export async function resolveSessionlessApproval(
     await handler({ approval, payload, outcome, userId });
   } finally {
     await deletePendingApproval(approval.approval_id);
+    await tellResolved(approval.approval_id, outcome, userId);
   }
   return true;
 }

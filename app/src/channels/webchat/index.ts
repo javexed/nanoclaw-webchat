@@ -74,6 +74,7 @@ import {
 import { registerApprovalResolvedHandler } from '../../modules/approvals/primitive.js';
 import { EXPIRY_USER, registerResendSurface } from '../../modules/approvals/expiry.js';
 import { registerApprovalVenue } from '../../modules/approvals/words.js';
+import { onSessionlessApprovalResolved } from '../../modules/approvals/sessionless.js';
 import { registerModuleSweep } from '../../module-sweep.js';
 import {
   approversInRoom,
@@ -504,6 +505,17 @@ registerApprovalIntercept((approvalId, session) => approveAdminModelSwitch(appro
 // Optional LLM approval pre-judge (off by default): may auto-approve an opted-in
 // low-stakes action via the human Approve path. Returning true skips the card.
 registerApprovalIntercept((approvalId, session, question) => maybePrejudgeApproval(approvalId, session, question));
+
+// A session-less card (no agent behind it, e.g. widening who may open an app)
+// lives only in approver inboxes: clear it there the same way.
+onSessionlessApprovalResolved(async (approvalId, _outcome, resolvedByUserId) => {
+  const indexed = await getWebchatApprovalInboxes(approvalId);
+  for (const platformId of indexed) {
+    const userId = userForApprovalInbox(platformId);
+    if (userId) pushApprovalResolvedToUser(userId, approvalId, resolvedByUserId);
+  }
+  if (indexed.length > 0) await deleteWebchatApprovalIndex(approvalId);
+});
 
 // Fan-out cleanup: on resolve, push `approval_resolved` to every inbox that got
 // the card (the live clear; offline admins refetch), then drop the index rows.
