@@ -463,6 +463,12 @@ var approvalRows = ref([]);
 */
 var approvalBusy = ref(/* @__PURE__ */ new Set());
 var approvalErrors = ref({});
+/**
+* Clicks the server accepted, by question id. The action itself runs after the
+* reply and its outcome card can take a while (a deploy builds first), so the
+* card says what was decided at once instead of looking untouched until then.
+*/
+var approvalDecided = ref({});
 // src/features/ApprovalCard.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$84 = ["data-question-id"];
 var _hoisted_2$73 = { class: "approval-title" };
@@ -484,14 +490,19 @@ var _hoisted_7$33 = {
 	class: "approval-details"
 };
 var _hoisted_8$24 = { class: "approval-payload" };
-var _hoisted_9$21 = ["disabled"];
-var _hoisted_10$21 = {
-	key: 4,
+var _hoisted_9$21 = {
+	key: 3,
+	class: "approval-decided",
+	role: "status"
+};
+var _hoisted_10$21 = ["disabled"];
+var _hoisted_11$16 = {
+	key: 5,
 	class: "approval-actions"
 };
-var _hoisted_11$16 = ["disabled", "onClick"];
-var _hoisted_12$13 = {
-	key: 5,
+var _hoisted_12$13 = ["disabled", "onClick"];
+var _hoisted_13$13 = {
+	key: 6,
 	class: "approval-error"
 };
 /**
@@ -586,8 +597,11 @@ var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 				}), 128)), triageNote() ? (openBlock(), createElementBlock("span", _hoisted_5$48, toDisplayString(triageNote()), 1)) : createCommentVNode("", true)])) : createCommentVNode("", true),
 				cardText() ? (openBlock(), createElementBlock("p", _hoisted_6$42, toDisplayString(cardText()), 1)) : createCommentVNode("", true),
 				rawPayload() ? (openBlock(), createElementBlock("details", _hoisted_7$33, [_cache[3] || (_cache[3] = createElementVNode("summary", null, "Details", -1)), createElementVNode("pre", _hoisted_8$24, toDisplayString(payloadText(rawPayload())), 1)])) : createCommentVNode("", true),
-				askingReason.value ? (openBlock(), createElementBlock("form", {
-					key: 3,
+				unref(approvalDecided)[__props.approval.questionId] ? (openBlock(), createElementBlock("div", _hoisted_9$21, [unref(approvalDecided)[__props.approval.questionId] === "approve" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [_cache[4] || (_cache[4] = createElementVNode("span", {
+					class: "btn-spinner",
+					"aria-hidden": "true"
+				}, null, -1)), _cache[5] || (_cache[5] = createTextVNode("Approved · working on it… ", -1))], 64)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [createTextVNode("Rejected")], 64))])) : askingReason.value ? (openBlock(), createElementBlock("form", {
+					key: 4,
 					class: "approval-actions approval-reason",
 					onSubmit: withModifiers(sendReason, ["prevent"])
 				}, [
@@ -608,16 +622,16 @@ var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 						type: "submit",
 						class: "reject",
 						disabled: !reason.value.trim() || unref(approvalBusy).has(__props.approval.questionId) || void 0
-					}, "Reject", 8, _hoisted_9$21)
-				], 32)) : (openBlock(), createElementBlock("div", _hoisted_10$21, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
+					}, "Reject", 8, _hoisted_10$21)
+				], 32)) : (openBlock(), createElementBlock("div", _hoisted_11$16, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
 					return openBlock(), createElementBlock("button", {
 						key: i,
 						class: normalizeClass(btnClass(o.value)),
 						disabled: unref(approvalBusy).has(__props.approval.questionId) || void 0,
 						onClick: ($event) => pick(o.value)
-					}, toDisplayString(o.label || o.value), 11, _hoisted_11$16);
+					}, toDisplayString(o.label || o.value), 11, _hoisted_12$13);
 				}), 128))])),
-				unref(approvalErrors)[__props.approval.questionId] ? (openBlock(), createElementBlock("div", _hoisted_12$13, toDisplayString(unref(approvalErrors)[__props.approval.questionId]), 1)) : createCommentVNode("", true)
+				unref(approvalErrors)[__props.approval.questionId] ? (openBlock(), createElementBlock("div", _hoisted_13$13, toDisplayString(unref(approvalErrors)[__props.approval.questionId]), 1)) : createCommentVNode("", true)
 			], 8, _hoisted_1$84);
 		};
 	}
@@ -797,6 +811,10 @@ async function respondToApproval(questionId, value, cardEl, reason) {
 			return;
 		}
 		pendingApprovals = pendingApprovals.filter((a) => a.questionId !== questionId);
+		approvalDecided.value = {
+			...approvalDecided.value,
+			[questionId]: value === "approve" ? "approve" : "reject"
+		};
 		setBusy(false);
 		renderApprovalsList();
 		document.querySelectorAll(`.approval-toast[data-question-id="${questionId}"]`).forEach((el) => el.remove());

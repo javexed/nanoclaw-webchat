@@ -6223,6 +6223,13 @@ a.skill-badge-origin:hover {
   gap: 6px;
   justify-content: flex-end;
 }
+/* What was decided, shown as soon as the click is accepted; the outcome card
+   replaces the whole card when the action finishes. */
+.approval-card .approval-decided {
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  text-align: right;
+}
 .approval-card button {
   padding: 4px 10px;
   border: 1px solid var(--border);
