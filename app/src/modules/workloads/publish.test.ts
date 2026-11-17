@@ -136,16 +136,25 @@ describe('ncl workloads expose', () => {
     expect(() => expose.parseArgs({ name: 'notes', service: 'web', port: 8080 })).toThrow(/--reason is required/);
   });
 
+  it('opens to the agent’s members unless --who says otherwise', async () => {
+    await workload('notes');
+    const pin = (await expose.precheck!(
+      expose.parseArgs({ name: 'notes', service: 'web', port: 8080, reason: 'x' }),
+      agent,
+    ))!.pin!;
+    expect(pin.who).toBe('agent-members');
+  });
+
   it('runs only from a card for an agent; the approver becomes "only me"', async () => {
     await workload('notes');
     await expect(expose.handler(hostArgs({ name: 'notes', service: 'web', port: 8080 }), agent)).rejects.toThrow(
       /approval card/,
     );
     const pin = (await expose.precheck!(
-      expose.parseArgs({ name: 'notes', service: 'web', port: 8080, reason: 'x' }),
+      expose.parseArgs({ name: 'notes', service: 'web', port: 8080, reason: 'x', who: 'only-me' }),
       agent,
     ))!.pin!;
-    const args = { name: 'notes', service: 'web', port: 8080, reason: 'x', ...pin };
+    const args = { name: 'notes', service: 'web', port: 8080, reason: 'x', who: 'only-me', ...pin };
     const view = await expose.handler(expose.parseArgs(args), agent);
     expect(view).toMatchObject({
       app: 'notes',

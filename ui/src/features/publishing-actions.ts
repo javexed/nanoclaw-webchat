@@ -5,7 +5,10 @@ import { apiJson } from '../core/api.js';
 import { publishingView, type PublishingView } from './publishing-state.js';
 
 /** PUT a route's settings or switch; the answer is the whole fresh view. Throws the server's refusal. */
-export async function saveRoute(kind: 'tailnet' | 'cloudflare', body: Record<string, unknown>): Promise<void> {
+export async function saveRoute(
+  kind: 'tailnet' | 'cloudflare' | 'ports',
+  body: Record<string, unknown>,
+): Promise<void> {
   publishingView.value = (await apiJson(`/api/publishing/${kind}`, { method: 'PUT', body })) as PublishingView;
 }
 

@@ -25,7 +25,8 @@ import { log } from '../../log.js';
 import { buildRefusalsSince } from '../../channels/webchat/build-refusals.js';
 import { callWorker, openWorkerStream } from '../machines/links.js';
 import { HELPER_IMAGE } from './images.js';
-import { buildOverride, overlappingIndexes, subnetFor } from './override.js';
+import { buildOverride, overlappingIndexes, subnetFor, type OverrideInput } from './override.js';
+import { EGRESS_KEY } from './policy.js';
 import { workloadSetting } from './settings.js';
 import type { Workload } from './store.js';
 import { ALIASES_KEY } from './translate.js';
@@ -367,6 +368,7 @@ export function writeFiles(
   w: Workload,
   network: string,
   images: Record<string, string>,
+  egress?: OverrideInput['egress'],
 ): { stack: string; override: string } {
   const dir = workDir(w.id);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -374,7 +376,8 @@ export function writeFiles(
   const aliases: Record<string, string[]> = {};
   for (const [name, svc] of Object.entries(w.stack.compose.services)) {
     // Extra names (translate.ts) go on the stack network in the override, not in the stack file.
-    const { build: _b, image: _i, [ALIASES_KEY]: names, ...rest } = svc;
+    // Runtime egress is NanoClaw's to set up (the override's proxy settings), never Compose's to read.
+    const { build: _b, image: _i, [ALIASES_KEY]: names, [EGRESS_KEY]: _e, ...rest } = svc;
     if (!images[name]) throw new Error(`${name}: no image to run`);
     services[name] = { ...escapeInterpolation(rest), image: images[name] };
     if (Array.isArray(names) && names.length) aliases[name] = names.map(String);
@@ -407,6 +410,7 @@ export function writeFiles(
         },
         addresses: w.addresses,
         aliases,
+        ...(egress?.services.length ? { egress } : {}),
       }),
     ),
     { mode: 0o600 },

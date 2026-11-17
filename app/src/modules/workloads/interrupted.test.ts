@@ -28,6 +28,7 @@ describe('settleInterrupted', () => {
     await settleInterrupted({
       list: async () => [wl({}), wl({ id: 'w2', state: 'running' })],
       states: all,
+      written: () => true,
       update: update as never,
       tell,
       linked: () => true,
@@ -49,6 +50,7 @@ describe('settleInterrupted', () => {
         { service: 'web', state: 'running' },
         { service: 'db', state: 'exited' },
       ],
+      written: () => true,
       update: update as never,
       tell: async () => undefined,
       linked: () => true,
@@ -62,7 +64,12 @@ describe('settleInterrupted', () => {
 
   it('marks it failed when nothing runs, and waits for a worker link and a minute’s grace', async () => {
     const update = vi.fn(async () => ({}));
-    const base = { states: async () => [], update: update as never, tell: async () => undefined };
+    const base = {
+      states: async () => [],
+      written: () => true,
+      update: update as never,
+      tell: async () => undefined,
+    };
     await settleInterrupted({ ...base, list: async () => [wl({})], linked: () => false, now: 120_000 });
     await settleInterrupted({
       ...base,
@@ -72,6 +79,27 @@ describe('settleInterrupted', () => {
     });
     expect(update).not.toHaveBeenCalled();
     await settleInterrupted({ ...base, list: async () => [wl({})], linked: () => true, now: 120_000 });
+    expect(update).toHaveBeenCalledWith('w1', {
+      state: 'failed',
+      lastError: 'its last deploy was cut off by a NanoClaw restart',
+    });
+  });
+
+  it('marks a first deploy cut off before its stack file existed failed, without asking compose', async () => {
+    const update = vi.fn(async () => ({}));
+    const states = vi.fn(async () => {
+      throw new Error('open stack.yml: no such file or directory');
+    });
+    await settleInterrupted({
+      list: async () => [wl({})],
+      states,
+      written: () => false,
+      update: update as never,
+      tell: async () => undefined,
+      linked: () => true,
+      now: 120_000,
+    });
+    expect(states).not.toHaveBeenCalled();
     expect(update).toHaveBeenCalledWith('w1', {
       state: 'failed',
       lastError: 'its last deploy was cut off by a NanoClaw restart',

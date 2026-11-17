@@ -118,7 +118,7 @@ async function buildRegistriesFor(agentGroupId: string): Promise<string[]> {
 /** A build's refusal: where a person turns it on (Agent → Apps), not a host command. */
 function buildBlockedMessage(host: string, port: number): string {
   const where = port === 443 || port === 80 ? host : `${host}:${port}`;
-  return `blocked by NanoClaw network policy: this build may not reach ${where} — an admin can allow Docker Hub for builds in Agent → Apps, or allow ${where} on this agent's Network list`;
+  return `blocked by NanoClaw network policy: this build may not reach ${where} — an admin can turn on its source under Build sources in Agent → Apps, or allow ${where} on this agent's Network list`;
 }
 
 /** Is a literal IPv4 address inside one of these CIDRs? Names never are: no lookup can move them in. */
@@ -137,16 +137,52 @@ export function inOwnNetwork(host: string, cidrs: string[]): boolean {
   return any && list.check(host, 'ipv4');
 }
 
-/** Pipe a client to a socket this filter opened itself (no gateway in between). */
-function spliceDirect(client: ProxyClient, req: ParsedRequest, rest: Buffer, upstream: Duplex): void {
+/**
+ * Pipe a client to a socket this filter opened itself (no gateway in between).
+ * `idleMs`: close both sides once neither has sent anything for that long.
+ */
+export function spliceDirect(
+  client: ProxyClient,
+  req: ParsedRequest,
+  rest: Buffer,
+  upstream: Duplex,
+  opts: { idleMs?: number } = {},
+): void {
   upstream.on('error', () => client.destroy());
   client.on('error', () => upstream.destroy());
+  if (opts.idleMs) closeWhenIdle(client, upstream, opts.idleMs);
   if (req.kind === 'connect') client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
   else upstream.write(req.originHead!);
   if (rest.length) upstream.write(rest);
   client.pipe(upstream);
   upstream.pipe(client);
   client.resume();
+}
+
+/**
+ * Destroy both streams once neither has carried data for `ms`; either closing
+ * ends the watch. For streams about to be piped: listening for data starts
+ * them flowing.
+ */
+export function closeWhenIdle(a: Duplex, b: Duplex, ms: number): void {
+  let timer: NodeJS.Timeout | null = null;
+  const stop = (): void => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+  const arm = (): void => {
+    stop();
+    timer = setTimeout(() => {
+      a.destroy();
+      b.destroy();
+    }, ms);
+    timer.unref?.();
+  };
+  for (const s of [a, b]) {
+    s.on('data', arm);
+    s.once('close', stop);
+  }
+  arm();
 }
 
 /** A model listener: a host-local model's port, or the relay to a model on another machine (`remote`). */
@@ -181,7 +217,7 @@ async function connectDirect(host: string, port: number, pinned?: string, privat
 }
 
 /** A TCP connection to a literal address, with the direct-connect timeout. */
-function connectTcp(address: string, port: number): Promise<net.Socket> {
+export function connectTcp(address: string, port: number): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
     const sock = net.connect({ host: address, port });
     const timer = setTimeout(() => {
@@ -210,7 +246,7 @@ export type ProxyClient = Duplex & { remoteAddress?: string };
 const HEAD_TIMEOUT_MS = 10_000;
 
 /** Answer a proxy client and close. */
-function answer(sock: ProxyClient, status: string, message: string, extra = ''): void {
+export function answer(sock: ProxyClient, status: string, message: string, extra = ''): void {
   const body = `${message}\n`;
   sock.end(
     `HTTP/1.1 ${status}\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n${extra}\r\n${body}`,
@@ -311,9 +347,12 @@ export function parseProxyHead(head: string): ParsedRequest | { error: string; s
   return { error: 'this proxy speaks CONNECT and absolute-form HTTP', status: '501 Not Implemented' };
 }
 
-/** Serve one proxied connection from a local agent's container. */
-export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDeps): Promise<void> {
-  client.on('error', () => {});
+/**
+ * Read a proxy request's head (up to the blank line), or null: too long, the
+ * client went away, or it sent nothing in time. The client is left paused,
+ * with whatever followed the head in `rest`.
+ */
+export async function readProxyHead(client: ProxyClient): Promise<{ head: string; rest: Buffer } | null> {
   let buf = Buffer.alloc(0);
   let timer: NodeJS.Timeout | undefined;
   const head = await new Promise<{ head: string; rest: Buffer } | null>((resolve) => {
@@ -338,6 +377,13 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
     timer = setTimeout(() => resolve(null), HEAD_TIMEOUT_MS);
   });
   clearTimeout(timer);
+  return head;
+}
+
+/** Serve one proxied connection from a local agent's container. */
+export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDeps): Promise<void> {
+  client.on('error', () => {});
+  const head = await readProxyHead(client);
   if (!head) return void client.destroy();
   const req = parseProxyHead(head.head);
   if ('error' in req) return answer(client, req.status, req.error);
@@ -611,8 +657,30 @@ export async function serveModelPort(
  */
 const ollamaTargets = new Map<string, Array<{ host: string; port: number }>>();
 
+/**
+ * The same servers read from the model registry itself, by whoever last read
+ * it (container-egress at a spawn, workload egress on its own schedule), so
+ * the list does not depend on a filter having started. Null until a read
+ * succeeded: callers that must not guess fail closed.
+ */
+let registryOllama: Array<{ host: string; port: number }> | null = null;
+
+export function setRegistryOllamaTargets(targets: Array<{ host: string; port: number }>): void {
+  registryOllama = targets;
+}
+
+/** The registry's Ollama servers, or null when the registry was never read. */
+export const registryOllamaTargets = (): Array<{ host: string; port: number }> | null => registryOllama;
+
+/** Every Ollama server known: the registry's and each started filter's. */
+export const knownOllamaTargets = (): Array<{ host: string; port: number }> => [
+  ...(registryOllama ?? []),
+  ...[...ollamaTargets.values()].flat(),
+];
+
 export function __setOllamaTargetsForTest(targets: Array<{ host: string; port: number }>): void {
   ollamaTargets.clear();
+  registryOllama = null;
   if (targets.length) ollamaTargets.set('test', targets);
 }
 
@@ -651,7 +719,7 @@ async function addressesOf(host: string): Promise<string[]> {
 export async function ollamaPin(
   host: string,
   port: number,
-  targets: Array<{ host: string; port: number }> = [...ollamaTargets.values()].flat(),
+  targets: Array<{ host: string; port: number }> = knownOllamaTargets(),
   own: Set<string> = hostOwnAddresses(),
 ): Promise<{ pin: string | null } | { refused: 'ollama' | 'unresolved' }> {
   const same = targets.filter((t) => t.port === port);

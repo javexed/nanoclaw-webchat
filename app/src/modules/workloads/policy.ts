@@ -16,6 +16,8 @@ import path from 'path';
 
 import { isNode, parseDocument, visit } from 'yaml';
 
+import { parseWorkloadEgress } from '../../channels/webchat/workload-egress.js';
+
 export interface Quota {
   memoryMb: number;
   cpus: number;
@@ -44,6 +46,25 @@ export interface CheckOptions {
   composeDir?: string;
   /** Builds run only where they are confined (builder.ts); elsewhere `build:` is refused. */
   allowBuild?: boolean;
+  /** More ranges an `x-nanoclaw-egress` entry may not name (the publishing edge subnet). */
+  egressDeny?: string[];
+}
+
+/**
+ * A service's runtime egress: the hosts it may call, held to an owner's card
+ * and to the agent's own reach (channels/webchat/workload-egress.ts).
+ * Normalized here; stripped from the file Compose runs (docker.ts writeFiles).
+ */
+export const EGRESS_KEY = 'x-nanoclaw-egress';
+
+/** The egress each service declares, normalized (services that declare none are left out). Pure. */
+export function declaredEgress(stack: Pick<CheckedStack, 'compose'>): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const [name, svc] of Object.entries(stack.compose.services)) {
+    const e = svc[EGRESS_KEY];
+    if (Array.isArray(e) && e.length) out[name] = e.map(String);
+  }
+  return out;
 }
 
 export const DEFAULT_MEMORY_MB = 512;
@@ -394,6 +415,12 @@ export function checkStack(text: string, groupDir: string, quota: Quota, opts: C
         !aliases.every((a) => typeof a === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$/.test(a)))
     )
       errors.push(`${svcName}: x-nanoclaw-aliases must be a list of host names`);
+    let egress: string[] = [];
+    if (svc[EGRESS_KEY] !== undefined) {
+      const e = parseWorkloadEgress(svc[EGRESS_KEY], opts.egressDeny);
+      if (e.ok) egress = e.entries;
+      else for (const m of e.errors) errors.push(`${svcName}: ${EGRESS_KEY}: ${m}`);
+    }
     const labels = svc.labels;
     const labelNames = Array.isArray(labels)
       ? labels.map((l) => String(l).split('=')[0])
@@ -405,9 +432,10 @@ export function checkStack(text: string, groupDir: string, quota: Quota, opts: C
       for (const k of Object.keys(deploy)) if (k !== 'resources') errors.push(`${svcName}: deploy.${k} is not allowed`);
     limits[svcName] = limitsOf(svc);
     // Normalized: limits in one place, NanoClaw's restart policy, capabilities upper-cased.
-    const { mem_limit: _m, cpus: _c, deploy: _d, restart: _r, cap_add: capAdd, ...rest } = svc;
+    const { mem_limit: _m, cpus: _c, deploy: _d, restart: _r, cap_add: capAdd, [EGRESS_KEY]: _e, ...rest } = svc;
     out[svcName] = {
       ...rest,
+      ...(egress.length ? { [EGRESS_KEY]: egress } : {}),
       // Relative to the agent's folder from here on (the runner resolves it there).
       ...(buildRel !== null
         ? {

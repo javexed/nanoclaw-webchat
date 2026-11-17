@@ -11,12 +11,19 @@
 import { quoteForCard } from '../../card-text.js';
 import { registerApprovalResolvedHandler } from '../approvals/primitive.js';
 import { normalizeEmail } from './gateway/access.js';
-import { HOSTNAME_RE, validTarget } from './gateway/caddy.js';
+import { validAddress, validTarget } from './gateway/caddy.js';
 import { gatewayState, syncGateway } from './gateway/index.js';
 import { isLive } from './gateway/live.js';
-import { enabledRoutes, isRouteKind, publishingRoute, type PublishingRoute } from './gateway/publishing.js';
+import {
+  enabledRoutes,
+  isRouteKind,
+  publishingRoute,
+  ROUTE_KIND_WORDS,
+  type PublishingRoute,
+} from './gateway/publishing.js';
 import {
   claimTicket,
+  DEFAULT_WHO,
   deleteRoute,
   findRouteByApp,
   insertRoute,
@@ -103,11 +110,11 @@ export interface ExposePlan extends AccessPlan {
 }
 
 /** How Admin → Publishing names a route kind, for "an owner can turn on …". */
-const ROUTE_SWITCH: Record<string, string> = { tailnet: 'Tailnet', cloudflare: 'Cloudflare' };
+const ROUTE_SWITCH: Record<string, string> = { tailnet: 'Tailnet', cloudflare: 'Cloudflare', port: 'Tailnet ports' };
 
 /** The publishing route to use: the one asked for, or the only one that is on. Refused while it is off. */
 export async function pickRoute(asked?: string): Promise<PublishingRoute> {
-  if (asked !== undefined && !isRouteKind(asked)) throw new Error('--route must be tailnet or cloudflare');
+  if (asked !== undefined && !isRouteKind(asked)) throw new Error(`--route must be ${ROUTE_KIND_WORDS}`);
   const on = await enabledRoutes();
   if (asked && !on.some((r) => r.kind === asked))
     throw new Error(
@@ -137,7 +144,7 @@ export async function planAccess(
   const existing = await findRouteByApp(app);
   if (existing && existing.workloadId !== workloadId)
     throw new Error(`the app name ${app} is taken: pick another with --app`);
-  const whoRaw = i.who ?? existing?.who ?? 'only-me';
+  const whoRaw = i.who ?? existing?.who ?? DEFAULT_WHO;
   if (!isWho(whoRaw)) throw new Error(`--who must be one of ${WHO.join(', ')}`);
   let emails: string[] = [];
   if (whoRaw === 'specific') {
@@ -148,7 +155,7 @@ export async function planAccess(
     throw new Error('--emails goes with --who specific');
   }
   const hostname = await route.hostnameFor(app);
-  if (!hostname || !HOSTNAME_RE.test(hostname))
+  if (!hostname || !validAddress(hostname))
     throw new Error(`the ${route.kind} route cannot give ${app} an address yet`);
   if (i.hostname !== undefined && i.hostname !== hostname)
     throw new Error(`${app}'s address changed after the approval (now ${hostname}): ask again for a new card`);

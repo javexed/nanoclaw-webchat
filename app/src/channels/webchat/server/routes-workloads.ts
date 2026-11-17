@@ -3,8 +3,8 @@
 // agent's apps for the people who administer it (owners, global admins and
 // its scoped admins; members get 403, and the tab hides). Narrowing applies
 // at once; widening raises an approval card (modules/workloads/gui.ts). The
-// same for "Allow Docker Hub for builds" (…/apps/build-registries): on is a
-// card, off applies. Extend and Redeploy keep what was approved: direct.
+// same for a build source (…/apps/build-registries, Docker Hub, npm, …): on
+// is a card, off applies. Extend and Redeploy keep what was approved: direct.
 //
 // Admin → Publishing (/api/publishing…): owner only. The Workloads and
 // Confined builds switches and the routes' switches and settings are their
@@ -23,9 +23,10 @@ import {
   startWorkload,
   stopWorkload,
 } from '../../../modules/workloads/control.js';
-import { appsOf, ChangeRefused, changeApp, setDockerHub, setPublishDeps } from '../../../modules/workloads/gui.js';
+import { appsOf, ChangeRefused, changeApp, setBuildSource, setPublishDeps } from '../../../modules/workloads/gui.js';
 import {
   applyCloudflare,
+  applyPorts,
   applyTailnet,
   applyWorkloads,
   connectCloudflare,
@@ -89,14 +90,14 @@ export async function rAgentAppsPut(ctx: RouteCtx, m: RegExpMatchArray): Promise
   }
 }
 
-/** "Allow Docker Hub for builds". Body: { on }. On raises a card (202); off applies (200). */
+/** A build source. Body: { source, on } (no source: Docker Hub). On raises a card (202); off applies (200). */
 export async function rAgentBuildRegistriesPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const group = await requireAgentAdmin(ctx, m);
   if (!group) return;
-  const body = await readJsonObject<{ on?: unknown }>(ctx.req, ctx.res);
+  const body = await readJsonObject<{ source?: unknown; on?: unknown }>(ctx.req, ctx.res);
   if (body === undefined) return;
   try {
-    const r = await setDockerHub(group.id, ctx.userId, body.on);
+    const r = await setBuildSource(group.id, ctx.userId, body.source, body.on);
     return json(ctx.res, r.pending ? 202 : 200, r);
   } catch (err) {
     return fail(ctx, err);
@@ -175,6 +176,18 @@ export async function rPublishingTailnetPut(ctx: RouteCtx, _m: RegExpMatchArray)
   if (body === undefined) return;
   try {
     await applyTailnet(process.cwd(), { on: body.on, domain: body.domain });
+    return json(ctx.res, 200, await publishingView());
+  } catch (err) {
+    return settingFail(ctx, err);
+  }
+}
+
+/** The Tailnet ports switch. Body: { on }. */
+export async function rPublishingPortsPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const body = await readJsonObject<{ on?: unknown }>(ctx.req, ctx.res);
+  if (body === undefined) return;
+  try {
+    await applyPorts(process.cwd(), { on: body.on });
     return json(ctx.res, 200, await publishingView());
   } catch (err) {
     return settingFail(ctx, err);

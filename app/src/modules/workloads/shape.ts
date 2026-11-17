@@ -6,14 +6,16 @@
  * code inside a build folder may change freely, the Dockerfile and args may not.
  *
  * Image services run the approved digest, not the tag: a tag that moves
- * upstream changes nothing here until the next card.
+ * upstream changes nothing here until the next card. A service's runtime
+ * egress (x-nanoclaw-egress) is part of its line too, so a host added or
+ * removed needs a new card; at runtime the proxy reads the approved list.
  */
 import { createHash } from 'crypto';
 import path from 'path';
 
 import { quoteForCard } from '../../card-text.js';
 import { isPlainFile, readNoFollow } from '../../no-follow-fs.js';
-import type { CheckedStack } from './policy.js';
+import { EGRESS_KEY, type CheckedStack } from './policy.js';
 
 const sha = (v: string): string => createHash('sha256').update(v).digest('hex');
 
@@ -28,6 +30,8 @@ export interface ServiceShape {
   dockerfile?: string;
   /** sha256 of the build args (sorted). */
   args?: string;
+  /** The hosts it may call at runtime (x-nanoclaw-egress, normalized); absent: none. */
+  egress?: string[];
 }
 
 export interface StackShape {
@@ -93,17 +97,23 @@ export async function stackShape(
     const caps = Array.isArray(svc.cap_add) && svc.cap_add.length ? (svc.cap_add as string[]) : [];
     const capLine = caps.length ? `, cap_add ${caps.join(',')}` : '';
     const capText = caps.length ? `; adds ${caps.join(', ')}` : '';
+    const egress = Array.isArray(svc[EGRESS_KEY]) ? (svc[EGRESS_KEY] as unknown[]).map(String) : [];
+    // Only when declared: a stack without egress keeps the shape it was approved with.
+    const egressLine = egress.length ? `, egress ${egress.join(',')}` : '';
+    const egressText = egress.length ? `; may call ${egress.map((e) => quoteForCard(e)).join(', ')}` : '';
+    const egressField = egress.length ? { egress } : {};
     if (svc.build === undefined) {
       const ref = String(svc.image);
       const before = approved?.services[name];
       const digest = before?.ref === ref && before.digest ? before.digest : await resolve(ref);
-      const line = `${name}: image ${ref} ${digest}${capLine}`;
+      const line = `${name}: image ${ref} ${digest}${capLine}${egressLine}`;
       lines.push(line);
       services[name] = {
         line,
-        text: `${quoteForCard(ref)} (${digest.slice(0, 19)}…)${capText}`,
+        text: `${quoteForCard(ref)} (${digest.slice(0, 19)}…)${capText}${egressText}`,
         ref,
         digest,
+        ...egressField,
       };
       continue;
     }
@@ -117,7 +127,7 @@ export async function stackShape(
     const args = hashArgs(b.args);
     const argNames = normalizeArgs(b.args).map((a) => a.slice(0, a.indexOf('=')));
     const target = b.target ? ` target ${String(b.target)}` : '';
-    const line = `${name}: build ${ctx}${target}, Dockerfile ${dockerfile}, args ${args}${capLine}`;
+    const line = `${name}: build ${ctx}${target}, Dockerfile ${dockerfile}, args ${args}${capLine}${egressLine}`;
     lines.push(line);
     const froms = fromLines(text);
     services[name] = {
@@ -129,9 +139,11 @@ export async function stackShape(
         (argNames.length
           ? `; build args ${argNames.map((a) => quoteForCard(a)).join(', ')} (${args.slice(0, 12)})`
           : '') +
-        capText,
+        capText +
+        egressText,
       dockerfile,
       args,
+      ...egressField,
     };
   }
   return { services, lines, hash: sha(lines.join('\n')).slice(0, 32) };
@@ -158,6 +170,14 @@ export function decodeApproved(v: string | null): Approved | null {
   } catch {
     return null;
   }
+}
+
+/** What an owner approved each service to call at runtime (services with none left out). */
+export function approvedEgress(approved: Approved | null): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const [name, svc] of Object.entries(approved?.services ?? {}))
+    if (Array.isArray(svc.egress) && svc.egress.length) out[name] = svc.egress.map(String);
+  return out;
 }
 
 /** The card's list of services: each in words, marked new or changed against what was approved. */

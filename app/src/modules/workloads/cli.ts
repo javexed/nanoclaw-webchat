@@ -46,6 +46,8 @@ import {
   withinApproval,
 } from './control.js';
 import { diskUsed, gb } from './disk.js';
+import { egressOf } from './egress.js';
+import { workloadEgressRefusals } from '../../channels/webchat/workload-egress-refusals.js';
 import { isLinked } from '../machines/links.js';
 import { getMember, isolationStatus, listMembers, setWorkloadsOn } from '../machines/members.js';
 import {
@@ -64,7 +66,7 @@ import {
   type ExposeInput,
 } from './publish.js';
 import { dayText } from './notify.js';
-import { isRouteKind } from './gateway/publishing.js';
+import { isRouteKind, ROUTE_KIND_WORDS } from './gateway/publishing.js';
 import { describeShape, decodeApproved } from './shape.js';
 import { sleepAfterH } from './sleep.js';
 import {
@@ -119,6 +121,20 @@ const view = (w: Workload, open?: string) => ({
   expires: w.expiresAt ? new Date(w.expiresAt).toISOString().slice(0, 10) : null,
   error: w.lastError,
 });
+
+/** A workload's runtime egress, as approved, and its recent refusals (newest first). */
+export function egressView(w: Workload): Record<string, unknown> {
+  const refused = workloadEgressRefusals(w.agentGroupId, w.id).slice(0, 20);
+  return {
+    egress: egressOf(w),
+    egress_refused: refused.map((r) => ({
+      at: new Date(r.at).toISOString().slice(0, 16).replace('T', ' '),
+      service: r.service,
+      target: `${r.host}:${r.port}`,
+      reason: r.reason,
+    })),
+  };
+}
 
 /** 1536 → "1.5 GB", 512 → "512 MB". */
 const gbText = (mb: number): string => (mb >= 1024 ? `${Math.round((mb / 1024) * 10) / 10} GB` : `${mb} MB`);
@@ -275,13 +291,13 @@ registerResource({
         {
           name: 'publish',
           type: 'string',
-          description: 'Also publish it for people, on this route: tailnet or cloudflare (one card for both).',
+          description: `Also publish it for people, on this route: ${ROUTE_KIND_WORDS} (one card for both).`,
         },
         {
           name: 'who',
           type: 'string',
           description:
-            'With --publish: who can open it, only-me (default), agent-members, signed-in, or specific (cloudflare only, with --emails).',
+            'With --publish: who can open it, agent-members (default: everyone who may use this agent), only-me, signed-in, or specific (cloudflare only, with --emails).',
         },
         {
           name: 'emails',
@@ -317,7 +333,7 @@ registerResource({
             throw new Error(`--${stray.join(', --')} go${stray.length === 1 ? 'es' : ''} with --publish`);
         }
         const g = groupOf(args, ctx);
-        if (pub && !isRouteKind(pub.route)) throw new Error('--publish must be tailnet or cloudflare');
+        if (pub && !isRouteKind(pub.route)) throw new Error(`--publish must be ${ROUTE_KIND_WORDS}`);
         // The route first: with it off there is nothing to card, and the agent hears how to deploy only.
         const route = pub ? await pickRoute(pub.route).catch((err: unknown) => Promise.reject(deployOnly(err))) : null;
         const c = await checkWorkload(g, name, str(args.file, 'file'));
@@ -418,6 +434,19 @@ registerResource({
       handler: async (args, ctx) => ({
         services_private: await psWorkload(groupOf(args, ctx), str(args.name, 'name')),
       }),
+    },
+    status: {
+      access: 'open',
+      description:
+        'One workload: its state, what each service may call at runtime (x-nanoclaw-egress, as approved) and what it was refused lately.',
+      args: [GROUP, NAME],
+      handler: async (args, ctx) => {
+        const g = groupOf(args, ctx);
+        const name = str(args.name, 'name');
+        const w = await findWorkload(g, name);
+        if (!w) throw new Error(`you have no workload named "${name}"`);
+        return { ...view(w, await openLine(w)), ...egressView(w) };
+      },
     },
     logs: {
       access: 'open',
@@ -537,14 +566,14 @@ registerResource({
     expose: {
       access: 'approval',
       description:
-        'Publish a service of a workload for people at its own address, on a publishing route an owner turned on (needs an owner approval). --who: only-me (default), agent-members or signed-in; on cloudflare also specific, with --emails.',
+        'Publish a service of a workload for people at its own address, on a publishing route an owner turned on (needs an owner approval). --who: agent-members (default: everyone who may use this agent), only-me or signed-in; on cloudflare also specific, with --emails.',
       args: [
         GROUP,
         NAME,
         { ...SERVICE, required: true },
         { name: 'port', type: 'number', description: 'The port the service listens on.', required: true },
         { name: 'app', type: 'string', description: 'The app’s name in its address (default: the workload’s name).' },
-        { name: 'route', type: 'string', description: 'tailnet or cloudflare (default: the one that is on).' },
+        { name: 'route', type: 'string', description: `${ROUTE_KIND_WORDS} (default: the one that is on).` },
         {
           name: 'who',
           type: 'string',

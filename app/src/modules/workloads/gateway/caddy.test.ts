@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { FORWARDED_HEADERS, renderCaddyfile, runArgs, validSite, validTarget } from './caddy.js';
+import { FORWARDED_HEADERS, renderCaddyfile, runArgs, splitAddress, validSite, validTarget } from './caddy.js';
 
 const cfg = { bind: '127.0.0.1', port: 8470, internalPort: 8471, image: 'caddy@sha256:' + 'a'.repeat(64) };
 const SECRET = 'S'.repeat(43);
@@ -110,5 +110,34 @@ describe('gateway container', () => {
     expect(a).toContain(cfg.image);
     expect(a).not.toContain('--privileged');
     expect(a.join(' ')).not.toMatch(/-p |--publish|nanoclaw-install=/);
+  });
+});
+
+describe('gateway Caddyfile: the port route', () => {
+  const portSite = { ...site, hostname: 'node.tail1.ts.net:9001' };
+  const text = renderCaddyfile(cfg, [site, portSite], SECRET);
+
+  it('gives a port-route app its own listener on loopback, by port', () => {
+    expect(text).toContain('\nhttp://:9001 {\n\tbind 127.0.0.1\n\troute {');
+    expect(text).toContain('\t\t\theader_up Host node.tail1.ts.net:9001\n');
+    // The hostname site is unchanged beside it.
+    expect(text).toContain('\nhttp://notes.tail1.ts.net {\n\troute {');
+  });
+
+  it('never puts an app on the gateway’s own ports', () => {
+    expect(() => renderCaddyfile(cfg, [{ ...site, hostname: 'node.tail1.ts.net:8470' }], SECRET)).toThrow(/own port/);
+    expect(() => renderCaddyfile(cfg, [{ ...site, hostname: 'node.tail1.ts.net:8471' }], SECRET)).toThrow(/own port/);
+  });
+
+  it('refuses an app’s Set-Cookie for a NanoClaw cookie name', () => {
+    expect(text).toContain('header_down Set-Cookie "(?i)^\\s*(nanoclaw_|__host-nanoclaw).*$" ""');
+  });
+
+  it('reads an address as a host name with an optional port from 1024 up', () => {
+    expect(splitAddress('notes.tail1.ts.net')).toEqual({ host: 'notes.tail1.ts.net', port: null });
+    expect(splitAddress('node.tail1.ts.net:9001')).toEqual({ host: 'node.tail1.ts.net', port: 9001 });
+    for (const bad of ['node.tail1.ts.net:80', 'node.tail1.ts.net:70000', 'node.tail1.ts.net:', 'a b:9001', ':9001'])
+      expect(splitAddress(bad), bad).toBeNull();
+    expect(validSite(portSite)).toBe(true);
   });
 });

@@ -11,6 +11,11 @@
  * it only stops traffic leaving it. Traffic from a workload TO the host is
  * dropped by the host rules (deploy/workloads-host-rules.sh), which the
  * preflight checks (preflight.ts).
+ *
+ * A service an owner approved runtime egress for (x-nanoclaw-egress) gets
+ * HTTP(S)_PROXY pointing at its egress proxy on the network's gateway
+ * (channels/webchat/workload-egress.ts), and NO_PROXY for its own stack.
+ * This file is applied after the stack's own, so these values win.
  */
 
 /** Agent networks are /24s carved from 198.18.0.0/15, reserved for benchmarking, so they clash with nothing real. */
@@ -102,12 +107,44 @@ export interface OverrideInput {
   addresses: Record<string, string>;
   /** Extra names per service on the stack network (translate.ts: container_name, links, network aliases). */
   aliases?: Record<string, string[]>;
+  /** Runtime egress: the proxy's address and port, the network's subnet, and the services approved for it. */
+  egress?: { gateway: string; port: number; subnet: string; services: string[] };
+}
+
+/**
+ * The environment a service with runtime egress runs with. The credential is
+ * a placeholder (the proxy knows the caller by its address): HTTP clients
+ * want one in the URL to send Proxy-Authorization at all. NO_PROXY keeps the
+ * stack's own traffic off the proxy; NODE_USE_ENV_PROXY makes Node's own
+ * fetch and http honour the proxy. Pure.
+ */
+export function egressEnvironment(gateway: string, port: number, noProxy: string[]): Record<string, string> {
+  const proxy = `http://workload:workload@${gateway}:${port}`;
+  const bypass = [...new Set(['localhost', '127.0.0.1', ...noProxy])].join(',');
+  return {
+    HTTP_PROXY: proxy,
+    HTTPS_PROXY: proxy,
+    http_proxy: proxy,
+    https_proxy: proxy,
+    NO_PROXY: bypass,
+    no_proxy: bypass,
+    NODE_USE_ENV_PROXY: '1',
+  };
 }
 
 export const PIDS_LIMIT = 1024;
 
 export function buildOverride(services: string[], o: OverrideInput): Record<string, unknown> {
   const svc: Record<string, unknown> = {};
+  // Everything on the stack's own network bypasses the proxy: its subnet, every service's name, alias and address.
+  const env = o.egress?.services.length
+    ? egressEnvironment(o.egress.gateway, o.egress.port, [
+        o.egress.subnet,
+        ...services,
+        ...Object.values(o.aliases ?? {}).flat(),
+        ...services.map((n) => o.addresses[n]).filter(Boolean),
+      ])
+    : null;
   for (const name of services) {
     svc[name] = {
       networks: {
@@ -123,6 +160,7 @@ export function buildOverride(services: string[], o: OverrideInput): Record<stri
       labels: { ...o.labels, 'nanoclaw.service': name },
       // pids goes under deploy: Compose refuses pids_limit next to the stack's deploy limits.
       deploy: { resources: { limits: { pids: PIDS_LIMIT } } },
+      ...(env && o.egress!.services.includes(name) ? { environment: env } : {}),
     };
   }
   return {

@@ -6223,6 +6223,13 @@ a.skill-badge-origin:hover {
   gap: 6px;
   justify-content: flex-end;
 }
+/* What was decided, shown as soon as the click is accepted; the outcome card
+   replaces the whole card when the action finishes. */
+.approval-card .approval-decided {
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  text-align: right;
+}
 .approval-card button {
   padding: 4px 10px;
   border: 1px solid var(--border);
@@ -9793,6 +9800,11 @@ button[data-draft-id] {
   margin: 0;
 }
 /* "Allow Docker Hub for builds": one switch row above the list. */
+.apps-build-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
 .apps-builds {
   gap: 8px;
 }
@@ -9806,6 +9818,11 @@ button[data-draft-id] {
   font-size: var(--fs-xs);
   color: var(--text-dim);
   white-space: nowrap;
+}
+.app-calls {
+  margin: 2px 0 0;
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
 }
 .app-expiry-soon {
   color: var(--warning-strong);

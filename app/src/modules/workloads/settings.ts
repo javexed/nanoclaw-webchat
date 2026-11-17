@@ -31,6 +31,8 @@ export const WORKLOAD_ENV_KEYS = [
   'NANOCLAW_WORKLOAD_CLOUDFLARE_ZONE_ID',
   'NANOCLAW_WORKLOAD_CLOUDFLARE_TEAM_DOMAIN',
   'NANOCLAW_WORKLOAD_CLOUDFLARE_IMAGE',
+  'NANOCLAW_WORKLOAD_PORTS',
+  'NANOCLAW_WORKLOAD_EGRESS_PORT',
 ] as const;
 
 export type WorkloadEnvKey = (typeof WORKLOAD_ENV_KEYS)[number];
@@ -47,3 +49,17 @@ export const workloadsSwitchedOn = (): boolean => workloadSetting('NANOCLAW_WORK
 
 /** Builds run only in confined builders (rootless BuildKit in gVisor, builder.ts); otherwise `build:` is refused. */
 export const confinedBuildsOn = (): boolean => workloadSetting('NANOCLAW_WORKLOAD_CONFINED_BUILDS') === '1';
+
+/**
+ * The port running stacks reach their egress proxy on, at their network's
+ * gateway address (channels/webchat/workload-egress.ts); null while unset or
+ * not a port, which keeps runtime egress off: a stack that declares
+ * `x-nanoclaw-egress` is then refused. The host rules must let it through
+ * (deploy/workloads-host-rules.sh --stack-egress-port).
+ */
+export function workloadEgressPort(): number | null {
+  const v = workloadSetting('NANOCLAW_WORKLOAD_EGRESS_PORT');
+  if (!v || !/^\d{1,5}$/.test(v)) return null;
+  const n = Number(v);
+  return n >= 1 && n <= 65535 ? n : null;
+}

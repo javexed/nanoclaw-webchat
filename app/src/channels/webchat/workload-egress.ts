@@ -1,0 +1,814 @@
+/**
+ * Runtime egress for workload stacks: the proxy a running stack's services
+ * use to reach the hosts an owner approved for them, and nothing else.
+ *
+ * A stack's network is internal (no route out), and the host rules drop new
+ * connections from it to this host — except to one port, the install's
+ * NANOCLAW_WORKLOAD_EGRESS_PORT, on the network's own gateway address. This
+ * listens there, one listener per agent network that runs a stack declaring
+ * egress (modules/workloads/egress.ts opens and closes them). Each request:
+ *
+ *   1. is known by its source address: the listener's own address names the
+ *      agent's network, and the source must be a service address NanoClaw
+ *      gave a running stack on it. Stack containers drop every capability
+ *      (no NET_RAW, no NET_ADMIN), so they cannot claim another address; an
+ *      agent container on the same network holds none of those addresses
+ *      and is refused;
+ *   2. must match what the owner approved for that service (its
+ *      `x-nanoclaw-egress` list, read from the approved record, never from
+ *      the agent's files) AND what the agent itself may reach now (its own
+ *      allowlist or its own model, without the model floor): taking a host
+ *      off the agent cuts its stacks off too. An agent on Open has no
+ *      allowlist, so its approved list alone applies;
+ *   3. connects directly, never through the credential gateway (which would
+ *      add the agent's secrets), to the address the name resolved to, checked
+ *      at that moment: never this host, loopback, link-local, the workload
+ *      range, a Docker network, the publishing edge or the tailnet, and a
+ *      private address only when the approved entry names it literally.
+ *
+ * An Ollama server is refused on the general proxy (egress-filter.ts
+ * ollamaPin). Here a service whose approved list names it may send it
+ * inference over plain HTTP: one request per connection, its body bounded by
+ * Content-Length, read-only and inference paths only (ollama-filter.ts).
+ * Which servers are Ollama is read from the model registry here, not left to
+ * the agent filter (which may never have started since a restart); until the
+ * registry has been read once, a LAN address or Ollama's port is refused.
+ *
+ * Plain HTTP is one request per connection, Content-Length bodies only, so a
+ * kept-alive connection cannot carry a second request to another host.
+ * Addresses are IPv4 only (the host rules are). Each listener takes at most
+ * MAX_CONNECTIONS connections, MAX_PER_SOURCE from one address, and a tunnel
+ * idle for TUNNEL_IDLE_MS is closed.
+ *
+ * A connection's permission is not checked once and kept: every RECHECK_MS
+ * (and on recheckWorkloadEgress, after a stack stops) each open tunnel or
+ * request is held to the rule again, and closed when its service no longer
+ * runs, its approved list no longer names the host, or the agent may no
+ * longer reach it. Closing a listener closes every connection on it.
+ *
+ * HTTP(S) through the proxy is all there is: a client that ignores
+ * HTTP(S)_PROXY, or a protocol other than HTTP, has no way out.
+ */
+import { execFile } from 'child_process';
+import dns from 'dns/promises';
+import net from 'net';
+import type { Duplex } from 'stream';
+
+import { CONTAINER_RUNTIME_BIN } from '../../container-runtime.js';
+import { log } from '../../log.js';
+
+import {
+  answer,
+  closeWhenIdle,
+  connectTcp,
+  knownOllamaTargets,
+  ollamaPin,
+  parseProxyHead,
+  readProxyHead,
+  registryOllamaTargets,
+  setRegistryOllamaTargets,
+  spliceDirect,
+  type ProxyClient,
+} from './egress-filter.js';
+import {
+  allowlistFor,
+  directAddressAllowed,
+  groupEgressMode,
+  hostMatches,
+  modelPassthroughs,
+  ownModelTargetsFor,
+  parsePattern,
+  recordBlocked,
+  type EgressMode,
+} from './egress-policy.js';
+import { modelRelays } from './model-relay.js';
+import { ollamaRequestAllowed } from './ollama-filter.js';
+import { noteWorkloadEgressRefusal } from './workload-egress-refusals.js';
+
+/** How many hosts one service may declare. */
+export const MAX_WORKLOAD_EGRESS = 10;
+
+/** Connections one listener holds at once, and from any one source address. */
+export const MAX_CONNECTIONS = 256;
+export const MAX_PER_SOURCE = 32;
+
+/** A tunnel or request that carries nothing either way for this long is closed. */
+export const TUNNEL_IDLE_MS = 5 * 60_000;
+
+/** How often open connections are held to the rule again. */
+export const RECHECK_MS = 20_000;
+
+/** Ollama's own port: refused while the model registry is unread. */
+const OLLAMA_PORT = 11434;
+
+/** The caller's session id in the egress audit: which workload and service asked. */
+export const workloadSessionId = (workloadId: string, service: string): string => `workload:${workloadId}/${service}`;
+
+/**
+ * Ranges a stack may never name or reach: the workload range itself, Docker's
+ * default pools, loopback, link-local (cloud metadata), the tailnet's CGNAT
+ * range and "this network".
+ */
+export const WORKLOAD_REFUSED_CIDRS = [
+  '198.18.0.0/15',
+  '172.16.0.0/12',
+  '127.0.0.0/8',
+  '169.254.0.0/16',
+  '100.64.0.0/10',
+  '0.0.0.0/8',
+];
+
+/** Names that mean this host to a container. */
+const REFUSED_NAMES = ['localhost', 'host.docker.internal', 'gateway.docker.internal'];
+
+/** Is this IPv4 address inside one of these CIDRs? */
+export function inCidrs(address: string, cidrs: string[]): boolean {
+  if (!net.isIPv4(address)) return false;
+  const list = new net.BlockList();
+  let any = false;
+  for (const c of cidrs) {
+    const [addr, bits] = c.split('/');
+    const n = Number(bits);
+    if (net.isIPv4(addr) && Number.isInteger(n) && n >= 0 && n <= 32) {
+      list.addSubnet(addr, n, 'ipv4');
+      any = true;
+    }
+  }
+  return any && list.check(address, 'ipv4');
+}
+
+/** RFC 1918: a LAN address, which an entry may name only literally and with its port. */
+const isLanV4 = (a: string): boolean => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a);
+
+const refusedName = (host: string): boolean =>
+  REFUSED_NAMES.includes(host) || host.endsWith('.localhost') || host.endsWith('.docker.internal');
+
+/**
+ * Validate one service's `x-nanoclaw-egress` list and normalize it: `host`
+ * (443 and 80), `host:port`, `*.domain` (port 443 only, stored as
+ * `*.domain:443`), or a literal address. A bare `*` is refused; a LAN address
+ * must be written as address:port; this host, the workload range, Docker's
+ * pools, loopback, link-local, the tailnet range and `deny` (the publishing
+ * edge subnet) are always refused. Pure.
+ */
+export function parseWorkloadEgress(
+  raw: unknown,
+  deny: string[] = [],
+): { ok: true; entries: string[] } | { ok: false; errors: string[] } {
+  if (!Array.isArray(raw)) return { ok: false, errors: ['must be a list of host names'] };
+  if (raw.length > MAX_WORKLOAD_EGRESS)
+    return { ok: false, errors: [`at most ${MAX_WORKLOAD_EGRESS} hosts (it lists ${raw.length})`] };
+  const errors: string[] = [];
+  const entries: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'string') {
+      errors.push('every entry must be a host name');
+      continue;
+    }
+    const t = item.trim();
+    if (t === '*' || t.startsWith('*:') || t === '*.*') {
+      errors.push(`${t}: a bare * is not allowed: name each host, or *.domain for its subdomains on port 443`);
+      continue;
+    }
+    if (t.includes('[') || net.isIPv6(t)) {
+      errors.push(`${t}: IPv6 is not supported here; name the host or its IPv4 address`);
+      continue;
+    }
+    const p = parsePattern(t);
+    if (!p.ok) {
+      errors.push(p.error);
+      continue;
+    }
+    const [host, portText] = p.pattern.split(':');
+    let entry = p.pattern;
+    if (host.startsWith('*.')) {
+      if (portText && portText !== '443') {
+        errors.push(`${t}: a *.domain entry works on port 443 only`);
+        continue;
+      }
+      const suffix = host.slice(1);
+      if (REFUSED_NAMES.some((n) => `.${n}`.endsWith(suffix)) || suffix === '.internal') {
+        errors.push(`${t}: names this host`);
+        continue;
+      }
+      entry = `${host}:443`;
+    } else if (net.isIPv4(host)) {
+      if (inCidrs(host, [...WORKLOAD_REFUSED_CIDRS, ...deny])) {
+        errors.push(`${t}: that address range is never reachable from a workload`);
+        continue;
+      }
+      if (isLanV4(host) && !portText) {
+        errors.push(`${t}: a private address needs its port, e.g. ${host}:8080`);
+        continue;
+      }
+    } else if (refusedName(host)) {
+      errors.push(`${t}: names this host`);
+      continue;
+    }
+    if (!entries.includes(entry)) entries.push(entry);
+  }
+  return errors.length ? { ok: false, errors } : { ok: true, entries };
+}
+
+/** Does allowlist pattern `a` cover (host, port), where host may itself be `*.domain`? Pure. */
+function patternCovers(a: string, host: string, port: number): boolean {
+  if (!host.startsWith('*.')) return hostMatches(host, port, a);
+  const [ah, ap] = a.split(':');
+  if (ap ? Number(ap) !== port : port !== 443 && port !== 80) return false;
+  if (!ah.startsWith('*.')) return false;
+  const want = host.slice(1);
+  const have = ah.slice(1);
+  return want === have || want.endsWith(have);
+}
+
+/**
+ * Is a declared entry within what the agent itself may reach? Open: anything.
+ * Otherwise every port the entry stands for must be the agent's own model
+ * (host:port) or, on Allowlist, covered by its allowlist (the install's plus
+ * its own hosts). The model floor (api.anthropic.com and the like) never
+ * counts: it is the agent's, not its stacks'. Pure.
+ */
+export function workloadEgressCovered(
+  entry: string,
+  mode: EgressMode,
+  allowlist: string[],
+  ownModels: string[],
+): boolean {
+  if (mode === 'open') return true;
+  const [host, portText] = entry.split(':');
+  const ports = portText ? [Number(portText)] : [443, 80];
+  return ports.every(
+    (port) =>
+      ownModels.includes(`${host}:${port}`) ||
+      (mode === 'host-only' && allowlist.some((a) => patternCovers(a, host, port))),
+  );
+}
+
+/**
+ * The runtime rule: in the service's approved list AND within what the agent
+ * may reach now (see workloadEgressCovered). Pure.
+ */
+export function workloadEgressAllowed(
+  host: string,
+  port: number,
+  approved: string[],
+  mode: EgressMode,
+  allowlist: string[],
+  ownModels: string[],
+): boolean {
+  const h = host.toLowerCase().replace(/\.$/, '');
+  if (!approved.some((p) => hostMatches(h, port, p))) return false;
+  if (mode === 'open') return true;
+  if (ownModels.includes(`${h}:${port}`)) return true;
+  return mode === 'host-only' && allowlist.some((p) => hostMatches(h, port, p));
+}
+
+/**
+ * May a stack's connection go to this address? Whatever a direct tunnel may
+ * not (directAddressAllowed: this host, loopback, link-local, and a private
+ * address unless `literal`), nor the workload range, Docker's networks, the
+ * tailnet or `forbidden` (Docker's current subnets, the publishing edge).
+ */
+export function workloadAddressAllowed(address: string, literal: boolean, forbidden: string[] = []): boolean {
+  const a = address.toLowerCase().replace(/^::ffff:/, '');
+  // IPv4 only: the host rules that fence a stack in are.
+  if (!net.isIPv4(a)) return false;
+  if (!directAddressAllowed(a, literal)) return false;
+  return !inCidrs(a, [...WORKLOAD_REFUSED_CIDRS, ...forbidden]);
+}
+
+// ── Docker's own subnets, refused as destinations ─────────────────────────────
+
+const SUBNETS_TTL_MS = 60_000;
+let subnetCache: { at: number; list: string[] } | null = null;
+
+function runtime(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) =>
+    execFile(CONTAINER_RUNTIME_BIN, args, { timeout: 10_000 }, (err, out) =>
+      err ? reject(err) : resolve(String(out)),
+    ),
+  );
+}
+
+/**
+ * Whether the request names, as itself, an address the service's approved
+ * list names literally (address:port, or the bare address on 443/80): only
+ * then may it reach a private address. A wildcard or a name never does.
+ */
+export function namedLiterally(host: string, port: number, approved: string[]): boolean {
+  const h = host.toLowerCase();
+  if (!net.isIPv4(h)) return false;
+  return approved.some((p) => p === `${h}:${port}` || (p === h && (port === 443 || port === 80)));
+}
+
+// ── Ollama servers, from the model registry ───────────────────────────────────
+
+const OLLAMA_REGISTRY_TTL_MS = 60_000;
+const OLLAMA_REGISTRY_RETRY_MS = 5_000;
+let ollamaReadAt = 0;
+let ollamaTriedAt = 0;
+let ollamaReading: Promise<void> | null = null;
+
+/**
+ * The model registry's Ollama servers, re-read at most once a minute (on
+ * failure: the last answer, retried after a few seconds). Null until a read
+ * has succeeded.
+ */
+export async function workloadOllamaTargets(): Promise<Array<{ host: string; port: number }> | null> {
+  const now = Date.now();
+  const fresh = registryOllamaTargets() !== null && now - ollamaReadAt < OLLAMA_REGISTRY_TTL_MS;
+  if (!fresh && now - ollamaTriedAt >= OLLAMA_REGISTRY_RETRY_MS) {
+    ollamaReading ??= (async () => {
+      ollamaTriedAt = Date.now();
+      try {
+        const models = [...(await modelPassthroughs()), ...(await modelRelays())];
+        setRegistryOllamaTargets(models.filter((m) => m.ollama).map((m) => m.target));
+        ollamaReadAt = Date.now();
+      } catch (err) {
+        log.warn('Workload egress: could not read the model registry; keeping the known Ollama servers', {
+          err: String(err),
+        });
+      } finally {
+        ollamaReading = null;
+      }
+    })();
+  }
+  if (ollamaReading) await ollamaReading;
+  return registryOllamaTargets();
+}
+
+// ── refusal logging, throttled ────────────────────────────────────────────────
+
+const WARN_EVERY_MS = 60_000;
+const MAX_WARN_KEYS = 1000;
+const warnedAt = new Map<string, number>();
+
+/** Log a warning at most once a minute per key (a source and what it asked for). */
+function warnThrottled(key: string, msg: string, meta: Record<string, unknown>): void {
+  const now = Date.now();
+  if (now - (warnedAt.get(key) ?? 0) < WARN_EVERY_MS) return;
+  warnedAt.delete(key);
+  warnedAt.set(key, now);
+  while (warnedAt.size > MAX_WARN_KEYS) warnedAt.delete(warnedAt.keys().next().value!);
+  log.warn(msg, meta);
+}
+
+/** Every Docker network's IPv4 subnet on this host, re-read at most once a minute (on failure: the last answer). */
+export async function dockerSubnets(): Promise<string[]> {
+  if (subnetCache && Date.now() - subnetCache.at < SUBNETS_TTL_MS) return subnetCache.list;
+  try {
+    const ids = (await runtime(['network', 'ls', '-q'])).trim().split(/\s+/).filter(Boolean);
+    const out = ids.length
+      ? await runtime(['network', 'inspect', ...ids, '--format', '{{range .IPAM.Config}}{{.Subnet}} {{end}}'])
+      : '';
+    const list = out.split(/\s+/).filter((s) => /^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/.test(s));
+    subnetCache = { at: Date.now(), list };
+  } catch (err) {
+    log.warn('Workload egress: could not list Docker networks; keeping the last list', { err: String(err) });
+    subnetCache = { at: Date.now(), list: subnetCache?.list ?? [] };
+  }
+  return subnetCache.list;
+}
+
+// ── the proxy ──────────────────────────────────────────────────────────────────
+
+export interface WorkloadEgressCaller {
+  agentGroupId: string;
+  /** workload:<id>/<service>, or workload:unknown for an address on the network that is no service. */
+  sessionId: string;
+  workloadId: string | null;
+  service: string | null;
+  /** What the owner approved for this service; empty: nothing. */
+  approved: string[];
+}
+
+export interface WorkloadEgressDeps {
+  /**
+   * Who is calling: `local` is the listener's own address (an agent network's
+   * gateway), `remote` the source, already known to share its /24. Null: not
+   * an agent network NanoClaw knows.
+   */
+  identify: (local: string, remote: string) => Promise<WorkloadEgressCaller | null>;
+  mode?: (agentGroupId: string) => Promise<EgressMode>;
+  allowlist?: (agentGroupId: string) => Promise<string[]>;
+  ownModels?: (agentGroupId: string) => Promise<string[]>;
+  /** Ranges no connection may go to, besides the fixed ones; default: Docker's current subnets. */
+  forbidden?: () => Promise<string[]>;
+  /** A name's address; default: one IPv4 DNS lookup. */
+  resolve?: (host: string) => Promise<string>;
+  /** The model registry's Ollama servers, null when it could not be read yet; default: workloadOllamaTargets. */
+  ollamaTargets?: () => Promise<Array<{ host: string; port: number }> | null>;
+  /** Open a connection to an address the checks passed; default: TCP. */
+  dial?: (address: string, port: number) => Promise<Duplex>;
+}
+
+const bare = (a: string | undefined): string => (a ?? '').replace(/^::ffff:/, '');
+const sameSlash24 = (a: string, b: string): boolean =>
+  net.isIPv4(a) && net.isIPv4(b) && a.split('.').slice(0, 3).join('.') === b.split('.').slice(0, 3).join('.');
+
+/** What a refused service is told. */
+export function workloadBlockedMessage(host: string, port: number): string {
+  const where = port === 443 || port === 80 ? host : `${host}:${port}`;
+  return `blocked by NanoClaw network policy: this service may not reach ${where} — declare it under x-nanoclaw-egress (it needs an approval), and it must be on the agent's own Network list`;
+}
+
+/** A connection the proxy opened for a caller: what it asked for, and the upstream side. */
+export interface WorkloadEgressTunnel {
+  caller: WorkloadEgressCaller;
+  host: string;
+  port: number;
+  upstream: Duplex;
+}
+
+/**
+ * Serve one proxied connection from a workload service. `track` hears of
+ * every upstream connection opened for it, so the listener can close it when
+ * permission goes.
+ */
+export async function serveWorkloadEgressClient(
+  client: ProxyClient & { localAddress?: string },
+  deps: WorkloadEgressDeps,
+  track?: (t: WorkloadEgressTunnel) => void,
+): Promise<void> {
+  client.on('error', () => {});
+  const head = await readProxyHead(client);
+  if (!head) return void client.destroy();
+  const req = parseProxyHead(head.head);
+  if ('error' in req) return answer(client, req.status, req.error);
+  const local = bare(client.localAddress);
+  const remote = bare(client.remoteAddress);
+  const caller = sameSlash24(local, remote) ? await deps.identify(local, remote) : null;
+  if (!caller) {
+    warnThrottled(
+      `stranger|${local}|${remote}`,
+      'Workload egress: a connection from an address that is no workload network',
+      {
+        local,
+        remote,
+      },
+    );
+    return answer(client, '403 Forbidden', 'blocked by NanoClaw network policy: not a workload NanoClaw knows');
+  }
+  const mode = await (deps.mode ?? groupEgressMode)(caller.agentGroupId);
+  const refuse = (why: string, opts: { status?: string; record?: boolean } = {}): void => {
+    // Audited, but never offered on the install-wide "Allow" list: that would open the host to every agent.
+    if (opts.record !== false)
+      recordBlocked(req.host, req.port, caller.agentGroupId, caller.sessionId, mode, { suggest: false });
+    noteWorkloadEgressRefusal(caller.agentGroupId, caller.workloadId, caller.service, req.host, req.port, why);
+    warnThrottled(`${remote}|${req.host.toLowerCase()}:${req.port}`, 'Workload egress refused', {
+      agentGroupId: caller.agentGroupId,
+      caller: caller.sessionId,
+      host: req.host,
+      port: req.port,
+      why,
+    });
+    answer(client, opts.status ?? '403 Forbidden', why);
+  };
+  if (net.isIPv6(req.host))
+    return refuse('blocked by NanoClaw network policy: a workload reaches IPv4 addresses only', { record: false });
+  const allowlist = mode === 'host-only' ? await (deps.allowlist ?? allowlistFor)(caller.agentGroupId) : [];
+  const own = await (deps.ownModels ?? ownModelTargetsFor)(caller.agentGroupId);
+  if (!workloadEgressAllowed(req.host, req.port, caller.approved, mode, allowlist, own))
+    return refuse(workloadBlockedMessage(req.host, req.port));
+
+  const isAddress = net.isIP(req.host) !== 0;
+  // Which servers are Ollama comes from the model registry; before it has
+  // been read once, nothing that could be one goes through unfiltered.
+  const registry = await (deps.ollamaTargets ?? workloadOllamaTargets)();
+  if (registry === null && (req.port === OLLAMA_PORT || (isAddress && isLanV4(req.host))))
+    return refuse(
+      'runtime egress has not read the model registry yet, so a LAN address or Ollama port is refused for now; try again shortly',
+      { status: '503 Service Unavailable', record: false },
+    );
+  const ollama = await ollamaPin(req.host, req.port, [...(registry ?? []), ...knownOllamaTargets()]);
+  if ('refused' in ollama && ollama.refused === 'unresolved')
+    return refuse(`${req.host} could not be resolved`, { status: '502 Bad Gateway', record: false });
+  // A private address only when the approved list names that very address and port.
+  const literal = namedLiterally(req.host, req.port, caller.approved);
+  let address: string;
+  try {
+    address =
+      'pin' in ollama && ollama.pin
+        ? ollama.pin
+        : isAddress
+          ? req.host
+          : await (deps.resolve ?? (async (h: string) => (await dns.lookup(h, { family: 4 })).address))(req.host);
+  } catch {
+    return refuse(`${req.host} could not be resolved`, { status: '502 Bad Gateway', record: false });
+  }
+  // The address checked is the one dialled: a second lookup cannot move it.
+  if (!workloadAddressAllowed(address, literal, await (deps.forbidden ?? dockerSubnets)()))
+    return refuse(
+      `blocked by NanoClaw network policy: ${req.host} resolves to ${address}, which a workload may not reach (a private address must be listed as address:port itself)`,
+    );
+  const rawDial = deps.dial ?? connectTcp;
+  const dial = async (a: string, p: number): Promise<Duplex> => {
+    const upstream = await rawDial(a, p);
+    track?.({ caller, host: req.host, port: req.port, upstream });
+    return upstream;
+  };
+  if ('refused' in ollama) return serveOllama(client, req, head.rest, address, dial, refuse);
+  // Plain HTTP: one request, its body framed by Content-Length (see forwardOne).
+  if (req.kind === 'absolute' && (req.bodyLength === null || req.bodyLength === undefined))
+    return refuse('a plain-HTTP request through the workload proxy must state its Content-Length', {
+      status: '411 Length Required',
+      record: false,
+    });
+  let upstream: Duplex;
+  try {
+    upstream = await dial(address, req.port);
+  } catch (err) {
+    return refuse(`could not reach ${req.host}:${req.port}: ${String((err as Error).message).slice(0, 200)}`, {
+      status: '502 Bad Gateway',
+      record: false,
+    });
+  }
+  if (req.kind === 'connect') return spliceDirect(client, req, head.rest, upstream, { idleMs: TUNNEL_IDLE_MS });
+  forwardOne(client, upstream, req.originHead!.split('\r\n').filter(Boolean), head.rest, req.bodyLength!);
+}
+
+type Parsed = Exclude<ReturnType<typeof parseProxyHead>, { error: string }>;
+
+/** One inference request to an approved Ollama server: plain HTTP, Content-Length only, then the connection closes. */
+async function serveOllama(
+  client: ProxyClient,
+  req: Parsed,
+  rest: Buffer,
+  address: string,
+  dial: (address: string, port: number) => Promise<Duplex>,
+  refuse: (why: string, opts?: { status?: string; record?: boolean }) => void,
+): Promise<void> {
+  if (req.kind !== 'absolute')
+    return refuse('Ollama is reachable from a workload over plain HTTP only (an http:// URL, not a tunnel)', {
+      record: false,
+    });
+  const lines = req.originHead!.split('\r\n').filter(Boolean);
+  const [method, target] = lines[0].split(' ');
+  if (!ollamaRequestAllowed(method, target))
+    return refuse(
+      `${method} ${target.split('?')[0]} is not available: only inference and read-only lookups reach Ollama`,
+      { record: false },
+    );
+  // A chunked body ends where a decoder says, and a second request could follow it on the same connection.
+  if (req.bodyLength === null || req.bodyLength === undefined)
+    return refuse('a request to Ollama must state its Content-Length', {
+      status: '411 Length Required',
+      record: false,
+    });
+  let upstream: Duplex;
+  try {
+    upstream = await dial(address, req.port);
+  } catch (err) {
+    return refuse(`could not reach ${req.host}:${req.port}: ${String((err as Error).message).slice(0, 200)}`, {
+      status: '502 Bad Gateway',
+      record: false,
+    });
+  }
+  forwardOne(client, upstream, lines, rest, req.bodyLength);
+}
+
+/**
+ * Forward one plain-HTTP request and nothing after it: the head with
+ * `Connection: close`, then exactly `bodyLength` bytes of body. Anything the
+ * client sends past that (a pipelined second request, to any Host) is dropped.
+ */
+function forwardOne(client: ProxyClient, upstream: Duplex, lines: string[], rest: Buffer, bodyLength: number): void {
+  upstream.on('error', () => client.destroy());
+  client.on('error', () => upstream.destroy());
+  client.once('close', () => upstream.destroy());
+  closeWhenIdle(client, upstream, TUNNEL_IDLE_MS);
+  upstream.write(
+    [lines[0], ...lines.slice(1).filter((l) => !/^(connection|keep-alive):/i.test(l)), 'Connection: close'].join(
+      '\r\n',
+    ) + '\r\n\r\n',
+  );
+  upstream.pipe(client);
+  // This request's body and nothing after it.
+  let left = bodyLength;
+  const forward = (chunk: Buffer): void => {
+    if (left <= 0) return;
+    const part = chunk.subarray(0, left);
+    left -= part.length;
+    if (!upstream.write(part)) {
+      client.pause();
+      upstream.once('drain', () => client.resume());
+    }
+  };
+  forward(rest);
+  client.on('data', forward);
+  client.resume();
+}
+
+// ── listeners ──────────────────────────────────────────────────────────────────
+
+interface Listener {
+  server: net.Server;
+  ready: Promise<void>;
+  deps: WorkloadEgressDeps;
+  /** Every accepted socket (bounded by MAX_CONNECTIONS). */
+  socks: Set<net.Socket>;
+  /** The connections opened upstream, by client socket, with the source that asked. */
+  live: Map<net.Socket, WorkloadEgressTunnel & { remote: string }>;
+}
+
+const listeners = new Map<string, Listener>();
+let recheckTimer: NodeJS.Timeout | null = null;
+let rechecking: Promise<number> | null = null;
+
+function startRecheck(): void {
+  if (recheckTimer) return;
+  recheckTimer = setInterval(() => {
+    void recheckWorkloadEgress().catch((err: unknown) =>
+      log.warn('Workload egress: recheck failed', { err: String(err).slice(0, 200) }),
+    );
+  }, RECHECK_MS);
+  recheckTimer.unref?.();
+}
+
+function stopRecheckWhenIdle(): void {
+  if (listeners.size || !recheckTimer) return;
+  clearInterval(recheckTimer);
+  recheckTimer = null;
+}
+
+function closeAll(l: Listener): number {
+  const n = l.live.size;
+  for (const t of l.live.values()) t.upstream.destroy();
+  for (const s of l.socks) s.destroy();
+  l.live.clear();
+  l.socks.clear();
+  return n;
+}
+
+/**
+ * Listen (idempotently) on an agent network's gateway address. Resolves once
+ * listening; rejects when the address cannot be had (and forgets it, so the
+ * next call tries again).
+ */
+export function openWorkloadEgressListener(gateway: string, port: number, deps: WorkloadEgressDeps): Promise<void> {
+  const k = `${gateway}:${port}`;
+  const had = listeners.get(k);
+  if (had) return had.ready;
+  const perSource = new Map<string, number>();
+  const socks = new Set<net.Socket>();
+  const live: Listener['live'] = new Map();
+  const server = net.createServer((sock) => {
+    socks.add(sock);
+    sock.once('close', () => {
+      socks.delete(sock);
+      live.delete(sock);
+    });
+    const src = bare(sock.remoteAddress);
+    const n = perSource.get(src) ?? 0;
+    if (n >= MAX_PER_SOURCE) {
+      warnThrottled(`busy|${src}`, 'Workload egress: too many connections from one address', { gateway, src });
+      sock.on('error', () => {});
+      return answer(
+        sock,
+        '429 Too Many Requests',
+        `blocked by NanoClaw network policy: at most ${MAX_PER_SOURCE} open connections per service`,
+      );
+    }
+    perSource.set(src, n + 1);
+    sock.once('close', () => {
+      const left = (perSource.get(src) ?? 1) - 1;
+      if (left > 0) perSource.set(src, left);
+      else perSource.delete(src);
+    });
+    const track = (t: WorkloadEgressTunnel): void => {
+      // Closed (the listener with it) while the upstream connection was being opened.
+      if (sock.destroyed || listeners.get(k)?.server !== server) {
+        t.upstream.destroy();
+        sock.destroy();
+        return;
+      }
+      live.set(sock, { ...t, remote: src });
+    };
+    void serveWorkloadEgressClient(sock, deps, track).catch(() => sock.destroy());
+  });
+  server.maxConnections = MAX_CONNECTIONS;
+  const ready = new Promise<void>((resolve, reject) => {
+    server.once('listening', () => {
+      log.info('Workload egress listening', { gateway, port });
+      resolve();
+    });
+    server.on('error', (err) => {
+      log.error('Workload egress listener failed', { gateway, port, err: String(err) });
+      if (listeners.get(k)?.server === server) listeners.delete(k);
+      stopRecheckWhenIdle();
+      reject(err);
+    });
+  });
+  // A failure nobody awaited is logged above, not thrown at the process.
+  ready.catch(() => undefined);
+  listeners.set(k, { server, ready, deps, socks, live });
+  startRecheck();
+  server.listen(port, gateway);
+  return ready;
+}
+
+/** Stop listening on a gateway address (any port), and close every connection on it. */
+export function closeWorkloadEgressListener(gateway: string): void {
+  for (const [k, l] of [...listeners]) {
+    if (k.slice(0, k.lastIndexOf(':')) !== gateway) continue;
+    listeners.delete(k);
+    l.server.close();
+    const closed = closeAll(l);
+    log.info('Workload egress listener closed', { gateway, closed });
+  }
+  stopRecheckWhenIdle();
+}
+
+/**
+ * Hold every open connection to the rule again: its caller must still be the
+ * same running service, its approved list must still name the host, and the
+ * agent must still reach it (workloadEgressAllowed). Those that fail are
+ * closed and noted as refusals. One pass at a time; resolves with how many
+ * were closed. A caller that cannot be looked up now is kept until the next
+ * pass.
+ */
+export function recheckWorkloadEgress(): Promise<number> {
+  rechecking ??= recheckPass().finally(() => {
+    rechecking = null;
+  });
+  return rechecking;
+}
+
+async function recheckPass(): Promise<number> {
+  let closed = 0;
+  // Per pass, each agent's policy is read once.
+  const policy = new Map<string, Promise<{ mode: EgressMode; allowlist: string[]; own: string[] }>>();
+  for (const [k, l] of [...listeners]) {
+    const gateway = k.slice(0, k.lastIndexOf(':'));
+    const read = (agentGroupId: string) => {
+      let p = policy.get(agentGroupId);
+      if (!p) {
+        p = (async () => {
+          const mode = await (l.deps.mode ?? groupEgressMode)(agentGroupId);
+          return {
+            mode,
+            allowlist: mode === 'host-only' ? await (l.deps.allowlist ?? allowlistFor)(agentGroupId) : [],
+            own: await (l.deps.ownModels ?? ownModelTargetsFor)(agentGroupId),
+          };
+        })();
+        policy.set(agentGroupId, p);
+      }
+      return p;
+    };
+    for (const [sock, t] of [...l.live]) {
+      let permitted: boolean;
+      try {
+        const now = await l.deps.identify(gateway, t.remote);
+        const same =
+          !!now &&
+          now.agentGroupId === t.caller.agentGroupId &&
+          now.workloadId === t.caller.workloadId &&
+          now.service === t.caller.service;
+        const p = same ? await read(now.agentGroupId) : null;
+        permitted = !!p && workloadEgressAllowed(t.host, t.port, now!.approved, p.mode, p.allowlist, p.own);
+      } catch (err) {
+        log.warn('Workload egress: could not recheck a connection; keeping it until the next pass', {
+          gateway,
+          err: String(err).slice(0, 200),
+        });
+        continue;
+      }
+      if (permitted || !l.live.has(sock)) continue;
+      l.live.delete(sock);
+      t.upstream.destroy();
+      sock.destroy();
+      closed += 1;
+      noteWorkloadEgressRefusal(
+        t.caller.agentGroupId,
+        t.caller.workloadId,
+        t.caller.service,
+        t.host,
+        t.port,
+        'an open connection was closed: the service no longer runs, or is no longer approved or allowed to reach this host',
+      );
+    }
+  }
+  if (closed) log.info('Workload egress: closed connections no longer permitted', { closed });
+  return closed;
+}
+
+/** How many connections the listeners hold open upstream now. */
+export const workloadEgressConnections = (): number => [...listeners.values()].reduce((n, l) => n + l.live.size, 0);
+
+/** The addresses listened on now, as gateway:port. */
+export const workloadEgressListeners = (): string[] => [...listeners.keys()];
+
+export function __resetWorkloadEgressForTest(): void {
+  for (const l of listeners.values()) {
+    l.server.close();
+    closeAll(l);
+  }
+  listeners.clear();
+  stopRecheckWhenIdle();
+  rechecking = null;
+  subnetCache = null;
+  warnedAt.clear();
+  ollamaReadAt = 0;
+  ollamaTriedAt = 0;
+  ollamaReading = null;
+}

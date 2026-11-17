@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  egressRefusal,
   OFF_REASON,
+  onEgressVerdict,
   preflightDue,
   PREFLIGHT_EVERY_MS,
   requireWorkloads,
@@ -58,5 +60,53 @@ describe('the workloads preflight', () => {
     });
     expect(broken).toMatchObject({ ok: false, isolationOpen: false });
     expect(broken.reason).toMatch(/could not run: no docker/);
+  });
+
+  it('checks the runtime egress port only when it is set, and refuses only egress on failure', async () => {
+    vi.stubEnv('NANOCLAW_WORKLOADS', '1');
+    const probed: number[] = [];
+    const egressProbe = async (port: number) => (probed.push(port), 'refused' as const);
+    expect((await runPreflight({ ...ok, egressProbe })).egress).toBeUndefined();
+    expect(probed).toEqual([]);
+    vi.stubEnv('NANOCLAW_WORKLOAD_EGRESS_PORT', '8472');
+    expect((await runPreflight({ ...ok, egressProbe })).egress).toEqual({ port: 8472, ok: true, reason: '' });
+    expect(probed).toEqual([8472]);
+    expect(egressRefusal(8472)).toBeNull();
+    const held = await runPreflight({ ...ok, egressProbe: async () => 'answered' });
+    expect(held.ok).toBe(true);
+    expect(held.egress).toMatchObject({ ok: false });
+    expect(egressRefusal(8472)).toMatch(/listens on port 8472 on every address/);
+    await runPreflight({ ...ok, egressProbe: async () => 'dropped' });
+    expect(egressRefusal(8472)).toMatch(/--stack-egress-port 8472/);
+  });
+
+  it('probes the egress port again on every run, and says when runtime egress turns off or on', async () => {
+    vi.stubEnv('NANOCLAW_WORKLOADS', '1');
+    vi.stubEnv('NANOCLAW_WORKLOAD_EGRESS_PORT', '8472');
+    let heard = 0;
+    onEgressVerdict(() => {
+      heard += 1;
+    });
+    const probe = (p: 'refused' | 'answered') => runPreflight({ ...ok, egressProbe: async () => p });
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+    await probe('refused');
+    await flush();
+    expect(heard).toBe(1);
+    expect(egressRefusal(8472)).toBeNull();
+    await probe('refused');
+    await flush();
+    expect(heard).toBe(1);
+    // A service on this host started listening on the port on every address.
+    await probe('answered');
+    await flush();
+    expect(heard).toBe(2);
+    expect(egressRefusal(8472)).toMatch(/listens on port 8472 on every address/);
+    await probe('answered');
+    await flush();
+    expect(heard).toBe(2);
+    await probe('refused');
+    await flush();
+    expect(heard).toBe(3);
+    expect(egressRefusal(8472)).toBeNull();
   });
 });

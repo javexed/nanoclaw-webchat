@@ -99,7 +99,7 @@ describe('capText', () => {
 describe('explainFailure', () => {
   it('names the Docker Hub cause and where an admin allows it', () => {
     expect(explainFailure(BUILD_ERROR)).toBe(
-      "The build couldn't reach Docker Hub to fetch its base image. An admin can allow it for this agent: Agent → Apps → Allow Docker Hub for builds.",
+      "The build couldn't reach Docker Hub to fetch its base image. An admin can allow it for this agent: Agent → Apps → Build sources → Docker Hub.",
     );
   });
 
@@ -126,7 +126,7 @@ describe('describeApprovedOutcome', () => {
     );
     expect(o.failed).toBe(true);
     expect(o.line).toMatch(/^Approved\. Deployed "homeboard", but it failed: The build couldn't reach Docker Hub/);
-    expect(o.line).toContain('Agent → Apps → Allow Docker Hub for builds');
+    expect(o.line).toContain('Agent → Apps → Build sources → Docker Hub');
     expect(o.details).not.toContain('Signature=');
     // The error text itself, not the escaped JSON around it.
     expect(o.details).toContain('ERROR: failed to build');

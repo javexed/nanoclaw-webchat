@@ -10,7 +10,7 @@ import { authFetch } from '../core/api.js';
 import { createApp } from 'vue';
 import ApprovalsList from './ApprovalsList.vue';
 import ApprovalToast from './ApprovalToast.vue';
-import { approvalBusy, approvalErrors, approvalRows } from './approvals-state.js';
+import { approvalBusy, approvalDecided, approvalErrors, approvalRows } from './approvals-state.js';
 
 /** One button on an approval card. `label` falls back to `value` when absent. */
 export interface ApprovalOption {
@@ -207,6 +207,7 @@ export async function respondToApproval(
       return;
     }
     pendingApprovals = pendingApprovals.filter((a: Approval) => a.questionId !== questionId);
+    approvalDecided.value = { ...approvalDecided.value, [questionId]: value === 'approve' ? 'approve' : 'reject' };
     setBusy(false);
     renderApprovalsList();
     // Remove the toast version too if it's currently visible.

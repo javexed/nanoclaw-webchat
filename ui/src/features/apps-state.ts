@@ -28,14 +28,26 @@ export interface AppRow {
   expiresAt: number | null;
   /** Published: renewed near its expiry while people open it. Absent from an older server. */
   renewsWhileUsed?: boolean;
+  /** Hosts its services may call at runtime, as approved. Absent from an older server. */
+  canCall?: string[];
+  /** Calls its services were refused lately. */
+  egressRefused?: number;
+}
+
+/** A build source (Docker Hub, npm, …): on, or a card to turn it on waiting. */
+export interface BuildSourceRow {
+  id: string;
+  label: string;
+  on: boolean;
+  pending: boolean;
 }
 
 export interface AppsView {
   available: boolean;
   routes: RouteKind[];
   disk: { usedGb: number; quotaGb: number; level: 'ok' | 'warn' | 'over' } | null;
-  /** Confined builds on this host; this agent's builds may pull from Docker Hub; a card for that waits. */
-  builds?: { on: boolean; dockerHub: boolean; pending: boolean };
+  /** Confined builds on this host, and the package sources this agent's builds may download from. */
+  builds?: { on: boolean; sources: BuildSourceRow[] };
   apps: AppRow[];
 }
 
@@ -102,10 +114,10 @@ export const STATE_LABEL: Record<AppState, string> = {
   'needs-approval': 'Needs approval',
 };
 
-/** What a route change asks for: the row's rule where the new route takes it, else Only me. */
+/** What a route change asks for: the row's rule where the new route takes it; a new app opens to Agent members. */
 export function nextForRoute(row: Pick<AppRow, 'route' | 'who' | 'emails'>, route: RouteChoice): AppSetting {
   if (route === 'off') return { route, who: row.who, emails: row.emails };
-  if (row.route === 'off') return { route, who: 'only-me', emails: [] };
+  if (row.route === 'off') return { route, who: 'agent-members', emails: [] };
   if (row.who === 'specific' && route !== 'cloudflare') return { route, who: 'only-me', emails: [] };
   return { route, who: row.who, emails: row.who === 'specific' ? row.emails : [] };
 }
@@ -180,6 +192,6 @@ export const appsService = ref<Map<string, string>>(new Map());
 export const appsInfoKey = ref<string | null>(null);
 /** Rows with a request in flight. */
 export const appsBusy = ref<Set<string>>(new Set());
-/** "Allow Docker Hub for builds": a request in flight, and a refusal shown under it. */
-export const appsBuildsBusy = ref(false);
+/** Build sources: the one with a request in flight, and a refusal shown under them. */
+export const appsBuildsBusy = ref<string | null>(null);
 export const appsBuildsError = ref('');

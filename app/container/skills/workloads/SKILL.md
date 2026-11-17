@@ -3,9 +3,9 @@ name: workloads
 description: >-
   Workloads: run the apps you build (a Compose stack — web app, API, database)
   on NanoClaw itself with `ncl workloads`, and reach them from your own
-  container. Use this skill whenever you need to deploy, run, host or test an
-  app or service, think you need a server or VM for one, or bring an existing
-  project's docker-compose.yml over. Covers the rules a stack must follow,
+  container. Use this skill whenever you plan, design, build, deploy, run, host
+  or test an app or service (before choosing its stack), think you need a
+  server or VM for one, or bring an existing project's docker-compose.yml over. Covers the rules a stack must follow,
   converting a Compose project, builds, approvals, addresses, logs/exec, disk
   quota, backups and restore, and publishing an app to people.
 ---
@@ -55,9 +55,12 @@ Where builds are on:
   args need `up` (a new card), and the Dockerfile is checked again right
   before each build;
 - builds run with your own network access (plus any registries allowed for
-  your builds) through `HTTP(S)_PROXY`, and get no credentials. Base images
-  from Docker Hub (`FROM node:22`) need **Allow Docker Hub for builds**, which
-  an admin of this agent turns on in **Agent → Apps** (an owner approves it).
+  your builds) through `HTTP(S)_PROXY`, and get no credentials. Package
+  sources a build downloads from are switches an admin of this agent turns on
+  in **Agent → Apps → Build sources** (an owner approves each): **Docker Hub**
+  (base images such as `FROM node:22`), **npm**, **OS packages** (`apk add`,
+  `apt-get install`), **PyPI** and **GitHub images** (`ghcr.io`). Name the
+  one the build needs.
   If a build is refused reaching a registry, tell the person that;
 - tools that ignore the proxy (e.g. `pecl`, some installers) have no way out:
   fetch with `curl` first, then install from the file;
@@ -167,16 +170,52 @@ Go through the proxy your container is given (`HTTP_PROXY`/`http_proxy`;
 curl uses it): a stack on another machine is reached only that way, so raw
 sockets (`/dev/tcp`, `nc`, a database client) time out there.
 Services reach each other by service name, as in any Compose project.
-Stacks have **no internet access** and cannot reach the host — pulls and
-builds happen at deploy time, so put dependencies in the image.
+Stacks cannot reach the host, and have **no internet access by default** —
+pulls and builds happen at deploy time, so put dependencies in the image.
+
+## Calling out at runtime (`x-nanoclaw-egress`)
+
+When a service must call something while it runs (an outside API, a model
+server on the LAN), declare those hosts on that service:
+
+```yaml
+services:
+  api:
+    image: ghcr.io/example/cards-api:1.4
+    x-nanoclaw-egress:
+      - api.example.com          # ports 443 and 80
+      - "*.example.org"          # its subdomains, port 443 only
+      - "192.168.0.20:11434"     # a LAN address: literal, with its port
+```
+
+- It needs an owner's card: the card lists what each service may call, and
+  adding or removing a host later needs a new card (`up`, not `redeploy`).
+- Every entry must be something **you** may reach yourself (your Network
+  allowlist, or your own model's address). Ask an admin to add a host to your
+  Network list first; if it is later removed from you, your stacks lose it too
+  (open connections included).
+- Declare well-known hosts you trust: approving a name trusts whoever
+  controls its DNS, which can point it at any public address.
+- It works over HTTP(S) through the proxy NanoClaw sets on that service
+  (`HTTP_PROXY`/`HTTPS_PROXY`, `NO_PROXY` for your own stack,
+  `NODE_USE_ENV_PROXY=1` for Node). A client that ignores those variables, or
+  anything that is not HTTP (a database, SMTP), gets nowhere.
+- No bare `*`, no wildcard over numbers (`*.0.5`), no IPv6, at most 10
+  entries, never this host or `localhost`. An Ollama server takes inference
+  only, over plain `http://`.
+- Such a stack runs on central only. If a deploy says runtime egress is off,
+  tell the person an owner turns it on.
+- `ncl workloads status --name <name>` shows what each service may call and
+  what it was refused lately.
 
 **Never** give a person a `198.18.…` address or a port as a link; those work
 only from your own container. To let people open an app, publish it (below).
 
 ## Publishing an app to people
 
-A published app gets its own address (e.g. `https://notes.<tailnet>.ts.net/`)
-on a publishing route an owner turned on for this host, and only the people
+A published app gets its own address (e.g. `https://notes.<tailnet>.ts.net/`,
+or on the `port` route NanoClaw's own name with a port of its own, e.g.
+`https://<node>.<tailnet>.ts.net:9001/`) on a publishing route an owner turned on for this host, and only the people
 its "who can open" rule allows get in; NanoClaw signs them in.
 
 **An app meant for people: deploy and publish in one step.** Prefer this over
@@ -184,12 +223,12 @@ its "who can open" rule allows get in; NanoClaw signs them in.
 
 - `ncl workloads up --name myapp --file myapp/compose.yml --publish tailnet --reason "<what people use it for>"`
   — the card shows what runs and where people open it. `--publish` is the
-  route (`tailnet` or `cloudflare`). Options as for `expose`: `--who`,
+  route (`tailnet`, `cloudflare` or `port`). Options as for `expose`: `--who`,
   `--emails`, `--app`; `--service`/`--port` only when NanoClaw cannot tell
   (it serves the one service that declares an `expose:` port, on that port —
   so declare one, e.g. `expose: ["8080"]`).
 - When it is approved you are told one line, e.g. `myapp is running · open it
-  at https://myapp.<tailnet>.ts.net (only you)`: pass that link on as it is.
+  at https://myapp.<tailnet>.ts.net (the agent’s members)`: pass that link on as it is.
 - If it says the route is not on, tell the person: an owner turns it on in
   Admin → Publishing. You can still deploy now without `--publish` and publish
   later with `expose`.
@@ -198,9 +237,10 @@ To publish a workload that already runs:
 
 - `ncl workloads expose --name myapp --service web --port 8080 --reason "<what people use it for>"`
   — asks an owner (approval card). Options: `--app <name>` (the first part of
-  its address; default the workload's name), `--route tailnet|cloudflare`
-  (needed only when both are on), `--who only-me|agent-members|signed-in`
-  (default `only-me`: the person who approves the card). On `cloudflare`
+  its address; default the workload's name), `--route tailnet|cloudflare|port`
+  (needed only when more than one is on), `--who agent-members|only-me|signed-in`
+  (default `agent-members`: everyone who may use you; `only-me` is the person
+  who approves the card). On `cloudflare`
   also `--who specific --emails a@example.com,b@example.com` (named people,
   who must also be NanoClaw users signed in with that address).
 - `ncl workloads routes` — your apps, their address, who can open them, and

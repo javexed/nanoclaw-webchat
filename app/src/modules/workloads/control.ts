@@ -43,12 +43,21 @@ import {
 } from './docker.js';
 import { MAX_NETWORKS, serviceAddresses, subnetFor } from './override.js';
 import { placeWorkload, workerRooms, type Placement } from './placement.js';
-import { checkStack, type CheckedStack } from './policy.js';
+import { checkStack, declaredEgress, type CheckedStack } from './policy.js';
+import {
+  checkEgressSubset,
+  egressDeny,
+  openAgentEgress,
+  overrideEgress,
+  requireWorkloadEgress,
+  syncWorkloadEgress,
+} from './egress.js';
 import { requireWorkloads } from './preflight.js';
 import { confinedBuildsOn } from './settings.js';
 import { registerDeployBusy, wakeWorkload } from './sleep.js';
 import { translateCompose } from './translate.js';
 import {
+  approvedEgress,
   decodeApproved,
   dockerfileOf,
   encodeApproved,
@@ -165,13 +174,23 @@ export async function checkWorkload(
     t.text,
     dir,
     { memoryMb: quota.memoryMb - usedMem, cpus: quota.cpus - usedCpu },
-    { composeDir: dir, allowBuild: confinedBuildsOn() },
+    { composeDir: dir, allowBuild: confinedBuildsOn(), egressDeny: egressDeny() },
   );
   if (!r.ok) throw new Error(`the stack was refused:\n- ${r.errors.join('\n- ')}`);
+  // Runtime egress (egress.ts): switched on here, within the agent's own reach, and on central only.
+  const egress = Object.keys(declaredEgress(r.stack)).length > 0;
+  if (egress) {
+    requireWorkloadEgress();
+    await checkEgressSubset(agentGroupId, r.stack);
+    if (existing && existing.node !== LOCAL_NODE)
+      throw new Error(
+        `${name} runs on a worker, and x-nanoclaw-egress runs on central only: remove it, or ask an owner to move the stack`,
+      );
+  }
   // A workload stays where it was placed; a new one is placed now (placement.ts).
   const placement: Placement = existing
     ? { node: existing.node, reason: existing.placementReason ?? '' }
-    : await placeWorkload(agentGroupId, r.stack.total);
+    : await placeWorkload(agentGroupId, { ...r.stack.total, egress });
   if (placement.node === LOCAL_NODE) {
     const slice = await sliceStatus();
     if (!slice.ok) throw new Error(slice.reason);
@@ -332,6 +351,8 @@ async function deploy(w: Workload, agentGroupId: string): Promise<Workload> {
     return await deployOnce(w, agentGroupId);
   } finally {
     inFlight.delete(w.id);
+    // A failed deploy, or one that dropped its egress, gives the listener up when nothing else of the agent needs it.
+    await releaseEgress(agentGroupId);
   }
 }
 
@@ -348,8 +369,14 @@ async function deployOnce(w: Workload, agentGroupId: string): Promise<Workload> 
     if (refused) throw new Error(`${w.name} runs on a worker, and ${refused}; ask an owner`);
     await sizeWorkerSlice(w.node, availableOn(m));
   }
+  // Checked again from the approved record: the switch may be off since the card, and a worker has no proxy.
+  const egressPort = Object.keys(approvedEgress(approved)).length ? requireWorkloadEgress() : null;
+  if (egressPort !== null && remote)
+    throw new Error(`${w.name} calls out (x-nanoclaw-egress), which runs on central only; ask an owner`);
   const net = await claimNetwork(agentGroupId, networkName, MAX_NETWORKS, await foreignIndexes(w.node));
   const network = await ensureNetwork(net.idx, w.node);
+  // Listening before the containers start, so their first call finds the proxy.
+  if (egressPort !== null) await openAgentEgress(net.idx, egressPort);
   const taken = (await listWorkloads({ agentGroupId }))
     .filter((o) => o.id !== w.id)
     .flatMap((o) => Object.values(o.addresses));
@@ -374,7 +401,7 @@ async function deployOnce(w: Workload, agentGroupId: string): Promise<Workload> 
     const images = serviceImages(w);
     if (remote) writeFiles(w, network, await shipImages(w, images, builds));
     else {
-      writeFiles(w, network, images);
+      writeFiles(w, network, images, overrideEgress(w, net.idx));
       const pulled = Object.keys(w.stack.compose.services).filter((n) => !builds.includes(n));
       if (pulled.length) await compose(w, ['pull', '--quiet', ...pulled], 1_200_000);
       // An image may not carry NanoClaw's labels (they mark agent containers), whatever its Dockerfile says.
@@ -567,12 +594,20 @@ export async function stopWorkload(agentGroupId: string, name: string, reason = 
     reason,
     detail: { workload: w.id },
   });
-  return updateWorkload(w.id, {
+  const stopped = await updateWorkload(w.id, {
     state: 'stopped',
     asleepAt: null,
     ...(reason === 'requested' ? {} : { lastError: `stopped: ${reason}` }),
   });
+  await releaseEgress(agentGroupId);
+  return stopped;
 }
+
+/** A stack stopped or went: its network's egress listener closes unless another running stack still needs it. */
+const releaseEgress = (agentGroupId: string): Promise<void> =>
+  syncWorkloadEgress(agentGroupId).catch((err) =>
+    log.warn('Workload egress sync failed', { agentGroupId, err: String(err).slice(0, 200) }),
+  );
 
 export async function startWorkload(agentGroupId: string, name: string): Promise<Workload> {
   const w = await own(agentGroupId, name);
@@ -594,7 +629,9 @@ export async function downWorkload(agentGroupId: string, name: string): Promise<
   const w = await own(agentGroupId, name);
   await compose(w, ['down', '--remove-orphans'], 300_000);
   audit({ type: 'workload.down', actor: actor(agentGroupId), effect: 'allow', detail: { workload: w.id } });
-  return updateWorkload(w.id, { state: 'stopped', asleepAt: null });
+  const down = await updateWorkload(w.id, { state: 'stopped', asleepAt: null });
+  await releaseEgress(agentGroupId);
+  return down;
 }
 
 /** Remove containers AND volumes. Held for an owner's card by the CLI. */
@@ -607,6 +644,7 @@ export async function deleteWorkload(agentGroupId: string, name: string): Promis
   await removeWorkloadFiles(w);
   audit({ type: 'workload.delete', actor: actor(agentGroupId), effect: 'allow', detail: { workload: w.id } });
   const gone = await updateWorkload(w.id, { state: 'deleted' });
+  await releaseEgress(agentGroupId);
   if (!(await listWorkloads({ agentGroupId })).length) await removeBuilder(agentGroupId);
   return gone;
 }

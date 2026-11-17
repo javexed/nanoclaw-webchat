@@ -9,7 +9,7 @@ const cards = vi.hoisted(() => ({
   requests: [] as Array<{ action: string; payload: Record<string, unknown>; title: string; question: string }>,
   handler: null as
     null | ((ctx: { payload: Record<string, unknown>; outcome: string; userId: string }) => Promise<void>),
-  /** Docker Hub for builds' handler (BUILD_REGISTRIES_ACTION). */
+  /** The build sources' handler (BUILD_REGISTRIES_ACTION). */
   registries: null as
     null | ((ctx: { payload: Record<string, unknown>; outcome: string; userId: string }) => Promise<void>),
   answer: 'appr-1' as string | null,
@@ -426,14 +426,14 @@ describe('the list', () => {
   });
 });
 
-describe('Allow Docker Hub for builds', () => {
-  const pendingCard = (agentGroupId: string) =>
+describe('Build sources', () => {
+  const pendingCard = (agentGroupId: string, extra: Record<string, unknown> = {}) =>
     createPendingApproval({
       approval_id: 'appr-reg',
       session_id: null,
       request_id: 'appr-reg',
       action: gui.BUILD_REGISTRIES_ACTION,
-      payload: JSON.stringify({ agentGroupId, hosts: gui.DOCKER_HUB, requestedBy: 'webchat:admin' }),
+      payload: JSON.stringify({ agentGroupId, hosts: gui.DOCKER_HUB, requestedBy: 'webchat:admin', ...extra }),
       created_at: new Date().toISOString(),
       instance: null,
       title: 't',
@@ -441,63 +441,99 @@ describe('Allow Docker Hub for builds', () => {
       options_json: '[]',
       approver_user_id: null,
     } as never);
+  const source = async (agentGroupId: string, id: string) =>
+    (await gui.appsOf(agentGroupId)).builds.sources.find((s) => s.id === id)!;
+  const NPM = gui.buildSource('npm')!;
 
-  it('is refused while confined builds are off on this host', async () => {
-    await expect(gui.setDockerHub('ag-1', 'webchat:admin', true)).rejects.toThrow(/Builds are off/);
+  it('lists every source, all off, and is refused while confined builds are off', async () => {
+    await expect(gui.setBuildSource('ag-1', 'webchat:admin', 'dockerhub', true)).rejects.toThrow(/Builds are off/);
     expect(cards.requests).toEqual([]);
-    expect((await gui.appsOf('ag-1')).builds).toEqual({ on: false, dockerHub: false, pending: false });
+    const { builds } = await gui.appsOf('ag-1');
+    expect(builds.on).toBe(false);
+    expect(builds.sources.map((s) => s.id)).toEqual(['dockerhub', 'npm', 'os', 'pypi', 'ghcr']);
+    expect(builds.sources.every((s) => !s.on && !s.pending)).toBe(true);
   });
 
-  it('on widens what builds reach: a card, whoever asks, and nothing changes yet', async () => {
+  it('an unknown source is refused', async () => {
     vi.stubEnv('NANOCLAW_WORKLOAD_CONFINED_BUILDS', '1');
-    const r = await gui.setDockerHub('ag-1', 'webchat:owner', true);
+    await expect(gui.setBuildSource('ag-1', 'webchat:admin', 'evil', true)).rejects.toThrow(/Unknown build source/);
+    expect(cards.requests).toEqual([]);
+  });
+
+  it('on widens what builds reach: a card naming the source and its hosts, and nothing changes yet', async () => {
+    vi.stubEnv('NANOCLAW_WORKLOAD_CONFINED_BUILDS', '1');
+    const r = await gui.setBuildSource('ag-1', 'webchat:owner', 'npm', true);
     expect(r).toEqual({ change: 'widen', applied: false, pending: true });
     expect(cards.requests).toHaveLength(1);
     expect(cards.requests[0]).toMatchObject({
       action: gui.BUILD_REGISTRIES_ACTION,
-      payload: { agentGroupId: 'ag-1', hosts: [...gui.DOCKER_HUB], requestedBy: 'webchat:owner' },
+      payload: { agentGroupId: 'ag-1', source: 'npm', hosts: [...NPM.hosts], requestedBy: 'webchat:owner' },
     });
-    expect(cards.requests[0].question).toContain('registry-1.docker.io');
+    expect(cards.requests[0].question).toContain('registry.npmjs.org');
+    expect(cards.requests[0].title).toContain('npm');
     expect(await buildRegistries('ag-1')).toEqual([]);
   });
 
-  it('a card already waiting shows on the switch and is not asked twice', async () => {
+  it('no source in the body means Docker Hub', async () => {
     vi.stubEnv('NANOCLAW_WORKLOAD_CONFINED_BUILDS', '1');
-    await pendingCard('ag-1');
-    expect((await gui.appsOf('ag-1')).builds).toEqual({ on: true, dockerHub: false, pending: true });
-    await expect(gui.setDockerHub('ag-1', 'webchat:admin', true)).rejects.toMatchObject({ status: 409 });
-    expect((await gui.appsOf('ag-2')).builds.pending).toBe(false);
+    await gui.setBuildSource('ag-1', 'webchat:admin', undefined, true);
+    expect(cards.requests[0].payload).toMatchObject({ source: 'dockerhub', hosts: [...gui.DOCKER_HUB] });
   });
 
-  it('approve adds Docker Hub to what was there; not when the asker lost the agent or the hosts changed', async () => {
+  it('a waiting card blocks only its own source; a card from before sources counts as Docker Hub', async () => {
     vi.stubEnv('NANOCLAW_WORKLOAD_CONFINED_BUILDS', '1');
-    await setBuildRegistries('ag-1', ['ghcr.io']);
-    await gui.setDockerHub('ag-1', 'webchat:admin', true);
+    await pendingCard('ag-1');
+    expect(await source('ag-1', 'dockerhub')).toMatchObject({ on: false, pending: true });
+    expect((await source('ag-1', 'npm')).pending).toBe(false);
+    await expect(gui.setBuildSource('ag-1', 'webchat:admin', 'dockerhub', true)).rejects.toMatchObject({
+      status: 409,
+    });
+    expect((await gui.setBuildSource('ag-1', 'webchat:admin', 'npm', true)).pending).toBe(true);
+    expect((await source('ag-2', 'dockerhub')).pending).toBe(false);
+  });
+
+  it('approve adds the source to what was there; not when the asker lost the agent or the hosts changed', async () => {
+    vi.stubEnv('NANOCLAW_WORKLOAD_CONFINED_BUILDS', '1');
+    await setBuildRegistries('ag-1', ['registry.example']);
+    await gui.setBuildSource('ag-1', 'webchat:admin', 'dockerhub', true);
     const payload = cards.requests[0].payload;
     admins.delete('webchat:admin');
     await cards.registries!({ payload, outcome: 'approve', userId: 'webchat:owner' });
-    expect(await buildRegistries('ag-1')).toEqual(['ghcr.io']);
+    expect(await buildRegistries('ag-1')).toEqual(['registry.example']);
     admins.add('webchat:admin');
     await expect(
       gui.applyApprovedBuildRegistries({ ...payload, hosts: ['evil.example', ...gui.DOCKER_HUB.slice(1)] }),
     ).rejects.toThrow(/malformed/);
+    await expect(gui.applyApprovedBuildRegistries({ ...payload, source: 'npm' })).rejects.toThrow(/malformed/);
+    await expect(gui.applyApprovedBuildRegistries({ ...payload, source: 'evil' })).rejects.toThrow(/malformed/);
     await cards.registries!({ payload, outcome: 'reject', userId: 'webchat:owner' });
-    expect(await buildRegistries('ag-1')).toEqual(['ghcr.io']);
+    expect(await buildRegistries('ag-1')).toEqual(['registry.example']);
     await cards.registries!({ payload, outcome: 'approve', userId: 'webchat:owner' });
-    expect(await buildRegistries('ag-1')).toEqual(['ghcr.io', ...gui.DOCKER_HUB]);
-    expect((await gui.appsOf('ag-1')).builds.dockerHub).toBe(true);
+    expect(await buildRegistries('ag-1')).toEqual(['registry.example', ...gui.DOCKER_HUB]);
+    expect((await source('ag-1', 'dockerhub')).on).toBe(true);
+    expect((await source('ag-1', 'npm')).on).toBe(false);
   });
 
-  it('off narrows: applied at once, no card, even with builds off', async () => {
-    await setBuildRegistries('ag-1', [...gui.DOCKER_HUB]);
-    expect(await gui.setDockerHub('ag-1', 'webchat:admin', false)).toEqual({
+  it('an approved card from before sources still applies as Docker Hub', async () => {
+    await expect(
+      gui.applyApprovedBuildRegistries({
+        agentGroupId: 'ag-1',
+        hosts: [...gui.DOCKER_HUB],
+        requestedBy: 'webchat:admin',
+      }),
+    ).resolves.toEqual([...gui.DOCKER_HUB]);
+  });
+
+  it('off narrows: removes only that source’s hosts, at once, no card, even with builds off', async () => {
+    await setBuildRegistries('ag-1', ['registry.example', ...gui.DOCKER_HUB, ...NPM.hosts]);
+    expect(await gui.setBuildSource('ag-1', 'webchat:admin', 'dockerhub', false)).toEqual({
       change: 'narrow',
       applied: true,
       pending: false,
     });
-    expect(await buildRegistries('ag-1')).toEqual([]);
+    expect(await buildRegistries('ag-1')).toEqual(['registry.example', ...NPM.hosts]);
     expect(cards.requests).toEqual([]);
-    expect((await gui.setDockerHub('ag-1', 'webchat:admin', false)).change).toBe('none');
-    await expect(gui.setDockerHub('ag-1', 'webchat:admin', 'yes')).rejects.toThrow(/true or false/);
+    expect((await gui.setBuildSource('ag-1', 'webchat:admin', 'dockerhub', false)).change).toBe('none');
+    await expect(gui.setBuildSource('ag-1', 'webchat:admin', 'npm', 'yes')).rejects.toThrow(/true or false/);
   });
 });

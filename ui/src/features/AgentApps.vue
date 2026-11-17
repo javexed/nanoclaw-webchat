@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * An agent's apps, mounted into <div id="agent-apps"> (apps.ts). Above the list:
- * "Allow Docker Hub for builds" while confined builds are on (a gate line while
+ * Build sources (Docker Hub, npm, …) while confined builds are on (a gate line while
  * they are off, or while workloads are). One row per app (or per unpublished
  * workload): name, state, its expiry, route, who can open it, Open ↗ and a ⋯
  * menu. Renders from apps-state.ts; every action lives in apps-actions.ts.
@@ -42,7 +42,7 @@ import {
   remove,
   restore,
   savePeople,
-  setDockerHub,
+  setBuildSource,
   startStop,
   toggleInfo,
   toggleMenu,
@@ -74,12 +74,14 @@ const builds = computed(() => view.value?.builds ?? null);
 const expiry = (r: AppRow) =>
   r.deployed ? expiryText(r.expiresAt, Date.now(), undefined, r.renewsWhileUsed === true) : null;
 
-function dockerHubChanged(e: Event): void {
+function sourceChanged(id: string, e: Event): void {
   const el = e.target as HTMLInputElement;
   const on = el.checked;
   el.checked = !on; // shows what is saved until the server answers
-  void setDockerHub(on);
+  void setBuildSource(id, on);
 }
+// The Docker Hub row keeps the id it had as the only switch, for links to it.
+const sourceElId = (id: string) => (id === 'dockerhub' ? 'agent-apps-docker-hub' : `agent-apps-source-${id}`);
 const disk = computed(() => diskText(view.value?.disk ?? null));
 
 const busy = (r: AppRow) => appsBusy.value.has(rowKey(r));
@@ -130,20 +132,34 @@ function whoChanged(r: AppRow, e: Event): void {
     </p>
     <div v-if="disk" class="apps-disk" :class="`apps-disk-${view.disk?.level}`">{{ disk }}</div>
     <template v-if="view.available && builds">
-      <div v-if="builds.on" id="agent-apps-docker-hub" class="setting-group install-row apps-builds">
-        <span class="setting-label">Allow Docker Hub for builds</span>
-        <span v-if="appsBuildsBusy" class="btn-spinner" aria-hidden="true"></span>
-        <span v-else-if="builds.pending" class="app-state app-state-needs-approval">Needs approval</span>
-        <label class="setting-toggle"
-          ><input
-            type="checkbox"
-            aria-label="Allow Docker Hub for builds"
-            :checked="builds.dockerHub"
-            :disabled="appsBuildsBusy || (builds.pending && !builds.dockerHub) || undefined"
-            @change="dockerHubChanged"
-        /></label>
+      <div
+        v-if="builds.on"
+        id="agent-apps-build-sources"
+        class="apps-build-sources"
+        role="group"
+        aria-labelledby="agent-apps-build-sources-label"
+      >
+        <span id="agent-apps-build-sources-label" class="form-label">Build sources</span>
+        <div
+          v-for="s in builds.sources"
+          :id="sourceElId(s.id)"
+          :key="s.id"
+          class="setting-group install-row apps-builds"
+        >
+          <span class="setting-label">{{ s.label }}</span>
+          <span v-if="appsBuildsBusy === s.id" class="btn-spinner" aria-hidden="true"></span>
+          <span v-else-if="s.pending" class="app-state app-state-needs-approval">Needs approval</span>
+          <label class="setting-toggle"
+            ><input
+              type="checkbox"
+              :aria-label="`${s.label} for builds`"
+              :checked="s.on"
+              :disabled="!!appsBuildsBusy || (s.pending && !s.on) || undefined"
+              @change="sourceChanged(s.id, $event)"
+          /></label>
+        </div>
       </div>
-      <p v-else id="agent-apps-docker-hub" class="cred-hint apps-gate">
+      <p v-else id="agent-apps-build-sources" class="cred-hint apps-gate">
         Builds are off — an owner turns them on in Admin → Publishing
       </p>
       <p v-if="appsBuildsError" class="cred-hint err" role="alert">{{ appsBuildsError }}</p>
@@ -169,6 +185,10 @@ function whoChanged(r: AppRow, e: Event): void {
             v-html="KEBAB"
           ></button>
         </div>
+        <p v-if="r.canCall?.length" class="cred-hint app-calls">
+          Can call: {{ r.canCall.join(', ')
+          }}<template v-if="r.egressRefused"> · Refused: {{ r.egressRefused }}</template>
+        </p>
         <div v-if="r.deployed" class="app-row-controls">
           <select
             :value="r.route"
