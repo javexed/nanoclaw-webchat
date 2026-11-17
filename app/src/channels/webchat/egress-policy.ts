@@ -486,35 +486,47 @@ const auditedAt = new Map<string, number>();
 const AUDIT_WINDOW_MS = 60_000;
 const MAX_AUDITED = 1000;
 
+/**
+ * Record a refused host: audited (once a minute per host), and listed for the
+ * admin's install-wide "Allow" button unless `suggest` is false (a workload's
+ * refusal: allowing it there would open the host to every agent).
+ */
 export function recordBlocked(
   host: string,
   port: number,
   agentGroupId: string,
   sessionId: string,
   mode: EgressMode,
+  opts: { suggest?: boolean } = {},
 ): void {
   const k = `${host.toLowerCase()}:${port}`;
   const now = Date.now();
-  const b = blocked.get(k) ?? {
-    host: host.toLowerCase(),
-    port,
-    count: 0,
-    firstAt: now,
-    lastAt: now,
-    agentGroupIds: [],
-  };
-  b.count += 1;
-  b.lastAt = now;
-  if (!b.agentGroupIds.includes(agentGroupId)) b.agentGroupIds.push(agentGroupId);
-  blocked.delete(k);
-  blocked.set(k, b); // most recent last
-  while (blocked.size > MAX_BLOCKED) blocked.delete(blocked.keys().next().value!);
+  let count: number | undefined;
+  if (opts.suggest !== false) {
+    const b = blocked.get(k) ?? {
+      host: host.toLowerCase(),
+      port,
+      count: 0,
+      firstAt: now,
+      lastAt: now,
+      agentGroupIds: [],
+    };
+    b.count += 1;
+    b.lastAt = now;
+    if (!b.agentGroupIds.includes(agentGroupId)) b.agentGroupIds.push(agentGroupId);
+    blocked.delete(k);
+    blocked.set(k, b); // most recent last
+    while (blocked.size > MAX_BLOCKED) blocked.delete(blocked.keys().next().value!);
+    count = b.count;
+  }
   // One audit row per host a minute is plenty; the counter keeps the rest.
-  const last = auditedAt.get(k) ?? 0;
+  // A workload's refusals are throttled apart, so they never hide an agent's.
+  const ak = opts.suggest === false ? `workload|${k}` : k;
+  const last = auditedAt.get(ak) ?? 0;
   if (now - last > AUDIT_WINDOW_MS) {
     // Most recent last, and bounded: a stream of distinct refused hosts must not grow it without end.
-    auditedAt.delete(k);
-    auditedAt.set(k, now);
+    auditedAt.delete(ak);
+    auditedAt.set(ak, now);
     if (auditedAt.size > MAX_AUDITED) {
       for (const [key, at] of auditedAt) {
         if (auditedAt.size <= MAX_AUDITED || now - at <= AUDIT_WINDOW_MS) break;
@@ -526,7 +538,7 @@ export function recordBlocked(
       type: 'runner.egress.blocked',
       actor: `agent-group:${agentGroupId}`,
       effect: 'deny',
-      detail: { target: `${host}:${port}`, mode, agentGroupId, sessionId, count: b.count },
+      detail: { target: `${host}:${port}`, mode, agentGroupId, sessionId, ...(count !== undefined ? { count } : {}) },
     });
   }
 }

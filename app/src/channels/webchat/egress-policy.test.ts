@@ -7,6 +7,7 @@ import {
   egressAllowed,
   hostMatches,
   isSafeEgressHost,
+  listBlocked,
   modelHostPattern,
   modelPassthrough,
   parseAllowlist,
@@ -31,6 +32,15 @@ describe('runner egress patterns', () => {
     __resetRunnerEgressForTest();
     for (let i = 0; i < 1500; i++) recordBlocked(`h${i}.example.com`, 443, 'ag-1', 's1', 'host-only');
     expect(__auditedSizeForTest()).toBeLessThanOrEqual(1000);
+    __resetRunnerEgressForTest();
+  });
+
+  it('keeps a refusal off the install-wide Allow list when told to', () => {
+    __resetRunnerEgressForTest();
+    recordBlocked('w.example.com', 443, 'ag-1', 'workload:w1/api', 'host-only', { suggest: false });
+    expect(listBlocked()).toEqual([]);
+    recordBlocked('a.example.com', 443, 'ag-1', 's1', 'host-only');
+    expect(listBlocked().map((b) => b.host)).toEqual(['a.example.com']);
     __resetRunnerEgressForTest();
   });
 
