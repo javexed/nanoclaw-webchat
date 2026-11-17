@@ -17,9 +17,11 @@ import {
   namedLiterally,
   openWorkloadEgressListener,
   parseWorkloadEgress,
+  recheckWorkloadEgress,
   serveWorkloadEgressClient,
   workloadAddressAllowed,
   workloadEgressAllowed,
+  workloadEgressConnections,
   workloadEgressCovered,
   workloadEgressListeners,
   type WorkloadEgressCaller,
@@ -226,13 +228,14 @@ describe('the workload egress proxy', () => {
     expect(dialled).toEqual(['192.0.2.20:443']);
   });
 
-  it('refuses a host it was not approved for, and records it', async () => {
+  it('refuses a host it was not approved for, and records it for the agent only', async () => {
     const got = await ask('CONNECT other.example.com:443 HTTP/1.1\r\n\r\n');
     expect(got).toContain('403');
     expect(got).toContain('x-nanoclaw-egress');
     expect(dialled).toEqual([]);
-    expect(listBlocked()[0]).toMatchObject({ host: 'other.example.com', port: 443, agentGroupIds: ['ag-1'] });
     expect(workloadEgressRefusals('ag-1', 'w1')[0]).toMatchObject({ service: 'api', host: 'other.example.com' });
+    // Never offered on the install-wide "Allow" list, which would open it to every agent.
+    expect(listBlocked()).toEqual([]);
   });
 
   it('cuts a stack off when the agent loses the host', async () => {
@@ -410,5 +413,138 @@ describe('the listeners', () => {
     expect(workloadEgressListeners()).toEqual([`127.0.0.1:${port}`]);
     closeWorkloadEgressListener('127.0.0.1');
     expect(workloadEgressListeners()).toEqual([]);
+  });
+});
+
+describe('open connections', () => {
+  let upstream: net.Server;
+  let upPort: number;
+  let port: number;
+  let caller: WorkloadEgressCaller | null;
+  let allowlist: string[];
+  let deps: WorkloadEgressDeps;
+  const clients: net.Socket[] = [];
+
+  beforeEach(async () => {
+    __resetRunnerEgressForTest();
+    __resetWorkloadEgressRefusalsForTest();
+    upstream = net.createServer((sock) => {
+      sock.on('data', (d) => sock.write(Buffer.concat([Buffer.from('echo:'), d])));
+      sock.on('error', () => {});
+    });
+    upPort = await new Promise<number>((r) =>
+      upstream.listen(0, '127.0.0.1', () => r((upstream.address() as net.AddressInfo).port)),
+    );
+    const free = net.createServer();
+    port = await new Promise<number>((r) =>
+      free.listen(0, '127.0.0.1', () => r((free.address() as net.AddressInfo).port)),
+    );
+    await new Promise((r) => free.close(r));
+    caller = {
+      agentGroupId: 'ag-1',
+      sessionId: 'workload:w1/api',
+      workloadId: 'w1',
+      service: 'api',
+      approved: ['api.example.com', 'b.example.com'],
+    };
+    allowlist = ['api.example.com', 'b.example.com'];
+    deps = {
+      identify: async () => caller,
+      mode: async () => 'host-only',
+      allowlist: async () => allowlist,
+      ownModels: async () => [],
+      forbidden: async () => [],
+      resolve: async () => '192.0.2.20',
+      ollamaTargets: async () => [],
+      dial: async () => net.connect(upPort, '127.0.0.1'),
+    };
+    await openWorkloadEgressListener('127.0.0.1', port, deps);
+  });
+
+  afterEach(() => {
+    for (const c of clients.splice(0)) c.destroy();
+    upstream.close();
+    __resetRunnerEgressForTest();
+    __resetWorkloadEgressForTest();
+  });
+
+  /** Open a tunnel through the listener; resolves once it carries data, with a promise for its close. */
+  async function tunnel(host: string): Promise<{ sock: net.Socket; closed: Promise<void> }> {
+    const sock = net.connect(port, '127.0.0.1');
+    clients.push(sock);
+    sock.on('error', () => {});
+    const closed = new Promise<void>((r) => sock.once('close', () => r()));
+    await new Promise<void>((resolve, reject) => {
+      let got = '';
+      sock.on('data', (d) => {
+        got += d.toString();
+        if (got.includes('200 Connection Established') && !got.includes('echo:')) sock.write('ping');
+        if (got.includes('echo:ping')) resolve();
+      });
+      sock.once('close', () => reject(new Error(`closed early: ${got}`)));
+      sock.write(`CONNECT ${host}:443 HTTP/1.1\r\n\r\n`);
+    });
+    return { sock, closed };
+  }
+
+  const settle = () => new Promise((r) => setTimeout(r, 30));
+
+  it('are kept while still permitted', async () => {
+    const t = await tunnel('api.example.com');
+    expect(workloadEgressConnections()).toBe(1);
+    expect(await recheckWorkloadEgress()).toBe(0);
+    await settle();
+    expect(t.sock.destroyed).toBe(false);
+  });
+
+  it('close when the approved list no longer names the host', async () => {
+    const keep = await tunnel('b.example.com');
+    const t = await tunnel('api.example.com');
+    caller = { ...caller!, approved: ['b.example.com'] };
+    expect(await recheckWorkloadEgress()).toBe(1);
+    await t.closed;
+    expect(keep.sock.destroyed).toBe(false);
+    expect(workloadEgressConnections()).toBe(1);
+    expect(workloadEgressRefusals('ag-1', 'w1')[0]).toMatchObject({ host: 'api.example.com', port: 443 });
+    expect(workloadEgressRefusals('ag-1', 'w1')[0].reason).toMatch(/open connection was closed/);
+  });
+
+  it('close when the agent loses the host', async () => {
+    const t = await tunnel('api.example.com');
+    allowlist = [];
+    expect(await recheckWorkloadEgress()).toBe(1);
+    await t.closed;
+  });
+
+  it('close when the service no longer runs', async () => {
+    const t = await tunnel('api.example.com');
+    caller = { agentGroupId: 'ag-1', sessionId: 'workload:unknown', workloadId: null, service: null, approved: [] };
+    expect(await recheckWorkloadEgress()).toBe(1);
+    await t.closed;
+  });
+
+  it('close when another stack holds the address now', async () => {
+    const t = await tunnel('api.example.com');
+    caller = { ...caller!, workloadId: 'w2', sessionId: 'workload:w2/api' };
+    expect(await recheckWorkloadEgress()).toBe(1);
+    await t.closed;
+  });
+
+  it('are kept for a pass when the caller cannot be looked up', async () => {
+    const t = await tunnel('api.example.com');
+    deps.identify = async () => {
+      throw new Error('store busy');
+    };
+    expect(await recheckWorkloadEgress()).toBe(0);
+    await settle();
+    expect(t.sock.destroyed).toBe(false);
+  });
+
+  it('all close with their listener', async () => {
+    const a = await tunnel('api.example.com');
+    const b = await tunnel('b.example.com');
+    closeWorkloadEgressListener('127.0.0.1');
+    await Promise.all([a.closed, b.closed]);
+    expect(workloadEgressConnections()).toBe(0);
   });
 });

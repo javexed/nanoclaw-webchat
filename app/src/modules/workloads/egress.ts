@@ -13,6 +13,7 @@ import {
   closeWorkloadEgressListener,
   dockerSubnets,
   openWorkloadEgressListener,
+  recheckWorkloadEgress,
   workloadEgressCovered,
   workloadEgressListeners,
   workloadOllamaTargets,
@@ -26,7 +27,7 @@ import { LOCAL_NODE } from './docker.js';
 import { subnetFor, type OverrideInput } from './override.js';
 import { declaredEgress, type CheckedStack } from './policy.js';
 import { approvedEgress, decodeApproved } from './shape.js';
-import { egressRefusal } from './preflight.js';
+import { egressRefusal, onEgressVerdict } from './preflight.js';
 import { workloadEgressPort } from './settings.js';
 import { allNetworks, listWorkloads, type Workload } from './store.js';
 import { edgeSettings } from './tailnet/config.js';
@@ -190,4 +191,10 @@ export async function syncWorkloadEgress(agentGroupId?: string): Promise<void> {
         log.warn('Workload egress: could not listen', { gateway, port, err: String(err).slice(0, 200) }),
       );
   }
+  // Open connections held to what runs now: a stack that stopped, or an approval that changed, loses them.
+  callerCache.clear();
+  await recheckWorkloadEgress();
 }
+
+// The port's probe (every preflight) turned runtime egress off or on: act now, not at the next sweep.
+onEgressVerdict(() => syncWorkloadEgress());

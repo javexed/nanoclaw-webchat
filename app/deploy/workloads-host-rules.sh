@@ -25,11 +25,18 @@
 # this host or its LAN. Without --gateway the edge networks reach nothing here.
 #
 # Runtime egress (--stack-egress-port PORT, NANOCLAW_WORKLOAD_EGRESS_PORT): a
-# new connection from a workload bridge to that one TCP port on a workload
-# address (each network's own gateway, where NanoClaw's egress proxy listens)
-# is accepted; everything else to this host is still dropped. IPv4 only.
-# NanoClaw's preflight checks that nothing else on this host answers on that
-# port. Without the flag, stacks have no way out at all.
+# new connection from a workload bridge to that one TCP port is accepted only
+# when it is addressed to that bridge's own gateway address (where NanoClaw's
+# egress proxy listens): the address must be in the workload range and be
+# local to the very interface the packet came in on (addrtype LOCAL with
+# --limit-iface-in), so one workload network cannot reach another's gateway.
+# Everything else to this host is still dropped. IPv4 only. NanoClaw's
+# preflight checks that nothing else on this host answers on that port.
+# Without the flag, stacks have no way out at all.
+#
+# After updating NanoClaw, re-run this script with the same flags (and
+# --install-unit, which refreshes the root-owned copy the boot unit runs): it
+# replaces an older, broader egress rule; --check reports the old one.
 #
 #   sudo deploy/workloads-host-rules.sh [--gateway ADDR:PORT] [--stack-egress-port PORT]                 # add (idempotent)
 #   sudo deploy/workloads-host-rules.sh [--gateway ADDR:PORT] [--stack-egress-port PORT] --install-unit  # add, and re-add at every boot
@@ -118,9 +125,22 @@ jumps() {
 chain_rules() {
   local ipt="$1"
   echo "-m conntrack --ctstate ESTABLISHED,RELATED -j RETURN"
-  [ "$ipt" = iptables ] && [ -n "$STACK_PORT" ] && echo "-i $IFACE -d $RANGE4 -p tcp --dport $STACK_PORT -j ACCEPT"
+  [ "$ipt" = iptables ] && [ -n "$STACK_PORT" ] && stack_egress_rule
   echo "-j DROP"
 }
+
+# The egress port's accept: new connections only, to an address in the
+# workload range that is local to the interface the packet arrived on (that
+# bridge's own gateway). Not a neighbouring workload network's gateway, nor
+# any other address of this host.
+stack_egress_rule() {
+  echo "-i $IFACE -d $RANGE4 -p tcp --dport $STACK_PORT -m conntrack --ctstate NEW -m addrtype --dst-type LOCAL --limit-iface-in -j ACCEPT"
+}
+
+# Older versions accepted the port on any workload address
+# (-i ncw+ -d 198.18.0.0/15 -p tcp --dport PORT -j ACCEPT). Adding refills the
+# chain and --remove deletes it, so that rule goes either way; --check fails
+# while it is still there.
 
 # The edge chain's rules, in order, per family.
 edge_rules() {
@@ -192,6 +212,12 @@ remove() {
 check() {
   local ipt="$1"
   "$ipt" -S "$CHAIN" 2>/dev/null | grep -q -- '-j DROP' || return 1
+  # An older, broader egress accept still in place (on any port): re-run
+  # without --check. The narrow rule lists its addrtype match after --dport.
+  if "$ipt" -S "$CHAIN" 2>/dev/null | grep -qE -- '--dport [0-9]+ -j ACCEPT$'; then
+    echo "an older, broader --stack-egress-port rule is in place: re-run with the same flags (and --install-unit) to replace it" >&2
+    return 1
+  fi
   while read -r rule; do
     [ -n "$rule" ] || continue
     # shellcheck disable=SC2086

@@ -40,6 +40,12 @@
  * MAX_CONNECTIONS connections, MAX_PER_SOURCE from one address, and a tunnel
  * idle for TUNNEL_IDLE_MS is closed.
  *
+ * A connection's permission is not checked once and kept: every RECHECK_MS
+ * (and on recheckWorkloadEgress, after a stack stops) each open tunnel or
+ * request is held to the rule again, and closed when its service no longer
+ * runs, its approved list no longer names the host, or the agent may no
+ * longer reach it. Closing a listener closes every connection on it.
+ *
  * HTTP(S) through the proxy is all there is: a client that ignores
  * HTTP(S)_PROXY, or a protocol other than HTTP, has no way out.
  */
@@ -88,6 +94,9 @@ export const MAX_PER_SOURCE = 32;
 
 /** A tunnel or request that carries nothing either way for this long is closed. */
 export const TUNNEL_IDLE_MS = 5 * 60_000;
+
+/** How often open connections are held to the rule again. */
+export const RECHECK_MS = 20_000;
 
 /** Ollama's own port: refused while the model registry is unread. */
 const OLLAMA_PORT = 11434;
@@ -403,10 +412,23 @@ export function workloadBlockedMessage(host: string, port: number): string {
   return `blocked by NanoClaw network policy: this service may not reach ${where} — declare it under x-nanoclaw-egress (it needs an approval), and it must be on the agent's own Network list`;
 }
 
-/** Serve one proxied connection from a workload service. */
+/** A connection the proxy opened for a caller: what it asked for, and the upstream side. */
+export interface WorkloadEgressTunnel {
+  caller: WorkloadEgressCaller;
+  host: string;
+  port: number;
+  upstream: Duplex;
+}
+
+/**
+ * Serve one proxied connection from a workload service. `track` hears of
+ * every upstream connection opened for it, so the listener can close it when
+ * permission goes.
+ */
 export async function serveWorkloadEgressClient(
   client: ProxyClient & { localAddress?: string },
   deps: WorkloadEgressDeps,
+  track?: (t: WorkloadEgressTunnel) => void,
 ): Promise<void> {
   client.on('error', () => {});
   const head = await readProxyHead(client);
@@ -429,7 +451,9 @@ export async function serveWorkloadEgressClient(
   }
   const mode = await (deps.mode ?? groupEgressMode)(caller.agentGroupId);
   const refuse = (why: string, opts: { status?: string; record?: boolean } = {}): void => {
-    if (opts.record !== false) recordBlocked(req.host, req.port, caller.agentGroupId, caller.sessionId, mode);
+    // Audited, but never offered on the install-wide "Allow" list: that would open the host to every agent.
+    if (opts.record !== false)
+      recordBlocked(req.host, req.port, caller.agentGroupId, caller.sessionId, mode, { suggest: false });
     noteWorkloadEgressRefusal(caller.agentGroupId, caller.workloadId, caller.service, req.host, req.port, why);
     warnThrottled(`${remote}|${req.host.toLowerCase()}:${req.port}`, 'Workload egress refused', {
       agentGroupId: caller.agentGroupId,
@@ -477,7 +501,12 @@ export async function serveWorkloadEgressClient(
     return refuse(
       `blocked by NanoClaw network policy: ${req.host} resolves to ${address}, which a workload may not reach (a private address must be listed as address:port itself)`,
     );
-  const dial = deps.dial ?? connectTcp;
+  const rawDial = deps.dial ?? connectTcp;
+  const dial = async (a: string, p: number): Promise<Duplex> => {
+    const upstream = await rawDial(a, p);
+    track?.({ caller, host: req.host, port: req.port, upstream });
+    return upstream;
+  };
   if ('refused' in ollama) return serveOllama(client, req, head.rest, address, dial, refuse);
   // Plain HTTP: one request, its body framed by Content-Length (see forwardOne).
   if (req.kind === 'absolute' && (req.bodyLength === null || req.bodyLength === undefined))
@@ -572,7 +601,44 @@ function forwardOne(client: ProxyClient, upstream: Duplex, lines: string[], rest
 
 // ── listeners ──────────────────────────────────────────────────────────────────
 
-const listeners = new Map<string, { server: net.Server; ready: Promise<void> }>();
+interface Listener {
+  server: net.Server;
+  ready: Promise<void>;
+  deps: WorkloadEgressDeps;
+  /** Every accepted socket (bounded by MAX_CONNECTIONS). */
+  socks: Set<net.Socket>;
+  /** The connections opened upstream, by client socket, with the source that asked. */
+  live: Map<net.Socket, WorkloadEgressTunnel & { remote: string }>;
+}
+
+const listeners = new Map<string, Listener>();
+let recheckTimer: NodeJS.Timeout | null = null;
+let rechecking: Promise<number> | null = null;
+
+function startRecheck(): void {
+  if (recheckTimer) return;
+  recheckTimer = setInterval(() => {
+    void recheckWorkloadEgress().catch((err: unknown) =>
+      log.warn('Workload egress: recheck failed', { err: String(err).slice(0, 200) }),
+    );
+  }, RECHECK_MS);
+  recheckTimer.unref?.();
+}
+
+function stopRecheckWhenIdle(): void {
+  if (listeners.size || !recheckTimer) return;
+  clearInterval(recheckTimer);
+  recheckTimer = null;
+}
+
+function closeAll(l: Listener): number {
+  const n = l.live.size;
+  for (const t of l.live.values()) t.upstream.destroy();
+  for (const s of l.socks) s.destroy();
+  l.live.clear();
+  l.socks.clear();
+  return n;
+}
 
 /**
  * Listen (idempotently) on an agent network's gateway address. Resolves once
@@ -584,7 +650,14 @@ export function openWorkloadEgressListener(gateway: string, port: number, deps: 
   const had = listeners.get(k);
   if (had) return had.ready;
   const perSource = new Map<string, number>();
+  const socks = new Set<net.Socket>();
+  const live: Listener['live'] = new Map();
   const server = net.createServer((sock) => {
+    socks.add(sock);
+    sock.once('close', () => {
+      socks.delete(sock);
+      live.delete(sock);
+    });
     const src = bare(sock.remoteAddress);
     const n = perSource.get(src) ?? 0;
     if (n >= MAX_PER_SOURCE) {
@@ -602,7 +675,16 @@ export function openWorkloadEgressListener(gateway: string, port: number, deps: 
       if (left > 0) perSource.set(src, left);
       else perSource.delete(src);
     });
-    void serveWorkloadEgressClient(sock, deps).catch(() => sock.destroy());
+    const track = (t: WorkloadEgressTunnel): void => {
+      // Closed (the listener with it) while the upstream connection was being opened.
+      if (sock.destroyed || listeners.get(k)?.server !== server) {
+        t.upstream.destroy();
+        sock.destroy();
+        return;
+      }
+      live.set(sock, { ...t, remote: src });
+    };
+    void serveWorkloadEgressClient(sock, deps, track).catch(() => sock.destroy());
   });
   server.maxConnections = MAX_CONNECTIONS;
   const ready = new Promise<void>((resolve, reject) => {
@@ -613,32 +695,117 @@ export function openWorkloadEgressListener(gateway: string, port: number, deps: 
     server.on('error', (err) => {
       log.error('Workload egress listener failed', { gateway, port, err: String(err) });
       if (listeners.get(k)?.server === server) listeners.delete(k);
+      stopRecheckWhenIdle();
       reject(err);
     });
   });
   // A failure nobody awaited is logged above, not thrown at the process.
   ready.catch(() => undefined);
-  listeners.set(k, { server, ready });
+  listeners.set(k, { server, ready, deps, socks, live });
+  startRecheck();
   server.listen(port, gateway);
   return ready;
 }
 
-/** Stop listening on a gateway address (any port). */
+/** Stop listening on a gateway address (any port), and close every connection on it. */
 export function closeWorkloadEgressListener(gateway: string): void {
-  for (const [k, { server }] of [...listeners]) {
+  for (const [k, l] of [...listeners]) {
     if (k.slice(0, k.lastIndexOf(':')) !== gateway) continue;
-    server.close();
     listeners.delete(k);
-    log.info('Workload egress listener closed', { gateway });
+    l.server.close();
+    const closed = closeAll(l);
+    log.info('Workload egress listener closed', { gateway, closed });
   }
+  stopRecheckWhenIdle();
 }
+
+/**
+ * Hold every open connection to the rule again: its caller must still be the
+ * same running service, its approved list must still name the host, and the
+ * agent must still reach it (workloadEgressAllowed). Those that fail are
+ * closed and noted as refusals. One pass at a time; resolves with how many
+ * were closed. A caller that cannot be looked up now is kept until the next
+ * pass.
+ */
+export function recheckWorkloadEgress(): Promise<number> {
+  rechecking ??= recheckPass().finally(() => {
+    rechecking = null;
+  });
+  return rechecking;
+}
+
+async function recheckPass(): Promise<number> {
+  let closed = 0;
+  // Per pass, each agent's policy is read once.
+  const policy = new Map<string, Promise<{ mode: EgressMode; allowlist: string[]; own: string[] }>>();
+  for (const [k, l] of [...listeners]) {
+    const gateway = k.slice(0, k.lastIndexOf(':'));
+    const read = (agentGroupId: string) => {
+      let p = policy.get(agentGroupId);
+      if (!p) {
+        p = (async () => {
+          const mode = await (l.deps.mode ?? groupEgressMode)(agentGroupId);
+          return {
+            mode,
+            allowlist: mode === 'host-only' ? await (l.deps.allowlist ?? allowlistFor)(agentGroupId) : [],
+            own: await (l.deps.ownModels ?? ownModelTargetsFor)(agentGroupId),
+          };
+        })();
+        policy.set(agentGroupId, p);
+      }
+      return p;
+    };
+    for (const [sock, t] of [...l.live]) {
+      let permitted: boolean;
+      try {
+        const now = await l.deps.identify(gateway, t.remote);
+        const same =
+          !!now &&
+          now.agentGroupId === t.caller.agentGroupId &&
+          now.workloadId === t.caller.workloadId &&
+          now.service === t.caller.service;
+        const p = same ? await read(now.agentGroupId) : null;
+        permitted = !!p && workloadEgressAllowed(t.host, t.port, now!.approved, p.mode, p.allowlist, p.own);
+      } catch (err) {
+        log.warn('Workload egress: could not recheck a connection; keeping it until the next pass', {
+          gateway,
+          err: String(err).slice(0, 200),
+        });
+        continue;
+      }
+      if (permitted || !l.live.has(sock)) continue;
+      l.live.delete(sock);
+      t.upstream.destroy();
+      sock.destroy();
+      closed += 1;
+      noteWorkloadEgressRefusal(
+        t.caller.agentGroupId,
+        t.caller.workloadId,
+        t.caller.service,
+        t.host,
+        t.port,
+        'an open connection was closed: the service no longer runs, or is no longer approved or allowed to reach this host',
+      );
+    }
+  }
+  if (closed) log.info('Workload egress: closed connections no longer permitted', { closed });
+  return closed;
+}
+
+/** How many connections the listeners hold open upstream now. */
+export const workloadEgressConnections = (): number => [...listeners.values()].reduce((n, l) => n + l.live.size, 0);
 
 /** The addresses listened on now, as gateway:port. */
 export const workloadEgressListeners = (): string[] => [...listeners.keys()];
 
 export function __resetWorkloadEgressForTest(): void {
-  for (const l of listeners.values()) l.server.close();
+  for (const l of listeners.values()) {
+    l.server.close();
+    closeAll(l);
+  }
   listeners.clear();
+  stopRecheckWhenIdle();
+  rechecking = null;
   subnetCache = null;
   warnedAt.clear();
   ollamaReadAt = 0;
