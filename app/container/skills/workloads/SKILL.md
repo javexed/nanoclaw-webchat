@@ -224,7 +224,7 @@ its "who can open" rule allows get in; NanoClaw signs them in.
   (it serves the one service that declares an `expose:` port, on that port —
   so declare one, e.g. `expose: ["8080"]`).
 - When it is approved you are told one line, e.g. `myapp is running · open it
-  at https://myapp.<tailnet>.ts.net (only you)`: pass that link on as it is.
+  at https://myapp.<tailnet>.ts.net (the agent’s members)`: pass that link on as it is.
 - If it says the route is not on, tell the person: an owner turns it on in
   Admin → Publishing. You can still deploy now without `--publish` and publish
   later with `expose`.
@@ -234,8 +234,9 @@ To publish a workload that already runs:
 - `ncl workloads expose --name myapp --service web --port 8080 --reason "<what people use it for>"`
   — asks an owner (approval card). Options: `--app <name>` (the first part of
   its address; default the workload's name), `--route tailnet|cloudflare|port`
-  (needed only when more than one is on), `--who only-me|agent-members|signed-in`
-  (default `only-me`: the person who approves the card). On `cloudflare`
+  (needed only when more than one is on), `--who agent-members|only-me|signed-in`
+  (default `agent-members`: everyone who may use you; `only-me` is the person
+  who approves the card). On `cloudflare`
   also `--who specific --emails a@example.com,b@example.com` (named people,
   who must also be NanoClaw users signed in with that address).
 - `ncl workloads routes` — your apps, their address, who can open them, and

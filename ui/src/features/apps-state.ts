@@ -114,10 +114,10 @@ export const STATE_LABEL: Record<AppState, string> = {
   'needs-approval': 'Needs approval',
 };
 
-/** What a route change asks for: the row's rule where the new route takes it, else Only me. */
+/** What a route change asks for: the row's rule where the new route takes it; a new app opens to Agent members. */
 export function nextForRoute(row: Pick<AppRow, 'route' | 'who' | 'emails'>, route: RouteChoice): AppSetting {
   if (route === 'off') return { route, who: row.who, emails: row.emails };
-  if (row.route === 'off') return { route, who: 'only-me', emails: [] };
+  if (row.route === 'off') return { route, who: 'agent-members', emails: [] };
   if (row.who === 'specific' && route !== 'cloudflare') return { route, who: 'only-me', emails: [] };
   return { route, who: row.who, emails: row.who === 'specific' ? row.emails : [] };
 }

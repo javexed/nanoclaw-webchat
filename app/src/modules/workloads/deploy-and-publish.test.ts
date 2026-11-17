@@ -118,7 +118,7 @@ describe('one card for deploy and publish', () => {
     const c = await card({ publish: 'tailnet' });
     expect(c.title).toBe('Deploy and publish homeboard');
     expect(c.summary!.split('\n')).toEqual([
-      '{agent} wants to deploy the workload "homeboard" and publish it on your tailnet for only you.',
+      '{agent} wants to deploy the workload "homeboard" and publish it on your tailnet for the agent’s members.',
       'Why: "a board for the house"',
     ]);
     const detail = c.detail!.split('\n');
@@ -128,7 +128,7 @@ describe('one card for deploy and publish', () => {
     expect(detail.slice(-3)).toEqual([
       'Address: https://homeboard.tail1.ts.net/',
       'Serves: service "web", port 8080',
-      'Who can open: only you',
+      'Who can open: the agent’s members',
     ]);
     const checked = await control.checkWorkload('ag-1', 'homeboard', 'compose.yml');
     expect(c.pin).toEqual({
@@ -136,7 +136,7 @@ describe('one card for deploy and publish', () => {
       publish: 'tailnet',
       service: 'web',
       port: 8080,
-      who: 'only-me',
+      who: 'agent-members',
       app: 'homeboard',
       hostname: 'homeboard.tail1.ts.net',
       ticket: expect.stringMatching(/^[0-9a-f-]{36}$/),
@@ -209,7 +209,7 @@ describe('one card for deploy and publish', () => {
 
 describe('approving it', () => {
   it('deploys, then publishes with what the card pinned; the approver becomes "only me"', async () => {
-    const args = await approve({ publish: 'tailnet' });
+    const args = await approve({ publish: 'tailnet', who: 'only-me' });
     const out = (await up.handler(up.parseArgs(args), agent)) as Record<string, unknown>;
     expect(out).toMatchObject({ name: 'homeboard', state: 'running' });
     expect(out.published).toMatchObject({
@@ -274,7 +274,7 @@ describe('approving it', () => {
   });
 
   it('a pinned narrow rule cannot be widened by editing the args after the card', async () => {
-    const args = await approve({ publish: 'tailnet' });
+    const args = await approve({ publish: 'tailnet', who: 'only-me' });
     // The pins are laid over the agent's args, so the card's "only you" is what runs.
     const out = (await up.handler(up.parseArgs({ ...base, who: 'signed-in', ...args }), agent)) as Record<
       string,
@@ -284,7 +284,7 @@ describe('approving it', () => {
   });
 
   it('a widening re-publish cards what it was', async () => {
-    const first = await approve({ publish: 'tailnet' });
+    const first = await approve({ publish: 'tailnet', who: 'only-me' });
     await up.handler(up.parseArgs(first), agent);
     const c = await card({ publish: 'tailnet', who: 'agent-members' });
     expect(c.title).toBe('Update and publish homeboard');

@@ -23,6 +23,7 @@ import {
 } from './gateway/publishing.js';
 import {
   claimTicket,
+  DEFAULT_WHO,
   deleteRoute,
   findRouteByApp,
   insertRoute,
@@ -143,7 +144,7 @@ export async function planAccess(
   const existing = await findRouteByApp(app);
   if (existing && existing.workloadId !== workloadId)
     throw new Error(`the app name ${app} is taken: pick another with --app`);
-  const whoRaw = i.who ?? existing?.who ?? 'only-me';
+  const whoRaw = i.who ?? existing?.who ?? DEFAULT_WHO;
   if (!isWho(whoRaw)) throw new Error(`--who must be one of ${WHO.join(', ')}`);
   let emails: string[] = [];
   if (whoRaw === 'specific') {

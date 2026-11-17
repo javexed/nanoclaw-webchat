@@ -136,9 +136,9 @@ It refuses to run, and says why in the log, when:
 
 | Rule | Who |
 |---|---|
-| `only-me` (default) | The person who approved the card (or exposed it), and owners |
+| `agent-members` (default) | Whoever can use the agent: owners, admins, its members |
+| `only-me` | The person who approved the card (or exposed it), and owners |
 | `specific` (Cloudflare only) | The people named with `--emails`, each signed in to NanoClaw with that address |
-| `agent-members` | Whoever can use the agent: owners, admins, its members |
 | `signed-in` | Anyone NanoClaw knows as a user |
 
 Someone NanoClaw has no user for is never let in. The person's identity comes
@@ -189,10 +189,10 @@ switch in Admin → Publishing and says the agent can deploy without
 2. the stack is deployed, held to the pinned Compose hash, digests and
    Dockerfiles, as `up` always is;
 3. the app is published through the same path as `expose`, with the pinned
-   route, rule and name; the approver becomes its "only me".
+   route, rule and name (by default the agent’s members; with `--who only-me`, the approver).
 
 The agent, and the card in the room, read one line:
-`homeboard is running · open it at https://homeboard.<tailnet>.ts.net (only you)`.
+`homeboard is running · open it at https://homeboard.<tailnet>.ts.net (the agent’s members)`.
 The publish step waits for the route's edge as `expose` does (the tailnet
 sidecar serving, the Cloudflare Access application and DNS record); when it is
 not ready in time the line says so and `ncl workloads routes` gives the link

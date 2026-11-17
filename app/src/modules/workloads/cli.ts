@@ -297,7 +297,7 @@ registerResource({
           name: 'who',
           type: 'string',
           description:
-            'With --publish: who can open it, only-me (default), agent-members, signed-in, or specific (cloudflare only, with --emails).',
+            'With --publish: who can open it, agent-members (default: everyone who may use this agent), only-me, signed-in, or specific (cloudflare only, with --emails).',
         },
         {
           name: 'emails',
@@ -566,7 +566,7 @@ registerResource({
     expose: {
       access: 'approval',
       description:
-        'Publish a service of a workload for people at its own address, on a publishing route an owner turned on (needs an owner approval). --who: only-me (default), agent-members or signed-in; on cloudflare also specific, with --emails.',
+        'Publish a service of a workload for people at its own address, on a publishing route an owner turned on (needs an owner approval). --who: agent-members (default: everyone who may use this agent), only-me or signed-in; on cloudflare also specific, with --emails.',
       args: [
         GROUP,
         NAME,

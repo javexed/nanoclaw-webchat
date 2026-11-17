@@ -34,7 +34,7 @@ import { workloadEgressRefusals } from '../../channels/webchat/workload-egress-r
 import { syncGateway } from './gateway/index.js';
 import { enabledRoutes, isRouteKind, publishingRoute, ROUTE_KIND_WORDS, type RouteKind } from './gateway/publishing.js';
 import { declaredPort, exposeApp, parseEmails, planExpose, routeView, unexposeApp, widensAccess } from './publish.js';
-import { findRouteByApp, isWho, listRoutes, updateRoute, type AppRoute, type Who } from './routes.js';
+import { DEFAULT_WHO, findRouteByApp, isWho, listRoutes, updateRoute, type AppRoute, type Who } from './routes.js';
 import { notifyWorkloadAgent } from './notify.js';
 import { confinedBuildsOn, workloadsSwitchedOn } from './settings.js';
 import {
@@ -301,7 +301,7 @@ export async function appsOf(agentGroupId: string): Promise<AppsView> {
         workload: w.name,
         state: pending.workloads.has(w.name) || pending.apps.has(w.name) ? 'needs-approval' : base,
         route: 'off',
-        who: 'only-me',
+        who: DEFAULT_WHO,
         emails: [],
         url: null,
         canPublish: exposable(w).length > 0,
@@ -321,7 +321,7 @@ export async function appsOf(agentGroupId: string): Promise<AppsView> {
         workload: name,
         state: 'needs-approval',
         route: 'off',
-        who: 'only-me',
+        who: DEFAULT_WHO,
         emails: [],
         url: null,
         canPublish: false,

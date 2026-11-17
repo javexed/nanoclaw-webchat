@@ -81,8 +81,10 @@ describe('row controls', () => {
     expect(whoOptions('cloudflare').map((o) => o.value)).toContain('specific');
   });
 
-  it('a route change keeps the rule where it can, else Only me', () => {
-    expect(nextForRoute({ route: 'off', who: 'only-me', emails: [] }, 'tailnet')).toEqual(s('tailnet'));
+  it('a new app opens to Agent members; a route change keeps the rule where it can, else Only me', () => {
+    expect(nextForRoute({ route: 'off', who: 'only-me', emails: [] }, 'tailnet')).toEqual(
+      s('tailnet', 'agent-members'),
+    );
     expect(nextForRoute({ route: 'tailnet', who: 'agent-members', emails: [] }, 'cloudflare')).toEqual(
       s('cloudflare', 'agent-members'),
     );
