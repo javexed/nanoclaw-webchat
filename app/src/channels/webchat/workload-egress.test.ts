@@ -4,14 +4,17 @@
  * sockets (a stand-in service on one side, a stand-in upstream on the other).
  */
 import net from 'net';
+import { PassThrough } from 'stream';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { __setOllamaTargetsForTest } from './egress-filter.js';
+import { __setOllamaTargetsForTest, closeWhenIdle } from './egress-filter.js';
 import { __resetRunnerEgressForTest, listBlocked } from './egress-policy.js';
 import {
   __resetWorkloadEgressForTest,
   closeWorkloadEgressListener,
+  MAX_PER_SOURCE,
+  namedLiterally,
   openWorkloadEgressListener,
   parseWorkloadEgress,
   serveWorkloadEgressClient,
@@ -67,6 +70,14 @@ describe('x-nanoclaw-egress', () => {
     expect(parseWorkloadEgress(['198.51.100.7:443']).ok).toBe(true);
   });
 
+  it('refuses a wildcard over numbers, which would match addresses', () => {
+    for (const bad of ['*.0.5', '*.0.0.5:443', '0.5']) expect(parseWorkloadEgress([bad]).ok, bad).toBe(false);
+  });
+
+  it('refuses IPv6: the host rules are IPv4 only', () => {
+    for (const bad of ['[2001:db8::1]:443', '2001:db8::1']) expect(parseWorkloadEgress([bad]).ok, bad).toBe(false);
+  });
+
   it('caps the list and wants a list of strings', () => {
     expect(parseWorkloadEgress(Array.from({ length: 11 }, (_, i) => `h${i}.example.com`)).ok).toBe(false);
     expect(parseWorkloadEgress('api.example.com').ok).toBe(false);
@@ -120,6 +131,16 @@ describe('the subset and the intersection', () => {
     expect(workloadAddressAllowed('169.254.169.254', true)).toBe(false);
     expect(workloadAddressAllowed('100.96.1.2', true)).toBe(false);
     expect(workloadAddressAllowed('10.4.0.4', true, ['10.4.0.0/16'])).toBe(false);
+    expect(workloadAddressAllowed('2001:db8::1', true)).toBe(false);
+  });
+
+  it('lets a private address through only when the approved entry is that address and port', () => {
+    expect(namedLiterally('10.0.0.5', 8080, ['10.0.0.5:8080'])).toBe(true);
+    expect(namedLiterally('10.0.0.5', 443, ['10.0.0.5:8080'])).toBe(false);
+    expect(namedLiterally('10.0.0.5', 443, ['*.0.5:443'])).toBe(false);
+    expect(namedLiterally('lan.example.com', 443, ['lan.example.com'])).toBe(false);
+    // A wildcard stored before numbers were refused still matches no address.
+    expect(workloadEgressAllowed('10.0.0.5', 443, ['*.0.5:443'], 'open', [], [])).toBe(false);
   });
 });
 
@@ -163,6 +184,7 @@ describe('the workload egress proxy', () => {
       forbidden: async () => [],
       resolve: async (h) =>
         h === 'api.example.com' ? '192.0.2.20' : h === 'lan.example.com' ? '10.0.0.9' : '192.0.2.30',
+      ollamaTargets: async () => [],
       dial: async (address, port) => {
         dialled.push(`${address}:${port}`);
         return net.connect(upPort, '127.0.0.1');
@@ -236,6 +258,54 @@ describe('the workload egress proxy', () => {
     expect(dialled).toEqual(['10.0.0.5:8080']);
   });
 
+  it('refuses a stored numeric wildcard reaching a LAN address', async () => {
+    caller!.approved = ['*.0.5:443'];
+    deps.mode = async () => 'open';
+    expect(await ask('CONNECT 10.0.0.5:443 HTTP/1.1\r\n\r\n', 'x')).toContain('403');
+    expect(dialled).toEqual([]);
+  });
+
+  it('refuses an IPv6 address', async () => {
+    deps.mode = async () => 'open';
+    expect(await ask('CONNECT [2001:db8::1]:443 HTTP/1.1\r\n\r\n')).toContain('IPv4');
+    expect(dialled).toEqual([]);
+  });
+
+  it('fails closed on a LAN address or Ollama port until the model registry has been read', async () => {
+    deps.ollamaTargets = async () => null;
+    expect(await ask('CONNECT 10.0.0.5:8080 HTTP/1.1\r\n\r\n', 'x')).toContain('503');
+    expect(await ask('POST http://192.0.2.69:11434/api/pull HTTP/1.1\r\nContent-Length: 0\r\n\r\n')).toContain(
+      'model registry',
+    );
+    expect(dialled).toEqual([]);
+    // A public name is not held up.
+    expect(await ask('CONNECT api.example.com:443 HTTP/1.1\r\n\r\n', 'x')).toContain('echo:x');
+  });
+
+  it('knows an Ollama server from the registry when no agent filter has started', async () => {
+    __setOllamaTargetsForTest([]);
+    deps.ollamaTargets = async () => [{ host: '192.0.2.69', port: 11434 }];
+    expect(await ask('POST http://192.0.2.69:11434/api/pull HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}')).toContain('403');
+    expect(await ask('CONNECT 192.0.2.69:11434 HTTP/1.1\r\n\r\n', 'DELETE /api/delete HTTP/1.1\r\n\r\n')).toContain(
+      '403',
+    );
+    expect(dialled).toEqual([]);
+    expect(await ask('POST http://192.0.2.69:11434/api/chat HTTP/1.1\r\nContent-Length: 0\r\n\r\n')).toContain(
+      'echo:POST /api/chat',
+    );
+  });
+
+  it('forwards one plain-HTTP request per connection, never a pipelined second one', async () => {
+    await ask('GET http://api.example.com/ HTTP/1.1\r\n\r\nGET /admin HTTP/1.1\r\nHost: other.example\r\n\r\n');
+    const sent = received.join('');
+    expect(sent).toContain('Connection: close');
+    expect(sent).not.toContain('other.example');
+    expect(sent).not.toContain('/admin');
+    expect(
+      await ask('POST http://api.example.com/up HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n'),
+    ).toContain('411');
+  });
+
   it('sends plain HTTP in origin form', async () => {
     const got = await ask('GET http://api.example.com/cards?q=1 HTTP/1.1\r\nHost: evil.example\r\n\r\n');
     expect(got).toContain('echo:GET /cards?q=1 HTTP/1.1');
@@ -282,6 +352,48 @@ describe('the workload egress proxy', () => {
 
 describe('the listeners', () => {
   afterEach(() => __resetWorkloadEgressForTest());
+
+  it('refuse a source holding too many connections', async () => {
+    const probe = net.createServer();
+    const port = await new Promise<number>((r) =>
+      probe.listen(0, '127.0.0.1', () => r((probe.address() as net.AddressInfo).port)),
+    );
+    await new Promise((r) => probe.close(r));
+    await openWorkloadEgressListener('127.0.0.1', port, { identify: async () => null });
+    const open: net.Socket[] = [];
+    try {
+      for (let i = 0; i < MAX_PER_SOURCE; i++) {
+        const c = net.connect(port, '127.0.0.1');
+        c.on('error', () => {});
+        open.push(c);
+        await new Promise((r) => c.once('connect', r));
+      }
+      const extra = await new Promise<string>((resolve) => {
+        const c = net.connect(port, '127.0.0.1');
+        let got = '';
+        c.on('data', (d) => (got += d.toString()));
+        c.on('close', () => resolve(got));
+        c.on('error', () => resolve(got));
+      });
+      expect(extra).toContain('429');
+    } finally {
+      for (const c of open) c.destroy();
+    }
+  });
+
+  it('close a tunnel that carries nothing for the idle window', async () => {
+    const a = new PassThrough();
+    const b = new PassThrough();
+    closeWhenIdle(a, b, 60);
+    a.on('data', () => {});
+    b.on('data', () => {});
+    await new Promise((r) => setTimeout(r, 40));
+    a.write('x');
+    await new Promise((r) => setTimeout(r, 40));
+    expect(a.destroyed || b.destroyed).toBe(false);
+    await new Promise((r) => setTimeout(r, 80));
+    expect(a.destroyed && b.destroyed).toBe(true);
+  });
 
   it('open once per address, report a port they cannot have, and close', async () => {
     const held = net.createServer();

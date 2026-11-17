@@ -40,6 +40,7 @@ import {
   registerFilteredContainer,
   serveModelPort,
   serveProxyClient,
+  setRegistryOllamaTargets,
   type Caller,
   type ModelListener,
 } from '../../channels/webchat/egress-filter.js';
@@ -88,18 +89,26 @@ let passthroughs: Array<{ port: number; target: { host: string; port: number }; 
 /** Models on another machine, each relayed on its own bridge port (model-relay.ts); refreshed with the pass-throughs. */
 let relays: ModelRelay[] = [];
 
-/** Read both from the model registry; on failure keep what is known. */
+/**
+ * Read both from the model registry; on failure keep what is known. When both
+ * read, their Ollama servers are what the general proxy refuses (ollamaPin),
+ * whether or not a filter listener has started: under the exec relay none does.
+ */
 async function refreshModelListeners(): Promise<void> {
+  let ok = true;
   try {
     passthroughs = await modelPassthroughs();
   } catch (err) {
+    ok = false;
     log.warn('Egress: could not read the model registry; keeping the known pass-throughs', { err: String(err) });
   }
   try {
     relays = await modelRelays();
   } catch (err) {
+    ok = false;
     log.warn('Egress: could not read the model registry; keeping the known model relays', { err: String(err) });
   }
+  if (ok) setRegistryOllamaTargets([...passthroughs, ...relays].filter((m) => m.ollama).map((m) => m.target));
 }
 
 /** The filter's model listeners. The proxy and relay ports are spoken for; a model on one of them is misconfigured. */

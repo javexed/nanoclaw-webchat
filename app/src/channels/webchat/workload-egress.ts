@@ -30,6 +30,15 @@
  * ollamaPin). Here a service whose approved list names it may send it
  * inference over plain HTTP: one request per connection, its body bounded by
  * Content-Length, read-only and inference paths only (ollama-filter.ts).
+ * Which servers are Ollama is read from the model registry here, not left to
+ * the agent filter (which may never have started since a restart); until the
+ * registry has been read once, a LAN address or Ollama's port is refused.
+ *
+ * Plain HTTP is one request per connection, Content-Length bodies only, so a
+ * kept-alive connection cannot carry a second request to another host.
+ * Addresses are IPv4 only (the host rules are). Each listener takes at most
+ * MAX_CONNECTIONS connections, MAX_PER_SOURCE from one address, and a tunnel
+ * idle for TUNNEL_IDLE_MS is closed.
  *
  * HTTP(S) through the proxy is all there is: a client that ignores
  * HTTP(S)_PROXY, or a protocol other than HTTP, has no way out.
@@ -44,10 +53,14 @@ import { log } from '../../log.js';
 
 import {
   answer,
+  closeWhenIdle,
   connectTcp,
+  knownOllamaTargets,
   ollamaPin,
   parseProxyHead,
   readProxyHead,
+  registryOllamaTargets,
+  setRegistryOllamaTargets,
   spliceDirect,
   type ProxyClient,
 } from './egress-filter.js';
@@ -56,16 +69,28 @@ import {
   directAddressAllowed,
   groupEgressMode,
   hostMatches,
+  modelPassthroughs,
   ownModelTargetsFor,
   parsePattern,
   recordBlocked,
   type EgressMode,
 } from './egress-policy.js';
+import { modelRelays } from './model-relay.js';
 import { ollamaRequestAllowed } from './ollama-filter.js';
 import { noteWorkloadEgressRefusal } from './workload-egress-refusals.js';
 
 /** How many hosts one service may declare. */
 export const MAX_WORKLOAD_EGRESS = 10;
+
+/** Connections one listener holds at once, and from any one source address. */
+export const MAX_CONNECTIONS = 256;
+export const MAX_PER_SOURCE = 32;
+
+/** A tunnel or request that carries nothing either way for this long is closed. */
+export const TUNNEL_IDLE_MS = 5 * 60_000;
+
+/** Ollama's own port: refused while the model registry is unread. */
+const OLLAMA_PORT = 11434;
 
 /** The caller's session id in the egress audit: which workload and service asked. */
 export const workloadSessionId = (workloadId: string, service: string): string => `workload:${workloadId}/${service}`;
@@ -134,6 +159,10 @@ export function parseWorkloadEgress(
     const t = item.trim();
     if (t === '*' || t.startsWith('*:') || t === '*.*') {
       errors.push(`${t}: a bare * is not allowed: name each host, or *.domain for its subdomains on port 443`);
+      continue;
+    }
+    if (t.includes('[') || net.isIPv6(t)) {
+      errors.push(`${t}: IPv6 is not supported here; name the host or its IPv4 address`);
       continue;
     }
     const p = parsePattern(t);
@@ -233,6 +262,8 @@ export function workloadEgressAllowed(
  */
 export function workloadAddressAllowed(address: string, literal: boolean, forbidden: string[] = []): boolean {
   const a = address.toLowerCase().replace(/^::ffff:/, '');
+  // IPv4 only: the host rules that fence a stack in are.
+  if (!net.isIPv4(a)) return false;
   if (!directAddressAllowed(a, literal)) return false;
   return !inCidrs(a, [...WORKLOAD_REFUSED_CIDRS, ...forbidden]);
 }
@@ -248,6 +279,69 @@ function runtime(args: string[]): Promise<string> {
       err ? reject(err) : resolve(String(out)),
     ),
   );
+}
+
+/**
+ * Whether the request names, as itself, an address the service's approved
+ * list names literally (address:port, or the bare address on 443/80): only
+ * then may it reach a private address. A wildcard or a name never does.
+ */
+export function namedLiterally(host: string, port: number, approved: string[]): boolean {
+  const h = host.toLowerCase();
+  if (!net.isIPv4(h)) return false;
+  return approved.some((p) => p === `${h}:${port}` || (p === h && (port === 443 || port === 80)));
+}
+
+// ── Ollama servers, from the model registry ───────────────────────────────────
+
+const OLLAMA_REGISTRY_TTL_MS = 60_000;
+const OLLAMA_REGISTRY_RETRY_MS = 5_000;
+let ollamaReadAt = 0;
+let ollamaTriedAt = 0;
+let ollamaReading: Promise<void> | null = null;
+
+/**
+ * The model registry's Ollama servers, re-read at most once a minute (on
+ * failure: the last answer, retried after a few seconds). Null until a read
+ * has succeeded.
+ */
+export async function workloadOllamaTargets(): Promise<Array<{ host: string; port: number }> | null> {
+  const now = Date.now();
+  const fresh = registryOllamaTargets() !== null && now - ollamaReadAt < OLLAMA_REGISTRY_TTL_MS;
+  if (!fresh && now - ollamaTriedAt >= OLLAMA_REGISTRY_RETRY_MS) {
+    ollamaReading ??= (async () => {
+      ollamaTriedAt = Date.now();
+      try {
+        const models = [...(await modelPassthroughs()), ...(await modelRelays())];
+        setRegistryOllamaTargets(models.filter((m) => m.ollama).map((m) => m.target));
+        ollamaReadAt = Date.now();
+      } catch (err) {
+        log.warn('Workload egress: could not read the model registry; keeping the known Ollama servers', {
+          err: String(err),
+        });
+      } finally {
+        ollamaReading = null;
+      }
+    })();
+  }
+  if (ollamaReading) await ollamaReading;
+  return registryOllamaTargets();
+}
+
+// ── refusal logging, throttled ────────────────────────────────────────────────
+
+const WARN_EVERY_MS = 60_000;
+const MAX_WARN_KEYS = 1000;
+const warnedAt = new Map<string, number>();
+
+/** Log a warning at most once a minute per key (a source and what it asked for). */
+function warnThrottled(key: string, msg: string, meta: Record<string, unknown>): void {
+  const now = Date.now();
+  if (now - (warnedAt.get(key) ?? 0) < WARN_EVERY_MS) return;
+  warnedAt.delete(key);
+  warnedAt.set(key, now);
+  while (warnedAt.size > MAX_WARN_KEYS) warnedAt.delete(warnedAt.keys().next().value!);
+  log.warn(msg, meta);
 }
 
 /** Every Docker network's IPv4 subnet on this host, re-read at most once a minute (on failure: the last answer). */
@@ -291,8 +385,10 @@ export interface WorkloadEgressDeps {
   ownModels?: (agentGroupId: string) => Promise<string[]>;
   /** Ranges no connection may go to, besides the fixed ones; default: Docker's current subnets. */
   forbidden?: () => Promise<string[]>;
-  /** A name's address; default: one DNS lookup. */
+  /** A name's address; default: one IPv4 DNS lookup. */
   resolve?: (host: string) => Promise<string>;
+  /** The model registry's Ollama servers, null when it could not be read yet; default: workloadOllamaTargets. */
+  ollamaTargets?: () => Promise<Array<{ host: string; port: number }> | null>;
   /** Open a connection to an address the checks passed; default: TCP. */
   dial?: (address: string, port: number) => Promise<Duplex>;
 }
@@ -321,14 +417,21 @@ export async function serveWorkloadEgressClient(
   const remote = bare(client.remoteAddress);
   const caller = sameSlash24(local, remote) ? await deps.identify(local, remote) : null;
   if (!caller) {
-    log.warn('Workload egress: a connection from an address that is no workload network', { local, remote });
+    warnThrottled(
+      `stranger|${local}|${remote}`,
+      'Workload egress: a connection from an address that is no workload network',
+      {
+        local,
+        remote,
+      },
+    );
     return answer(client, '403 Forbidden', 'blocked by NanoClaw network policy: not a workload NanoClaw knows');
   }
   const mode = await (deps.mode ?? groupEgressMode)(caller.agentGroupId);
   const refuse = (why: string, opts: { status?: string; record?: boolean } = {}): void => {
     if (opts.record !== false) recordBlocked(req.host, req.port, caller.agentGroupId, caller.sessionId, mode);
     noteWorkloadEgressRefusal(caller.agentGroupId, caller.workloadId, caller.service, req.host, req.port, why);
-    log.warn('Workload egress refused', {
+    warnThrottled(`${remote}|${req.host.toLowerCase()}:${req.port}`, 'Workload egress refused', {
       agentGroupId: caller.agentGroupId,
       caller: caller.sessionId,
       host: req.host,
@@ -337,23 +440,35 @@ export async function serveWorkloadEgressClient(
     });
     answer(client, opts.status ?? '403 Forbidden', why);
   };
+  if (net.isIPv6(req.host))
+    return refuse('blocked by NanoClaw network policy: a workload reaches IPv4 addresses only', { record: false });
   const allowlist = mode === 'host-only' ? await (deps.allowlist ?? allowlistFor)(caller.agentGroupId) : [];
   const own = await (deps.ownModels ?? ownModelTargetsFor)(caller.agentGroupId);
   if (!workloadEgressAllowed(req.host, req.port, caller.approved, mode, allowlist, own))
     return refuse(workloadBlockedMessage(req.host, req.port));
 
-  const ollama = await ollamaPin(req.host, req.port);
+  const isAddress = net.isIP(req.host) !== 0;
+  // Which servers are Ollama comes from the model registry; before it has
+  // been read once, nothing that could be one goes through unfiltered.
+  const registry = await (deps.ollamaTargets ?? workloadOllamaTargets)();
+  if (registry === null && (req.port === OLLAMA_PORT || (isAddress && isLanV4(req.host))))
+    return refuse(
+      'runtime egress has not read the model registry yet, so a LAN address or Ollama port is refused for now; try again shortly',
+      { status: '503 Service Unavailable', record: false },
+    );
+  const ollama = await ollamaPin(req.host, req.port, [...(registry ?? []), ...knownOllamaTargets()]);
   if ('refused' in ollama && ollama.refused === 'unresolved')
     return refuse(`${req.host} could not be resolved`, { status: '502 Bad Gateway', record: false });
-  const literal = net.isIP(req.host) !== 0;
+  // A private address only when the approved list names that very address and port.
+  const literal = namedLiterally(req.host, req.port, caller.approved);
   let address: string;
   try {
     address =
       'pin' in ollama && ollama.pin
         ? ollama.pin
-        : literal
+        : isAddress
           ? req.host
-          : await (deps.resolve ?? (async (h: string) => (await dns.lookup(h)).address))(req.host);
+          : await (deps.resolve ?? (async (h: string) => (await dns.lookup(h, { family: 4 })).address))(req.host);
   } catch {
     return refuse(`${req.host} could not be resolved`, { status: '502 Bad Gateway', record: false });
   }
@@ -364,6 +479,12 @@ export async function serveWorkloadEgressClient(
     );
   const dial = deps.dial ?? connectTcp;
   if ('refused' in ollama) return serveOllama(client, req, head.rest, address, dial, refuse);
+  // Plain HTTP: one request, its body framed by Content-Length (see forwardOne).
+  if (req.kind === 'absolute' && (req.bodyLength === null || req.bodyLength === undefined))
+    return refuse('a plain-HTTP request through the workload proxy must state its Content-Length', {
+      status: '411 Length Required',
+      record: false,
+    });
   let upstream: Duplex;
   try {
     upstream = await dial(address, req.port);
@@ -373,7 +494,8 @@ export async function serveWorkloadEgressClient(
       record: false,
     });
   }
-  spliceDirect(client, req, head.rest, upstream);
+  if (req.kind === 'connect') return spliceDirect(client, req, head.rest, upstream, { idleMs: TUNNEL_IDLE_MS });
+  forwardOne(client, upstream, req.originHead!.split('\r\n').filter(Boolean), head.rest, req.bodyLength!);
 }
 
 type Parsed = Exclude<ReturnType<typeof parseProxyHead>, { error: string }>;
@@ -413,9 +535,19 @@ async function serveOllama(
       record: false,
     });
   }
+  forwardOne(client, upstream, lines, rest, req.bodyLength);
+}
+
+/**
+ * Forward one plain-HTTP request and nothing after it: the head with
+ * `Connection: close`, then exactly `bodyLength` bytes of body. Anything the
+ * client sends past that (a pipelined second request, to any Host) is dropped.
+ */
+function forwardOne(client: ProxyClient, upstream: Duplex, lines: string[], rest: Buffer, bodyLength: number): void {
   upstream.on('error', () => client.destroy());
   client.on('error', () => upstream.destroy());
   client.once('close', () => upstream.destroy());
+  closeWhenIdle(client, upstream, TUNNEL_IDLE_MS);
   upstream.write(
     [lines[0], ...lines.slice(1).filter((l) => !/^(connection|keep-alive):/i.test(l)), 'Connection: close'].join(
       '\r\n',
@@ -423,7 +555,7 @@ async function serveOllama(
   );
   upstream.pipe(client);
   // This request's body and nothing after it.
-  let left = req.bodyLength;
+  let left = bodyLength;
   const forward = (chunk: Buffer): void => {
     if (left <= 0) return;
     const part = chunk.subarray(0, left);
@@ -451,7 +583,28 @@ export function openWorkloadEgressListener(gateway: string, port: number, deps: 
   const k = `${gateway}:${port}`;
   const had = listeners.get(k);
   if (had) return had.ready;
-  const server = net.createServer((sock) => void serveWorkloadEgressClient(sock, deps).catch(() => sock.destroy()));
+  const perSource = new Map<string, number>();
+  const server = net.createServer((sock) => {
+    const src = bare(sock.remoteAddress);
+    const n = perSource.get(src) ?? 0;
+    if (n >= MAX_PER_SOURCE) {
+      warnThrottled(`busy|${src}`, 'Workload egress: too many connections from one address', { gateway, src });
+      sock.on('error', () => {});
+      return answer(
+        sock,
+        '429 Too Many Requests',
+        `blocked by NanoClaw network policy: at most ${MAX_PER_SOURCE} open connections per service`,
+      );
+    }
+    perSource.set(src, n + 1);
+    sock.once('close', () => {
+      const left = (perSource.get(src) ?? 1) - 1;
+      if (left > 0) perSource.set(src, left);
+      else perSource.delete(src);
+    });
+    void serveWorkloadEgressClient(sock, deps).catch(() => sock.destroy());
+  });
+  server.maxConnections = MAX_CONNECTIONS;
   const ready = new Promise<void>((resolve, reject) => {
     server.once('listening', () => {
       log.info('Workload egress listening', { gateway, port });
@@ -487,4 +640,8 @@ export function __resetWorkloadEgressForTest(): void {
   for (const l of listeners.values()) l.server.close();
   listeners.clear();
   subnetCache = null;
+  warnedAt.clear();
+  ollamaReadAt = 0;
+  ollamaTriedAt = 0;
+  ollamaReading = null;
 }

@@ -686,10 +686,14 @@ file, so these win. Only services that declare egress get them.
 **The rules for the list** (at most 10 entries per service):
 
 - `host` (ports 443 and 80), `host:port`, or a literal address;
-- `*.domain` matches its subdomains on port 443 only; a bare `*` is refused;
+- `*.domain` matches its subdomains on port 443 only; a bare `*` is refused,
+  and so is a wildcard or name ending in a number (`*.0.5`): a wildcard
+  never matches an address;
 - a LAN address must be written literally with its port
-  (`192.168.0.20:8080`); a name that resolves to a private address is
-  refused at connect time;
+  (`192.168.0.20:8080`), and only a request to that exact address and port
+  reaches it; a name that resolves to a private address is refused at
+  connect time;
+- IPv4 only: an IPv6 address is refused, and names resolve to IPv4;
 - never this host (`localhost`, `host.docker.internal`), the workload range
   `198.18.0.0/15`, Docker's `172.16.0.0/12`, loopback, link-local
   `169.254.0.0/16` (cloud metadata), the tailnet's `100.64.0.0/10`, or the
@@ -723,13 +727,21 @@ normally refused on the agents' proxy. A service whose approved list names it
 may send it inference over plain HTTP (an `http://` URL, not a tunnel): one
 request per connection, with a `Content-Length` body (no chunked bodies),
 and only the inference and read-only paths an agent's model port allows
-(never pull, create, copy, push or delete).
+(never pull, create, copy, push or delete), matched exactly as sent (an
+encoded, dotted or doubled path is refused). The proxy reads which servers
+are Ollama from the model registry itself; until it has read the registry
+once (just after a restart, or while it cannot be read), a request to a LAN
+address or to port 11434 is refused with a 503.
 
 **Limits.**
 
 - HTTP and HTTPS through the proxy only: a client that ignores
   `HTTP(S)_PROXY`, or a protocol other than HTTP (a database, SMTP, raw
   TCP), has no way out.
+- Plain HTTP is one request per connection, with a `Content-Length` body;
+  a chunked body is refused (HTTPS tunnels are unaffected).
+- Each agent network's listener takes at most 256 connections at once, 32
+  from one service; a tunnel idle for 5 minutes is closed.
 - Central only: a stack that declares egress is placed on central, an agent
   pinned to a worker cannot have one, and an existing stack on a worker
   cannot add it.

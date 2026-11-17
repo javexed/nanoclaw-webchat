@@ -11,6 +11,7 @@ const registerFilteredContainer = vi.fn();
 const registerRelayedContainer = vi.fn();
 const serveProxyClient = vi.fn(async () => {});
 const serveModelPort = vi.fn(async () => {});
+const setRegistryOllamaTargets = vi.fn();
 /** Models on another machine the registry holds, as relays (model-relay.ts). */
 let relays: Array<{ port: number; target: { host: string; port: number } }> = [];
 /** Host-local models the registry holds, as filter pass-throughs (egress-policy.ts). */
@@ -39,6 +40,7 @@ vi.mock('../../channels/webchat/egress-filter.js', () => ({
   registerFilteredContainer,
   serveProxyClient,
   serveModelPort,
+  setRegistryOllamaTargets,
   defaultFilterDeps: () => ({}),
 }));
 let registryFails = false;
@@ -84,6 +86,7 @@ beforeEach(async () => {
   registerRelayedContainer.mockClear();
   serveProxyClient.mockClear();
   serveModelPort.mockClear();
+  setRegistryOllamaTargets.mockClear();
   relays = [];
   passthroughs = [];
   registryFails = false;
@@ -357,6 +360,27 @@ describe('exec relay (WEBCHAT_EXEC_RELAY=1)', () => {
     route(47123, stream);
     await vi.waitFor(() => expect(stream.destroy).toHaveBeenCalled());
     expect(serveModelPort).not.toHaveBeenCalled();
+  });
+
+  it('tells the general proxy which servers are Ollama, though no filter listener starts', async () => {
+    process.env.WEBCHAT_EXEC_RELAY = '1';
+    getContainerConfig.mockResolvedValue({ egress: null });
+    passthroughs = [{ port: 11434, target: { host: '127.0.0.1', port: 11434 }, ollama: true }];
+    relays = [
+      { port: 47123, target: { host: '192.0.2.9', port: 11434 }, ollama: true } as (typeof relays)[number],
+      { port: 47124, target: { host: '192.0.2.10', port: 4000 } },
+    ];
+    await prepare('ag-relayed', null);
+    expect(ensureEgressFilter).not.toHaveBeenCalled();
+    expect(setRegistryOllamaTargets).toHaveBeenLastCalledWith([
+      { host: '127.0.0.1', port: 11434 },
+      { host: '192.0.2.9', port: 11434 },
+    ]);
+    // An unreadable registry keeps the last answer rather than clearing it.
+    setRegistryOllamaTargets.mockClear();
+    registryFails = true;
+    await prepare('ag-relayed', null);
+    expect(setRegistryOllamaTargets).not.toHaveBeenCalled();
   });
 
   it('leaves an open group on an ordinary network, and fails closed without a proxy URL', async () => {

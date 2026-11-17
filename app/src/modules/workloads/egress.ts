@@ -15,6 +15,7 @@ import {
   openWorkloadEgressListener,
   workloadEgressCovered,
   workloadEgressListeners,
+  workloadOllamaTargets,
   workloadSessionId,
   type WorkloadEgressCaller,
   type WorkloadEgressDeps,
@@ -98,6 +99,32 @@ const wantsListener = (w: Workload): boolean =>
  * address) is known only as the agent's, with nothing approved.
  */
 export async function identifyWorkloadCaller(local: string, remote: string): Promise<WorkloadEgressCaller | null> {
+  const k = `${local}|${remote}`;
+  const now = Date.now();
+  const hit = callerCache.get(k);
+  if (hit && now - hit.at < CALLER_TTL_MS) return hit.caller;
+  const caller = await lookupCaller(local, remote);
+  callerCache.set(k, { at: now, caller });
+  if (callerCache.size > MAX_CALLERS)
+    for (const [key, v] of callerCache)
+      if (now - v.at >= CALLER_TTL_MS || callerCache.size > MAX_CALLERS) callerCache.delete(key);
+  return caller;
+}
+
+/**
+ * Callers by (listener, source), for a few seconds: every connection asks,
+ * and each answer reads the store. Short enough that a stopped stack or a
+ * changed approval takes effect almost at once.
+ */
+const CALLER_TTL_MS = 5_000;
+const MAX_CALLERS = 2048;
+const callerCache = new Map<string, { at: number; caller: WorkloadEgressCaller | null }>();
+
+export function __resetWorkloadCallerCacheForTest(): void {
+  callerCache.clear();
+}
+
+async function lookupCaller(local: string, remote: string): Promise<WorkloadEgressCaller | null> {
   const n = (await allNetworks()).find((x) => subnetFor(x.idx).gateway === local);
   if (!n) return null;
   for (const w of await listWorkloads({ agentGroupId: n.agentGroupId })) {
@@ -142,6 +169,8 @@ export async function syncWorkloadEgress(agentGroupId?: string): Promise<void> {
   const set = workloadEgressPort();
   // A port the preflight refused (a host service holds it, the rule is missing) gets no listener.
   const port = set !== null && egressRefusal(set) === null ? set : null;
+  // Read the model registry's Ollama servers now, so the first request after a restart need not wait for it.
+  if (port !== null) void workloadOllamaTargets();
   const nets = await allNetworks();
   const gateways = new Set(nets.map((n) => subnetFor(n.idx).gateway));
   // Stale first: a port that changed, a network that is gone, or the feature switched off.
