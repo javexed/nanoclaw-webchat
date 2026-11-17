@@ -192,7 +192,10 @@ services:
   adding or removing a host later needs a new card (`up`, not `redeploy`).
 - Every entry must be something **you** may reach yourself (your Network
   allowlist, or your own model's address). Ask an admin to add a host to your
-  Network list first; if it is later removed from you, your stacks lose it too.
+  Network list first; if it is later removed from you, your stacks lose it too
+  (open connections included).
+- Declare well-known hosts you trust: approving a name trusts whoever
+  controls its DNS, which can point it at any public address.
 - It works over HTTP(S) through the proxy NanoClaw sets on that service
   (`HTTP_PROXY`/`HTTPS_PROXY`, `NO_PROXY` for your own stack,
   `NODE_USE_ENV_PROXY=1` for Node). A client that ignores those variables, or

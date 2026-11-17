@@ -666,16 +666,27 @@ sudo deploy/workloads-host-rules.sh --stack-egress-port 8472 --install-unit   # 
 ```
 
 The flag inserts one rule before the workload chain's drop: a new TCP
-connection arriving on a workload bridge to port 8472 on a workload address
-is accepted (IPv4 only). NanoClaw's egress proxy listens there, on the
-gateway address of each agent network that runs a stack with approved
-egress. The preflight then checks that a probe container's connection to
-that port on an address where NanoClaw never listens is refused: if
-something answers, a service on this host listens on that port on every
-address, workload containers could reach it, and runtime egress is refused
-until you pick another port or rebind that service. While the key is unset,
-or the check fails, a stack that declares `x-nanoclaw-egress` is refused
-with the reason; stacks without it are unaffected.
+connection arriving on a workload bridge to port 8472 is accepted only when
+it is addressed to that bridge's own gateway address (in the workload range
+and local to the interface it came in on; IPv4 only). NanoClaw's egress
+proxy listens there, on the gateway address of each agent network that runs
+a stack with approved egress; one agent's stack cannot reach another agent
+network's gateway. The preflight then checks that a probe container's
+connection to that port on an address where NanoClaw never listens is
+refused: if something answers, a service on this host listens on that port
+on every address, workload containers could reach it, and runtime egress is
+refused until you pick another port or rebind that service. The check runs
+again with every preflight (every half hour): if a service starts answering
+on the port, the listeners close (open tunnels with them) until the check
+passes again. While the key is unset, or the check fails, a stack that
+declares `x-nanoclaw-egress` is refused with the reason; stacks without it
+are unaffected.
+
+**After updating NanoClaw**, re-run the script with the same flags,
+including `--install-unit` (the boot unit runs a root-owned copy of the
+script, refreshed only then): older versions accepted the port on any
+workload address, and re-running replaces that rule with the narrower one.
+`--check` reports the older rule while it is still there.
 
 **What a service gets.** `HTTP_PROXY`/`HTTPS_PROXY` (and lowercase) pointing
 at its network's proxy with a placeholder credential, `NO_PROXY` for its own
@@ -709,6 +720,11 @@ current allowlist, so taking a host off the agent cuts its stacks off too.
 An agent on **Open** has no allowlist, so for it the approved list alone
 applies. Whether the app is published (and to whom) makes no difference.
 
+**Approving a name trusts its DNS.** Whoever controls a name's DNS decides
+where it points, and that can be any public address, including this
+network's own public IP, which a router may hairpin to port-forwarded LAN
+services. Approve names you trust, and prefer well-known API hosts.
+
 **Threat model.** The proxy knows a caller by its source address: the
 listener's own address names the agent's network, and the source must be a
 service address NanoClaw assigned to a running stack on it. Stack containers
@@ -721,6 +737,11 @@ gateway** (which would add the agent's secrets), to the address the name
 resolved to, checked at that moment against this host's own addresses,
 loopback, link-local, the workload range, every current Docker network, the
 edge subnet and the tailnet range, so a DNS answer cannot steer it inward.
+Permission is not only checked when a connection opens: every 20 seconds
+(and whenever a stack stops or the listeners are brought in line) each open
+tunnel or request is checked again, and closed when its service no longer
+runs, its approved list no longer names the host, or the agent may no
+longer reach it. Closing a listener closes every connection on it.
 
 **Ollama.** An Ollama server NanoClaw knows from the model registry is
 normally refused on the agents' proxy. A service whose approved list names it
@@ -748,7 +769,10 @@ address or to port 11434 is refused with a 503.
 - Refusals are kept in memory for a day: `ncl workloads status --name <n>`
   shows the approved list and the latest refusals; Agent → Apps shows
   "Can call" and a refusal count. Each refusal is also audited as
-  `runner.egress.blocked` with the caller `workload:<id>/<service>`.
+  `runner.egress.blocked` with the caller `workload:<id>/<service>`. A
+  workload's refusals are not added to Manage → Network's list of blocked
+  hosts to allow: that list is for agents, and allowing a host there would
+  open it to every agent.
 
 ## Settings (`.env`)
 
