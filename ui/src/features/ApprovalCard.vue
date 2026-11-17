@@ -8,7 +8,7 @@
 import { approvalCardText, approvalRawPayload } from './approval-card-text.js';
 import { ref } from 'vue';
 
-import { approvalBusy, approvalErrors } from './approvals-state.js';
+import { approvalBusy, approvalDecided, approvalErrors } from './approvals-state.js';
 
 /**
  * Triage — why this request is in front of a human. Chips are checkable CLAIMS, never
@@ -103,7 +103,13 @@ const btnClass = (v: string) => (v === 'approve' ? 'approve' : v === 'reject' ? 
       <summary>Details</summary>
       <pre class="approval-payload">{{ payloadText(rawPayload()) }}</pre>
     </details>
-    <form v-if="askingReason" class="approval-actions approval-reason" @submit.prevent="sendReason">
+    <div v-if="approvalDecided[approval.questionId]" class="approval-decided" role="status">
+      <template v-if="approvalDecided[approval.questionId] === 'approve'">
+        <span class="btn-spinner" aria-hidden="true"></span>Approved · working on it…
+      </template>
+      <template v-else>Rejected</template>
+    </div>
+    <form v-else-if="askingReason" class="approval-actions approval-reason" @submit.prevent="sendReason">
       <input
         v-model="reason"
         type="text"
