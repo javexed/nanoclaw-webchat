@@ -197,8 +197,9 @@ services:
   (`HTTP_PROXY`/`HTTPS_PROXY`, `NO_PROXY` for your own stack,
   `NODE_USE_ENV_PROXY=1` for Node). A client that ignores those variables, or
   anything that is not HTTP (a database, SMTP), gets nowhere.
-- No bare `*`, at most 10 entries, never this host or `localhost`. An Ollama
-  server takes inference only, over plain `http://`.
+- No bare `*`, no wildcard over numbers (`*.0.5`), no IPv6, at most 10
+  entries, never this host or `localhost`. An Ollama server takes inference
+  only, over plain `http://`.
 - Such a stack runs on central only. If a deploy says runtime egress is off,
   tell the person an owner turns it on.
 - `ncl workloads status --name <name>` shows what each service may call and

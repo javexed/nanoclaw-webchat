@@ -38,6 +38,7 @@ import {
   checkEgressSubset,
   EGRESS_OFF,
   identifyWorkloadCaller,
+  __resetWorkloadCallerCacheForTest,
   requireWorkloadEgress,
   syncWorkloadEgress,
 } from './egress.js';
@@ -79,6 +80,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   __resetWorkloadEgressForTest();
+  __resetWorkloadCallerCacheForTest();
 });
 
 describe('the declaration', () => {
@@ -263,6 +265,20 @@ describe('who calls on a listener', () => {
     db.workloads = [w({ state: 'stopped' })];
     expect((await identifyWorkloadCaller('198.18.3.1', '198.18.3.10'))?.approved).toEqual([]);
     expect(await identifyWorkloadCaller('198.18.9.1', '198.18.9.10')).toBeNull();
+  });
+
+  it('remembers a caller for a few seconds, then reads the store again', async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    try {
+      db.workloads = [w()];
+      expect((await identifyWorkloadCaller('198.18.3.1', '198.18.3.10'))?.approved).toEqual(['api.example.com']);
+      db.workloads = [w({ state: 'stopped' })];
+      expect((await identifyWorkloadCaller('198.18.3.1', '198.18.3.10'))?.approved).toEqual(['api.example.com']);
+      vi.setSystemTime(1_000_000 + 6_000);
+      expect((await identifyWorkloadCaller('198.18.3.1', '198.18.3.10'))?.approved).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('opens no listener while the switch is off, and closes one nothing needs', async () => {

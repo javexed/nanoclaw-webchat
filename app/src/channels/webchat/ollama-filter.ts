@@ -36,16 +36,17 @@ const ALLOWED: Record<string, ReadonlySet<string>> = {
   HEAD: new Set(['/', '/api/version']),
 };
 
-/** Whether an agent's request may reach Ollama: inference, or a read-only lookup. */
+/**
+ * Whether an agent's request may reach Ollama: inference, or a read-only
+ * lookup. The path is checked exactly as it is forwarded: an encoded,
+ * dotted, doubled or backslashed path could normalise one way here and
+ * another way at the server, so it is refused rather than interpreted.
+ */
 export function ollamaRequestAllowed(method: string | undefined, url: string | undefined): boolean {
   const m = (method ?? '').toUpperCase();
-  let path: string;
-  try {
-    path = new URL(url ?? '', 'http://ollama').pathname;
-  } catch {
-    return false;
-  }
-  if (path.includes('..') || path.includes('//')) return false;
+  const path = (url ?? '').split('?')[0];
+  if (!path.startsWith('/')) return false;
+  if (/[%\\]|\/\.|\/\//.test(path)) return false;
   if (m === 'GET' && path.startsWith('/v1/models/') && path.length > '/v1/models/'.length) return true;
   return ALLOWED[m]?.has(path) ?? false;
 }

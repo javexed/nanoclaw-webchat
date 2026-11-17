@@ -137,16 +137,52 @@ export function inOwnNetwork(host: string, cidrs: string[]): boolean {
   return any && list.check(host, 'ipv4');
 }
 
-/** Pipe a client to a socket this filter opened itself (no gateway in between). */
-export function spliceDirect(client: ProxyClient, req: ParsedRequest, rest: Buffer, upstream: Duplex): void {
+/**
+ * Pipe a client to a socket this filter opened itself (no gateway in between).
+ * `idleMs`: close both sides once neither has sent anything for that long.
+ */
+export function spliceDirect(
+  client: ProxyClient,
+  req: ParsedRequest,
+  rest: Buffer,
+  upstream: Duplex,
+  opts: { idleMs?: number } = {},
+): void {
   upstream.on('error', () => client.destroy());
   client.on('error', () => upstream.destroy());
+  if (opts.idleMs) closeWhenIdle(client, upstream, opts.idleMs);
   if (req.kind === 'connect') client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
   else upstream.write(req.originHead!);
   if (rest.length) upstream.write(rest);
   client.pipe(upstream);
   upstream.pipe(client);
   client.resume();
+}
+
+/**
+ * Destroy both streams once neither has carried data for `ms`; either closing
+ * ends the watch. For streams about to be piped: listening for data starts
+ * them flowing.
+ */
+export function closeWhenIdle(a: Duplex, b: Duplex, ms: number): void {
+  let timer: NodeJS.Timeout | null = null;
+  const stop = (): void => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+  const arm = (): void => {
+    stop();
+    timer = setTimeout(() => {
+      a.destroy();
+      b.destroy();
+    }, ms);
+    timer.unref?.();
+  };
+  for (const s of [a, b]) {
+    s.on('data', arm);
+    s.once('close', stop);
+  }
+  arm();
 }
 
 /** A model listener: a host-local model's port, or the relay to a model on another machine (`remote`). */
@@ -621,8 +657,30 @@ export async function serveModelPort(
  */
 const ollamaTargets = new Map<string, Array<{ host: string; port: number }>>();
 
+/**
+ * The same servers read from the model registry itself, by whoever last read
+ * it (container-egress at a spawn, workload egress on its own schedule), so
+ * the list does not depend on a filter having started. Null until a read
+ * succeeded: callers that must not guess fail closed.
+ */
+let registryOllama: Array<{ host: string; port: number }> | null = null;
+
+export function setRegistryOllamaTargets(targets: Array<{ host: string; port: number }>): void {
+  registryOllama = targets;
+}
+
+/** The registry's Ollama servers, or null when the registry was never read. */
+export const registryOllamaTargets = (): Array<{ host: string; port: number }> | null => registryOllama;
+
+/** Every Ollama server known: the registry's and each started filter's. */
+export const knownOllamaTargets = (): Array<{ host: string; port: number }> => [
+  ...(registryOllama ?? []),
+  ...[...ollamaTargets.values()].flat(),
+];
+
 export function __setOllamaTargetsForTest(targets: Array<{ host: string; port: number }>): void {
   ollamaTargets.clear();
+  registryOllama = null;
   if (targets.length) ollamaTargets.set('test', targets);
 }
 
@@ -661,7 +719,7 @@ async function addressesOf(host: string): Promise<string[]> {
 export async function ollamaPin(
   host: string,
   port: number,
-  targets: Array<{ host: string; port: number }> = [...ollamaTargets.values()].flat(),
+  targets: Array<{ host: string; port: number }> = knownOllamaTargets(),
   own: Set<string> = hostOwnAddresses(),
 ): Promise<{ pin: string | null } | { refused: 'ollama' | 'unresolved' }> {
   const same = targets.filter((t) => t.port === port);
