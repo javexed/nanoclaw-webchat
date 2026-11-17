@@ -15,6 +15,11 @@
  * Run at the first sweep and every half hour after. Until it passes, every
  * verb that starts something is refused with the reason; when the probe gets
  * through, running stacks are stopped (reconcile.ts).
+ *
+ * Runtime egress's port is probed again with every run, not only at boot: a
+ * service that starts listening on it on every address later turns runtime
+ * egress off (the listeners close, open tunnels with them) until the probe
+ * is refused again. Whoever registered onEgressVerdict hears each change.
  */
 import { execFile } from 'child_process';
 import { randomBytes } from 'crypto';
@@ -56,6 +61,16 @@ export type EgressProbe = 'refused' | 'dropped' | 'answered';
 
 let last: PreflightResult | null = null;
 let running: Promise<PreflightResult> | null = null;
+
+/** Whether runtime egress may run, as the last run left it: null when not checked (port unset, or the preflight failed). */
+const egressVerdict = (r: PreflightResult | null): boolean | null => (r?.ok && r.egress ? r.egress.ok : null);
+
+const verdictListeners: Array<() => void | Promise<void>> = [];
+
+/** Hear when runtime egress turns on or off after a preflight (egress.ts brings the listeners in line). */
+export function onEgressVerdict(fn: () => void | Promise<void>): void {
+  verdictListeners.push(fn);
+}
 
 export const OFF_REASON = 'workloads are off on this host: an owner can turn them on in Admin → Publishing';
 
@@ -263,7 +278,20 @@ export async function runPreflight(deps: PreflightDeps = defaults, now = Date.no
       if (!r.ok && workloadsSwitchedOn() && r.reason !== last?.reason)
         log.error('Workloads refused on this host', { reason: r.reason });
       else if (r.ok && !last?.ok) log.info('Workloads preflight passed');
+      const before = egressVerdict(last);
+      const after = egressVerdict(r);
       last = r;
+      if (after === false && before !== false)
+        log.warn('Workload runtime egress is off', { port: r.egress?.port, reason: r.egress?.reason });
+      else if (after === true && before === false)
+        log.info('Workload runtime egress is on again', { port: r.egress?.port });
+      if (before !== after)
+        for (const fn of verdictListeners)
+          void Promise.resolve()
+            .then(fn)
+            .catch((err: unknown) =>
+              log.warn('Workload runtime egress: could not apply the new state', { err: String(err).slice(0, 200) }),
+            );
       return r;
     })
     .finally(() => {
