@@ -11,9 +11,29 @@ import {
   modelPassthrough,
   parseAllowlist,
   parsePattern,
+  recordBlocked,
+  __auditedSizeForTest,
+  __resetRunnerEgressForTest,
 } from './egress-policy.js';
 
 describe('runner egress patterns', () => {
+  it('refuses a wildcard or name ending in a number: it would match addresses by suffix', () => {
+    for (const bad of ['*.0.5', '*.0.0.5:22', '0.5', 'host.123']) expect(parsePattern(bad).ok, bad).toBe(false);
+    expect(parsePattern('192.0.2.10:8080')).toEqual({ ok: true, pattern: '192.0.2.10:8080' });
+    expect(parsePattern('*.example.org')).toEqual({ ok: true, pattern: '*.example.org' });
+    // A wildcard already stored matches no address.
+    expect(hostMatches('10.0.0.5', 443, '*.0.5')).toBe(false);
+    expect(hostMatches('10.0.0.5', 22, '*.0.5:22')).toBe(false);
+    expect(hostMatches('a.example.org', 443, '*.example.org')).toBe(true);
+  });
+
+  it('keeps the audit throttle bounded', () => {
+    __resetRunnerEgressForTest();
+    for (let i = 0; i < 1500; i++) recordBlocked(`h${i}.example.com`, 443, 'ag-1', 's1', 'host-only');
+    expect(__auditedSizeForTest()).toBeLessThanOrEqual(1000);
+    __resetRunnerEgressForTest();
+  });
+
   it('normalizes what an admin types and refuses what is not a host', () => {
     expect(parsePattern(' https://Registry.NPMJS.org/some/path ')).toEqual({ ok: true, pattern: 'registry.npmjs.org' });
     expect(parsePattern('*.pkgs.example.org')).toEqual({ ok: true, pattern: '*.pkgs.example.org' });

@@ -237,6 +237,10 @@ export function parsePattern(raw: string): { ok: true; pattern: string } | { ok:
   const port = m[2] ? Number(m[2]) : undefined;
   if (port !== undefined && (port < 1 || port > 65535)) return { ok: false, error: `bad port in ${raw}` };
   if (!HOST_RE.test(host)) return { ok: false, error: `not a host name or *.domain pattern: ${raw}` };
+  // A name whose last label is a number is an address, not a domain: `*.0.5`
+  // would match 10.0.0.5 by suffix. Only a whole IPv4 address may end in one.
+  if (/\.\d+$/.test(host) && (host.startsWith('*.') || !net.isIPv4(host)))
+    return { ok: false, error: `${raw}: a wildcard or name cannot end in a number — list the address itself` };
   return { ok: true, pattern: port ? `${host}:${port}` : host };
 }
 
@@ -272,7 +276,8 @@ export function hostMatches(host: string, port: number, pattern: string): boolea
   const h = host.toLowerCase().replace(/\.$/, '');
   const [pHost, pPort] = pattern.split(':');
   if (pPort ? Number(pPort) !== port : port !== 443 && port !== 80) return false;
-  if (pHost.startsWith('*.')) return h.endsWith(pHost.slice(1)) && h.length > pHost.length - 1;
+  // A wildcard names a domain's subdomains, never an address that happens to end the same way.
+  if (pHost.startsWith('*.')) return !net.isIP(h) && h.endsWith(pHost.slice(1)) && h.length > pHost.length - 1;
   return h === pHost;
 }
 
@@ -478,6 +483,8 @@ export interface BlockedHost {
 const MAX_BLOCKED = 200;
 const blocked = new Map<string, BlockedHost>();
 const auditedAt = new Map<string, number>();
+const AUDIT_WINDOW_MS = 60_000;
+const MAX_AUDITED = 1000;
 
 export function recordBlocked(
   host: string,
@@ -504,8 +511,17 @@ export function recordBlocked(
   while (blocked.size > MAX_BLOCKED) blocked.delete(blocked.keys().next().value!);
   // One audit row per host a minute is plenty; the counter keeps the rest.
   const last = auditedAt.get(k) ?? 0;
-  if (now - last > 60_000) {
+  if (now - last > AUDIT_WINDOW_MS) {
+    // Most recent last, and bounded: a stream of distinct refused hosts must not grow it without end.
+    auditedAt.delete(k);
     auditedAt.set(k, now);
+    if (auditedAt.size > MAX_AUDITED) {
+      for (const [key, at] of auditedAt) {
+        if (auditedAt.size <= MAX_AUDITED || now - at <= AUDIT_WINDOW_MS) break;
+        auditedAt.delete(key);
+      }
+      while (auditedAt.size > MAX_AUDITED) auditedAt.delete(auditedAt.keys().next().value!);
+    }
     audit({
       type: 'runner.egress.blocked',
       actor: `agent-group:${agentGroupId}`,
@@ -561,3 +577,6 @@ export function __resetRunnerEgressForTest(): void {
   blocked.clear();
   auditedAt.clear();
 }
+
+/** Tests: how many hosts the audit throttle remembers. */
+export const __auditedSizeForTest = (): number => auditedAt.size;
