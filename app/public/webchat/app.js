@@ -5416,7 +5416,7 @@ var STATE_LABEL = {
 	stopped: "Stopped",
 	"needs-approval": "Needs approval"
 };
-/** What a route change asks for: the row's rule where the new route takes it, else Only me. */
+/** What a route change asks for: the row's rule where the new route takes it; a new app opens to Agent members. */
 function nextForRoute(row, route) {
 	if (route === "off") return {
 		route,
@@ -5425,7 +5425,7 @@ function nextForRoute(row, route) {
 	};
 	if (row.route === "off") return {
 		route,
-		who: "only-me",
+		who: "agent-members",
 		emails: []
 	};
 	if (row.who === "specific" && route !== "cloudflare") return {

@@ -15,6 +15,8 @@ export const WHO = ['only-me', 'specific', 'agent-members', 'signed-in'] as cons
 export type Who = (typeof WHO)[number];
 export const isWho = (v: unknown): v is Who => WHO.includes(v as Who);
 export const wider = (a: Who, b: Who): boolean => WHO.indexOf(a) > WHO.indexOf(b);
+/** Who can open a newly published app unless the request says otherwise: everyone who may use its agent. */
+export const DEFAULT_WHO: Who = 'agent-members';
 
 export interface AppRoute {
   id: string;
